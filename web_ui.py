@@ -796,16 +796,10 @@ def traffic():
 def base_stations():
     return render_template('base_stations.html')
 
-def get_base_station_config_path():
-    """Get path to base station config file, respecting DATA_DIR env var"""
-    import os
-    data_dir = os.environ.get('DATA_DIR', '.')
-    return os.path.join(data_dir, 'base_stations.json')
-
 def load_base_station_config():
     """Load base station configuration from JSON file"""
     try:
-        config_path = get_base_station_config_path()
+        config_path = getattr(bssci_config, 'BASE_STATION_CONFIG_FILE', 'base_stations.json')
         with open(config_path, 'r') as f:
             return json.load(f)
     except:
@@ -814,9 +808,11 @@ def load_base_station_config():
 def save_base_station_config(config):
     """Save base station configuration to JSON file"""
     import os
-    config_path = get_base_station_config_path()
+    config_path = getattr(bssci_config, 'BASE_STATION_CONFIG_FILE', 'base_stations.json')
     try:
-        os.makedirs(os.path.dirname(config_path) or '.', exist_ok=True)
+        dir_path = os.path.dirname(config_path)
+        if dir_path:
+            os.makedirs(dir_path, exist_ok=True)
     except:
         pass
     with open(config_path, 'w') as f:

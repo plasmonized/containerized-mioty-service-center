@@ -12,6 +12,7 @@ services:
       # Use Synology-compatible volume mounts
       - ./certs:/app/certs:ro
       - ./logs:/app/logs:rw
+      - ./data:/app/data:rw
       # Copy config files to container-writable locations
       - ./endpoints.json:/tmp/host_endpoints.json:ro
       - ./bssci_config.py:/tmp/host_bssci_config.py:ro
@@ -21,6 +22,7 @@ services:
       - SYNOLOGY_DOCKER=1
       - PUID=1000
       - PGID=1000
+      - BASE_STATION_CONFIG_FILE=/app/data/base_stations.json
     networks:
       - bssci-network
     logging:

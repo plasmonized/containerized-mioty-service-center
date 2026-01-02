@@ -19,6 +19,7 @@ MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "")
 BASE_TOPIC = os.getenv("BASE_TOPIC", "bssci/")
 
 SENSOR_CONFIG_FILE = os.getenv("SENSOR_CONFIG_FILE", "endpoints.json")
+BASE_STATION_CONFIG_FILE = os.getenv("BASE_STATION_CONFIG_FILE", "base_stations.json")
 STATUS_INTERVAL = int(os.getenv("STATUS_INTERVAL", "30"))
 DEDUPLICATION_DELAY = float(os.getenv("DEDUPLICATION_DELAY", "2.0"))
 

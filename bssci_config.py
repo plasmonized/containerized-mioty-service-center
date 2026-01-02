@@ -27,3 +27,6 @@ AUTO_DETACH_ENABLED = os.getenv("AUTO_DETACH_ENABLED", "true").lower() == "true"
 AUTO_DETACH_TIMEOUT = int(os.getenv("AUTO_DETACH_TIMEOUT", "259200"))  # 72 hours in seconds
 AUTO_DETACH_WARNING_TIMEOUT = int(os.getenv("AUTO_DETACH_WARNING_TIMEOUT", "129600"))  # 36 hours in seconds
 AUTO_DETACH_CHECK_INTERVAL = int(os.getenv("AUTO_DETACH_CHECK_INTERVAL", "3600"))  # Check every hour
+
+# Timezone Configuration
+TIMEZONE = os.getenv("TIMEZONE", "Europe/Berlin")  # Default to Europe/Berlin (CET/CEST)

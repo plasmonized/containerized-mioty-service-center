@@ -30,6 +30,21 @@
                         <input type="number" step="0.1" min="0.5" max="10" class="form-control" id="DEDUPLICATION_DELAY" value="{{ config.DEDUPLICATION_DELAY }}">
                         <div class="form-text">Time to wait for duplicate messages before forwarding the best one (0.5-10 seconds)</div>
                     </div>
+                    <div class="mb-3">
+                        <label for="TIMEZONE" class="form-label">Timezone</label>
+                        <select class="form-control" id="TIMEZONE">
+                            <option value="Europe/Berlin" {% if config.TIMEZONE == 'Europe/Berlin' %}selected{% endif %}>Europe/Berlin (CET/CEST)</option>
+                            <option value="Europe/London" {% if config.TIMEZONE == 'Europe/London' %}selected{% endif %}>Europe/London (GMT/BST)</option>
+                            <option value="Europe/Paris" {% if config.TIMEZONE == 'Europe/Paris' %}selected{% endif %}>Europe/Paris (CET/CEST)</option>
+                            <option value="Europe/Zurich" {% if config.TIMEZONE == 'Europe/Zurich' %}selected{% endif %}>Europe/Zurich (CET/CEST)</option>
+                            <option value="Europe/Vienna" {% if config.TIMEZONE == 'Europe/Vienna' %}selected{% endif %}>Europe/Vienna (CET/CEST)</option>
+                            <option value="America/New_York" {% if config.TIMEZONE == 'America/New_York' %}selected{% endif %}>America/New York (EST/EDT)</option>
+                            <option value="America/Los_Angeles" {% if config.TIMEZONE == 'America/Los_Angeles' %}selected{% endif %}>America/Los Angeles (PST/PDT)</option>
+                            <option value="Asia/Tokyo" {% if config.TIMEZONE == 'Asia/Tokyo' %}selected{% endif %}>Asia/Tokyo (JST)</option>
+                            <option value="UTC" {% if config.TIMEZONE == 'UTC' %}selected{% endif %}>UTC</option>
+                        </select>
+                        <div class="form-text">Timezone for timestamps in logs and UI</div>
+                    </div>
                 </div>
 
                 <div class="col-md-6">
@@ -153,7 +168,8 @@ function saveConfig() {
         AUTO_DETACH_ENABLED: document.getElementById('AUTO_DETACH_ENABLED').checked,
         AUTO_DETACH_TIMEOUT: parseInt(document.getElementById('AUTO_DETACH_TIMEOUT').value) * 3600,
         AUTO_DETACH_WARNING_TIMEOUT: parseInt(document.getElementById('AUTO_DETACH_WARNING_TIMEOUT').value) * 3600,
-        AUTO_DETACH_CHECK_INTERVAL: parseInt(document.getElementById('AUTO_DETACH_CHECK_INTERVAL').value) * 3600
+        AUTO_DETACH_CHECK_INTERVAL: parseInt(document.getElementById('AUTO_DETACH_CHECK_INTERVAL').value) * 3600,
+        TIMEZONE: document.getElementById('TIMEZONE').value
     };
 
     fetch('/api/config', {

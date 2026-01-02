@@ -60,8 +60,19 @@ max_log_entries = 1000
 class WebUILogHandler(logging.Handler):
     def __init__(self):
         super().__init__()
-        # Set timezone to UTC+2 (Central European Time)
-        self.timezone = timezone(timedelta(hours=2))
+        # Use configured timezone
+        self._update_timezone()
+    
+    def _update_timezone(self):
+        """Update timezone from config"""
+        try:
+            import zoneinfo
+            self.tz = zoneinfo.ZoneInfo(bssci_config.TIMEZONE)
+            self.use_zoneinfo = True
+        except Exception:
+            # Fallback to UTC+1 (CET)
+            self.tz = timezone(timedelta(hours=1))
+            self.use_zoneinfo = False
 
     def emit(self, record):
         global log_entries
@@ -74,7 +85,7 @@ class WebUILogHandler(logging.Handler):
 
         # Convert UTC timestamp to local timezone
         utc_time = datetime.fromtimestamp(record.created, tz=timezone.utc)
-        local_time = utc_time.astimezone(self.timezone)
+        local_time = utc_time.astimezone(self.tz)
         current_time = local_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
 
         message = record.getMessage()
@@ -653,7 +664,8 @@ def config():
             'AUTO_DETACH_ENABLED': getattr(bssci_config, 'AUTO_DETACH_ENABLED', True),
             'AUTO_DETACH_TIMEOUT': getattr(bssci_config, 'AUTO_DETACH_TIMEOUT', 259200),
             'AUTO_DETACH_WARNING_TIMEOUT': getattr(bssci_config, 'AUTO_DETACH_WARNING_TIMEOUT', 129600),
-            'AUTO_DETACH_CHECK_INTERVAL': getattr(bssci_config, 'AUTO_DETACH_CHECK_INTERVAL', 3600)
+            'AUTO_DETACH_CHECK_INTERVAL': getattr(bssci_config, 'AUTO_DETACH_CHECK_INTERVAL', 3600),
+            'TIMEZONE': getattr(bssci_config, 'TIMEZONE', 'Europe/Berlin')
         }
         return render_template('config.html', config=config_data)
     except Exception as e:
@@ -672,7 +684,8 @@ def config():
             'AUTO_DETACH_ENABLED': True,
             'AUTO_DETACH_TIMEOUT': 259200,
             'AUTO_DETACH_WARNING_TIMEOUT': 129600,
-            'AUTO_DETACH_CHECK_INTERVAL': 3600
+            'AUTO_DETACH_CHECK_INTERVAL': 3600,
+            'TIMEZONE': 'Europe/Berlin'
         }
         return render_template('config.html', config=default_config)
 
@@ -724,6 +737,9 @@ AUTO_DETACH_HOURS={auto_detach_timeout // 3600}
 AUTO_DETACH_WARNING_TIMEOUT={auto_detach_warning_timeout}
 AUTO_DETACH_WARNING_HOURS={auto_detach_warning_timeout // 3600}
 AUTO_DETACH_CHECK_INTERVAL={auto_detach_check_interval}
+
+# Timezone Configuration
+TIMEZONE={data.get('TIMEZONE', 'Europe/Berlin')}
 
 # Logging Configuration
 LOG_LEVEL=INFO

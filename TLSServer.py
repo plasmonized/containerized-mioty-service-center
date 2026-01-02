@@ -97,9 +97,15 @@ class TLSServer:
         logger.info(f"   mqtt_in_queue ID: {id(self.mqtt_in_queue)}")
 
     def _get_local_time(self) -> str:
-        """Get current time in UTC+2 timezone"""
-        utc_time = datetime.now(timezone.utc)
-        local_time = utc_time + timedelta(hours=2)
+        """Get current time in configured timezone"""
+        try:
+            import zoneinfo
+            tz = zoneinfo.ZoneInfo(bssci_config.TIMEZONE)
+            local_time = datetime.now(tz)
+        except Exception:
+            # Fallback to UTC+1 (CET) if timezone not available
+            utc_time = datetime.now(timezone.utc)
+            local_time = utc_time + timedelta(hours=1)
         return local_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
 
     async def start_server(self) -> None:
@@ -776,12 +782,11 @@ class TLSServer:
 
                     elif msg_type == "conCmp":
                         logger.info(f"📨 BSSCI CONNECTION COMPLETE received from {addr}")
-                        if (
-                            writer in self.connecting_base_stations
-                            and writer not in self.connected_base_stations
-                        ):
-                            bs_eui = self.connecting_base_stations.pop(writer)  # Remove from connecting
-                            
+                        
+                        # Always remove from connecting first (fix for duplicate display bug)
+                        bs_eui = self.connecting_base_stations.pop(writer, None)
+                        
+                        if bs_eui and writer not in self.connected_base_stations:
                             # Deduplicate: Remove any existing connection with the same EUI
                             old_writers = [w for w, eui in list(self.connected_base_stations.items()) if eui == bs_eui]
                             for old_writer in old_writers:
@@ -792,6 +797,8 @@ class TLSServer:
                                 except Exception as e:
                                     logger.debug(f"   Could not close old writer: {e}")
                                 self.connected_base_stations.pop(old_writer, None)
+                                # Also remove from connecting if present there
+                                self.connecting_base_stations.pop(old_writer, None)
                             
                             self.connected_base_stations[writer] = bs_eui
                             connection_time = asyncio.get_event_loop().time() - connection_start_time

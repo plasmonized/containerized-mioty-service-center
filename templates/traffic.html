@@ -69,10 +69,23 @@
     <div class="col-md-6">
         <div class="card">
             <div class="card-header">
+                <h5 class="mb-0">Sensors & Base Stations (60 min)</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="connectionsChart" height="200"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header">
                 <h5 class="mb-0">Operations</h5>
             </div>
             <div class="card-body">
-                <canvas id="operationsChart" height="200"></canvas>
+                <canvas id="operationsChart" height="100"></canvas>
             </div>
         </div>
     </div>
@@ -154,7 +167,7 @@
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
 <script>
-let messageChart, operationsChart;
+let messageChart, operationsChart, connectionsChart;
 let historyData = [];
 let refreshInterval;
 
@@ -238,21 +251,86 @@ function initCharts() {
             }
         }
     });
+
+    const ctxConn = document.getElementById('connectionsChart').getContext('2d');
+    connectionsChart = new Chart(ctxConn, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Sensors',
+                data: [],
+                borderColor: '#28a745',
+                backgroundColor: 'rgba(40, 167, 69, 0.1)',
+                tension: 0.4,
+                fill: true,
+                yAxisID: 'y'
+            }, {
+                label: 'Base Stations',
+                data: [],
+                borderColor: '#ff8c00',
+                backgroundColor: 'rgba(255, 140, 0, 0.1)',
+                tension: 0.4,
+                fill: true,
+                yAxisID: 'y1'
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    type: 'linear',
+                    display: true,
+                    position: 'left',
+                    beginAtZero: true,
+                    title: {
+                        display: true,
+                        text: 'Sensors'
+                    }
+                },
+                y1: {
+                    type: 'linear',
+                    display: true,
+                    position: 'right',
+                    beginAtZero: true,
+                    title: {
+                        display: true,
+                        text: 'Base Stations'
+                    },
+                    grid: {
+                        drawOnChartArea: false
+                    }
+                }
+            },
+            plugins: {
+                legend: {
+                    position: 'bottom'
+                }
+            }
+        }
+    });
 }
 
 function updateCharts(history) {
-    if (!messageChart || !operationsChart) return;
+    if (!messageChart || !connectionsChart) return;
     
     const labels = history.map((_, i) => `-${history.length - i}m`);
     const msgsIn = history.map(h => h.messages_in || 0);
     const msgsOut = history.map(h => h.messages_out || 0);
     const dropped = history.map(h => h.messages_dropped || 0);
+    const sensors = history.map(h => h.sensors || 0);
+    const baseStations = history.map(h => h.base_stations || 0);
     
     messageChart.data.labels = labels;
     messageChart.data.datasets[0].data = msgsIn;
     messageChart.data.datasets[1].data = msgsOut;
     messageChart.data.datasets[2].data = dropped;
     messageChart.update('none');
+    
+    connectionsChart.data.labels = labels;
+    connectionsChart.data.datasets[0].data = sensors;
+    connectionsChart.data.datasets[1].data = baseStations;
+    connectionsChart.update('none');
 }
 
 function updateOperationsChart(metrics) {

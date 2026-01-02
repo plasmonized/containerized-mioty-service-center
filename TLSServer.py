@@ -1860,7 +1860,9 @@ class TLSServer:
                 'timestamp': current_time,
                 'messages_in': self.traffic_metrics['messages_in'],
                 'messages_out': self.traffic_metrics['messages_out'],
-                'messages_dropped': self.traffic_metrics['messages_dropped']
+                'messages_dropped': self.traffic_metrics['messages_dropped'],
+                'sensors': len(self.registered_sensors),
+                'base_stations': len(self.connected_base_stations)
             })
             # Keep only last 60 entries (1 hour)
             if len(self.traffic_history) > 60:
@@ -1871,7 +1873,8 @@ class TLSServer:
             'metrics': dict(self.traffic_metrics),
             'dedup_stats': dict(self.deduplication_stats),
             'history': list(self.traffic_history),
-            'connections': len(self.connected_base_stations)
+            'connections': len(self.connected_base_stations),
+            'sensors': len(self.registered_sensors)
         }
     
     def reset_traffic_metrics(self) -> None:

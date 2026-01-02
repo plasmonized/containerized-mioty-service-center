@@ -55,6 +55,12 @@ class TLSServer:
         # eui -> whether warning was sent
         self.sensor_warning_sent: Dict[str, bool] = {}
 
+        # Variable MAC (VM) Sub-Channel tracking
+        # eui -> {active: bool, vm_channel: int, activated_at: timestamp, bs_eui: str}
+        self.vm_active_sensors: Dict[str, Dict[str, Any]] = {}
+        # Pending VM operations: opID -> {eui, operation, timestamp}
+        self.pending_vm_operations: Dict[int, Dict[str, Any]] = {}
+
         # Start the deduplication task
         asyncio.create_task(self.process_deduplication_buffer())
 
@@ -1181,6 +1187,155 @@ class TLSServer:
                             }
                             await self.mqtt_out_queue.put(detach_response_notification)
 
+                    # Variable MAC (VM) Sub-Channel Message Handlers
+                    elif msg_type == "vmActRsp":
+                        op_id = message.get("opId", "unknown")
+                        code = message.get("code", -1)
+                        bs_eui = self.connected_base_stations.get(writer, "unknown")
+                        
+                        if op_id in self.pending_vm_operations:
+                            pending = self.pending_vm_operations.pop(op_id)
+                            eui = pending.get("eui", "unknown")
+                            vm_channel = pending.get("vm_channel", 0)
+                            
+                            if code == 0:
+                                logger.info(f"✅ VM ACTIVATE SUCCESS for sensor {eui}")
+                                self.vm_active_sensors[eui.upper()] = {
+                                    "active": True,
+                                    "vm_channel": vm_channel,
+                                    "activated_at": asyncio.get_event_loop().time(),
+                                    "bs_eui": bs_eui
+                                }
+                            else:
+                                logger.warning(f"❌ VM ACTIVATE FAILED for sensor {eui}, code: {code}")
+                            
+                            if self.mqtt_out_queue:
+                                await self.mqtt_out_queue.put({
+                                    "topic": f"ep/{eui.upper()}/vm/status",
+                                    "payload": json.dumps({
+                                        "action": "vm_activate_response",
+                                        "eui": eui,
+                                        "success": code == 0,
+                                        "vm_channel": vm_channel,
+                                        "timestamp": asyncio.get_event_loop().time()
+                                    })
+                                })
+                    
+                    elif msg_type == "vmDeactRsp":
+                        op_id = message.get("opId", "unknown")
+                        code = message.get("code", -1)
+                        
+                        if op_id in self.pending_vm_operations:
+                            pending = self.pending_vm_operations.pop(op_id)
+                            eui = pending.get("eui", "unknown")
+                            
+                            if code == 0:
+                                logger.info(f"✅ VM DEACTIVATE SUCCESS for sensor {eui}")
+                                if eui.upper() in self.vm_active_sensors:
+                                    del self.vm_active_sensors[eui.upper()]
+                            else:
+                                logger.warning(f"❌ VM DEACTIVATE FAILED for sensor {eui}, code: {code}")
+                            
+                            if self.mqtt_out_queue:
+                                await self.mqtt_out_queue.put({
+                                    "topic": f"ep/{eui.upper()}/vm/status",
+                                    "payload": json.dumps({
+                                        "action": "vm_deactivate_response",
+                                        "eui": eui,
+                                        "success": code == 0,
+                                        "timestamp": asyncio.get_event_loop().time()
+                                    })
+                                })
+                    
+                    elif msg_type == "vmStatusRsp":
+                        op_id = message.get("opId", "unknown")
+                        active = message.get("active", False)
+                        vm_channel = message.get("vmChan", 0)
+                        
+                        if op_id in self.pending_vm_operations:
+                            pending = self.pending_vm_operations.pop(op_id)
+                            eui = pending.get("eui", "unknown")
+                            bs_eui = self.connected_base_stations.get(writer, "unknown")
+                            
+                            logger.info(f"📊 VM STATUS for sensor {eui}: active={active}, channel={vm_channel}")
+                            
+                            if active:
+                                self.vm_active_sensors[eui.upper()] = {
+                                    "active": True,
+                                    "vm_channel": vm_channel,
+                                    "activated_at": asyncio.get_event_loop().time(),
+                                    "bs_eui": bs_eui
+                                }
+                            elif eui.upper() in self.vm_active_sensors:
+                                del self.vm_active_sensors[eui.upper()]
+                            
+                            if self.mqtt_out_queue:
+                                await self.mqtt_out_queue.put({
+                                    "topic": f"ep/{eui.upper()}/vm/status",
+                                    "payload": json.dumps({
+                                        "action": "vm_status_response",
+                                        "eui": eui,
+                                        "active": active,
+                                        "vm_channel": vm_channel,
+                                        "timestamp": asyncio.get_event_loop().time()
+                                    })
+                                })
+                    
+                    elif msg_type == "vmUlData":
+                        eui = int(message["epEui"]).to_bytes(8, byteorder="big").hex()
+                        bs_eui = self.connected_base_stations.get(writer, "unknown")
+                        op_id = message.get("opId", 0)
+                        port = message.get("port", 1)
+                        data = message.get("data", [])
+                        
+                        logger.info(f"📨 VM UPLINK DATA received from sensor {eui}")
+                        logger.info(f"   Port: {port}, Data length: {len(data)} bytes")
+                        logger.info(f"   Via base station: {bs_eui}")
+                        
+                        # Send acknowledgment
+                        msg_pack = encode_message(messages.build_vm_ul_data_response(op_id))
+                        writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
+                        await writer.drain()
+                        
+                        # Update last seen
+                        self.sensor_last_seen[eui.upper()] = asyncio.get_event_loop().time()
+                        
+                        # Publish to MQTT
+                        if self.mqtt_out_queue:
+                            await self.mqtt_out_queue.put({
+                                "topic": f"ep/{eui.upper()}/vm/ul",
+                                "payload": json.dumps({
+                                    "bs_eui": bs_eui,
+                                    "port": port,
+                                    "data": bytes(data).hex() if isinstance(data, list) else data,
+                                    "timestamp": asyncio.get_event_loop().time()
+                                })
+                            })
+                    
+                    elif msg_type == "vmDlDataRsp":
+                        op_id = message.get("opId", "unknown")
+                        code = message.get("code", -1)
+                        
+                        if op_id in self.pending_vm_operations:
+                            pending = self.pending_vm_operations.pop(op_id)
+                            eui = pending.get("eui", "unknown")
+                            
+                            if code == 0:
+                                logger.info(f"✅ VM DOWNLINK DATA SENT successfully to sensor {eui}")
+                            else:
+                                logger.warning(f"❌ VM DOWNLINK DATA FAILED for sensor {eui}, code: {code}")
+                            
+                            if self.mqtt_out_queue:
+                                await self.mqtt_out_queue.put({
+                                    "topic": f"ep/{eui.upper()}/vm/dl/response",
+                                    "payload": json.dumps({
+                                        "action": "vm_dl_response",
+                                        "eui": eui,
+                                        "success": code == 0,
+                                        "timestamp": asyncio.get_event_loop().time()
+                                    })
+                                })
+
                     else:
                         logger.warning(f"[WARN] Unknown message type: {msg_type} - Message: {message}")
 
@@ -1505,6 +1660,162 @@ class TLSServer:
             logger.error(f"❌ Error in MQTT queue watcher: {e}")
             import traceback
             logger.error(f"   Traceback: {traceback.format_exc()}")
+
+    # ==================== Variable MAC (VM) Sub-Channel Methods ====================
+    
+    async def vm_activate(self, sensor_eui: str, vm_channel: int = 0) -> bool:
+        """Activate VM sub-channel for a sensor"""
+        sensor_eui = sensor_eui.upper()
+        logger.info(f"📡 VM ACTIVATE request for sensor {sensor_eui}, channel {vm_channel}")
+        
+        if not self.connected_base_stations:
+            logger.warning("   No base stations connected")
+            return False
+        
+        success = False
+        for writer, bs_eui in self.connected_base_stations.items():
+            try:
+                self.opID += 1
+                op_id = self.opID
+                
+                self.pending_vm_operations[op_id] = {
+                    "eui": sensor_eui,
+                    "operation": "activate",
+                    "vm_channel": vm_channel,
+                    "timestamp": asyncio.get_event_loop().time()
+                }
+                
+                msg_pack = encode_message(messages.build_vm_activate_request(sensor_eui, op_id, vm_channel))
+                writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
+                await writer.drain()
+                
+                logger.info(f"   Sent VM activate to base station {bs_eui}")
+                success = True
+            except Exception as e:
+                logger.error(f"   Failed to send VM activate to {bs_eui}: {e}")
+        
+        return success
+    
+    async def vm_deactivate(self, sensor_eui: str) -> bool:
+        """Deactivate VM sub-channel for a sensor"""
+        sensor_eui = sensor_eui.upper()
+        logger.info(f"📡 VM DEACTIVATE request for sensor {sensor_eui}")
+        
+        if not self.connected_base_stations:
+            logger.warning("   No base stations connected")
+            return False
+        
+        success = False
+        for writer, bs_eui in self.connected_base_stations.items():
+            try:
+                self.opID += 1
+                op_id = self.opID
+                
+                self.pending_vm_operations[op_id] = {
+                    "eui": sensor_eui,
+                    "operation": "deactivate",
+                    "timestamp": asyncio.get_event_loop().time()
+                }
+                
+                msg_pack = encode_message(messages.build_vm_deactivate_request(sensor_eui, op_id))
+                writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
+                await writer.drain()
+                
+                logger.info(f"   Sent VM deactivate to base station {bs_eui}")
+                success = True
+            except Exception as e:
+                logger.error(f"   Failed to send VM deactivate to {bs_eui}: {e}")
+        
+        return success
+    
+    async def vm_status(self, sensor_eui: str) -> bool:
+        """Query VM sub-channel status for a sensor"""
+        sensor_eui = sensor_eui.upper()
+        logger.info(f"📊 VM STATUS request for sensor {sensor_eui}")
+        
+        if not self.connected_base_stations:
+            logger.warning("   No base stations connected")
+            return False
+        
+        success = False
+        for writer, bs_eui in self.connected_base_stations.items():
+            try:
+                self.opID += 1
+                op_id = self.opID
+                
+                self.pending_vm_operations[op_id] = {
+                    "eui": sensor_eui,
+                    "operation": "status",
+                    "timestamp": asyncio.get_event_loop().time()
+                }
+                
+                msg_pack = encode_message(messages.build_vm_status_request(sensor_eui, op_id))
+                writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
+                await writer.drain()
+                
+                logger.info(f"   Sent VM status request to base station {bs_eui}")
+                success = True
+            except Exception as e:
+                logger.error(f"   Failed to send VM status to {bs_eui}: {e}")
+        
+        return success
+    
+    async def vm_send_data(self, sensor_eui: str, data: bytes, port: int = 1) -> bool:
+        """Send data to sensor via VM sub-channel (downlink)"""
+        sensor_eui = sensor_eui.upper()
+        logger.info(f"📤 VM DOWNLINK DATA for sensor {sensor_eui}")
+        logger.info(f"   Port: {port}, Data length: {len(data)} bytes")
+        
+        # Check if sensor has VM active
+        if sensor_eui not in self.vm_active_sensors:
+            logger.warning(f"   Sensor {sensor_eui} does not have VM sub-channel active")
+            return False
+        
+        vm_info = self.vm_active_sensors[sensor_eui]
+        preferred_bs = vm_info.get("bs_eui")
+        
+        # Find the writer for the preferred base station
+        target_writer = None
+        for writer, bs_eui in self.connected_base_stations.items():
+            if bs_eui == preferred_bs:
+                target_writer = writer
+                break
+        
+        if not target_writer:
+            # Use any connected base station if preferred one not found
+            if self.connected_base_stations:
+                target_writer = list(self.connected_base_stations.keys())[0]
+            else:
+                logger.warning("   No base stations connected")
+                return False
+        
+        try:
+            self.opID += 1
+            op_id = self.opID
+            
+            self.pending_vm_operations[op_id] = {
+                "eui": sensor_eui,
+                "operation": "dl_data",
+                "timestamp": asyncio.get_event_loop().time()
+            }
+            
+            msg_pack = encode_message(messages.build_vm_dl_data(sensor_eui, op_id, data, port))
+            target_writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
+            await target_writer.drain()
+            
+            bs_eui = self.connected_base_stations.get(target_writer, "unknown")
+            logger.info(f"   Sent VM downlink data via base station {bs_eui}")
+            return True
+        except Exception as e:
+            logger.error(f"   Failed to send VM downlink data: {e}")
+            return False
+    
+    def get_vm_status(self) -> dict:
+        """Get VM sub-channel status for all sensors"""
+        return {
+            "active_sensors": dict(self.vm_active_sensors),
+            "pending_operations": len(self.pending_vm_operations)
+        }
 
     def get_base_station_status(self) -> dict:
         """Get status of connected base stations"""

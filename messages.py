@@ -57,3 +57,90 @@ def build_status_complete(opID: int) -> dict[str, object]:
 
 def build_ul_response(opID: int) -> dict[str, object]:
     return {"command": "ulDataRsp", "opId": opID}
+
+
+# Variable MAC (VM) Sub-Channel Messages
+# Per ETSI TS 103357 - VM mode for metering devices with longer messages and acknowledgement
+
+def build_vm_activate_request(sensor_eui: str, opID: int, vm_channel: int = 0) -> dict[str, object]:
+    """Build VM sub-channel activate request"""
+    return {
+        "command": "vmActivate",
+        "opId": opID,
+        "epEui": int.from_bytes(bytes.fromhex(sensor_eui), "big"),
+        "vmChan": vm_channel,  # VM channel number (0-3 typically)
+    }
+
+
+def build_vm_activate_response(opID: int, code: int = 0) -> dict[str, object]:
+    """Build VM sub-channel activate response"""
+    return {
+        "command": "vmActRsp",
+        "opId": opID,
+        "code": code,  # 0 = success
+    }
+
+
+def build_vm_deactivate_request(sensor_eui: str, opID: int) -> dict[str, object]:
+    """Build VM sub-channel deactivate request"""
+    return {
+        "command": "vmDeactivate",
+        "opId": opID,
+        "epEui": int.from_bytes(bytes.fromhex(sensor_eui), "big"),
+    }
+
+
+def build_vm_deactivate_response(opID: int, code: int = 0) -> dict[str, object]:
+    """Build VM sub-channel deactivate response"""
+    return {
+        "command": "vmDeactRsp",
+        "opId": opID,
+        "code": code,
+    }
+
+
+def build_vm_status_request(sensor_eui: str, opID: int) -> dict[str, object]:
+    """Build VM sub-channel status request"""
+    return {
+        "command": "vmStatus",
+        "opId": opID,
+        "epEui": int.from_bytes(bytes.fromhex(sensor_eui), "big"),
+    }
+
+
+def build_vm_status_response(opID: int, active: bool = False, vm_channel: int = 0) -> dict[str, object]:
+    """Build VM sub-channel status response"""
+    return {
+        "command": "vmStatusRsp",
+        "opId": opID,
+        "active": active,
+        "vmChan": vm_channel,
+    }
+
+
+def build_vm_dl_data(sensor_eui: str, opID: int, data: bytes, port: int = 1) -> dict[str, object]:
+    """Build VM downlink data message (Service Center -> Base Station -> Endpoint)"""
+    return {
+        "command": "vmDlData",
+        "opId": opID,
+        "epEui": int.from_bytes(bytes.fromhex(sensor_eui), "big"),
+        "port": port,
+        "data": list(data),
+    }
+
+
+def build_vm_dl_data_response(opID: int, code: int = 0) -> dict[str, object]:
+    """Build VM downlink data response"""
+    return {
+        "command": "vmDlDataRsp",
+        "opId": opID,
+        "code": code,
+    }
+
+
+def build_vm_ul_data_response(opID: int) -> dict[str, object]:
+    """Build VM uplink data response (acknowledge receipt of VM uplink data)"""
+    return {
+        "command": "vmUlDataRsp",
+        "opId": opID,
+    }

@@ -1327,6 +1327,118 @@ def get_base_stations():
             "error": f"Base stations error: {str(e)}"
         })
 
+# ==================== Variable MAC (VM) Sub-Channel API ====================
+
+@app.route('/api/vm/status')
+def get_vm_status():
+    """Get VM sub-channel status for all sensors"""
+    try:
+        global tls_server_instance
+        if tls_server_instance and hasattr(tls_server_instance, 'get_vm_status'):
+            status = tls_server_instance.get_vm_status()
+            return jsonify({'success': True, **status})
+        return jsonify({'success': False, 'message': 'TLS server not available', 'active_sensors': {}})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/vm/activate/<eui>', methods=['POST'])
+def vm_activate_sensor(eui):
+    """Activate VM sub-channel for a sensor"""
+    try:
+        global tls_server_instance
+        if not tls_server_instance:
+            return jsonify({'success': False, 'message': 'TLS server not available'}), 503
+        
+        data = request.json or {}
+        vm_channel = data.get('vm_channel', 0)
+        
+        import asyncio
+        loop = asyncio.new_event_loop()
+        try:
+            success = loop.run_until_complete(tls_server_instance.vm_activate(eui, vm_channel))
+        finally:
+            loop.close()
+        
+        if success:
+            return jsonify({'success': True, 'message': f'VM activate request sent for sensor {eui}'})
+        else:
+            return jsonify({'success': False, 'message': 'No base stations connected'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/vm/deactivate/<eui>', methods=['POST'])
+def vm_deactivate_sensor(eui):
+    """Deactivate VM sub-channel for a sensor"""
+    try:
+        global tls_server_instance
+        if not tls_server_instance:
+            return jsonify({'success': False, 'message': 'TLS server not available'}), 503
+        
+        import asyncio
+        loop = asyncio.new_event_loop()
+        try:
+            success = loop.run_until_complete(tls_server_instance.vm_deactivate(eui))
+        finally:
+            loop.close()
+        
+        if success:
+            return jsonify({'success': True, 'message': f'VM deactivate request sent for sensor {eui}'})
+        else:
+            return jsonify({'success': False, 'message': 'No base stations connected'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/vm/query/<eui>', methods=['POST'])
+def vm_query_sensor(eui):
+    """Query VM sub-channel status for a sensor"""
+    try:
+        global tls_server_instance
+        if not tls_server_instance:
+            return jsonify({'success': False, 'message': 'TLS server not available'}), 503
+        
+        import asyncio
+        loop = asyncio.new_event_loop()
+        try:
+            success = loop.run_until_complete(tls_server_instance.vm_status(eui))
+        finally:
+            loop.close()
+        
+        if success:
+            return jsonify({'success': True, 'message': f'VM status query sent for sensor {eui}'})
+        else:
+            return jsonify({'success': False, 'message': 'No base stations connected'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/vm/send/<eui>', methods=['POST'])
+def vm_send_data_to_sensor(eui):
+    """Send data to sensor via VM sub-channel (downlink)"""
+    try:
+        global tls_server_instance
+        if not tls_server_instance:
+            return jsonify({'success': False, 'message': 'TLS server not available'}), 503
+        
+        data = request.json
+        if not data or 'data' not in data:
+            return jsonify({'success': False, 'message': 'Missing data field'}), 400
+        
+        payload = bytes.fromhex(data['data']) if isinstance(data['data'], str) else bytes(data['data'])
+        port = data.get('port', 1)
+        
+        import asyncio
+        loop = asyncio.new_event_loop()
+        try:
+            success = loop.run_until_complete(tls_server_instance.vm_send_data(eui, payload, port))
+        finally:
+            loop.close()
+        
+        if success:
+            return jsonify({'success': True, 'message': f'VM downlink data sent to sensor {eui}'})
+        else:
+            return jsonify({'success': False, 'message': 'Failed to send VM data - VM may not be active for this sensor'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
 @app.route('/api/certificates/status')
 def get_certificate_status():
     """Get status of SSL certificates"""

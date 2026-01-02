@@ -1864,9 +1864,9 @@ class TLSServer:
                 'sensors': len(self.registered_sensors),
                 'base_stations': len(self.connected_base_stations)
             })
-            # Keep only last 60 entries (1 hour)
-            if len(self.traffic_history) > 60:
-                self.traffic_history = self.traffic_history[-60:]
+            # Keep only last 720 entries (12 hours)
+            if len(self.traffic_history) > 720:
+                self.traffic_history = self.traffic_history[-720:]
             self._last_history_update = current_time
         
         return {

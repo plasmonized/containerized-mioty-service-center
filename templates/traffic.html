@@ -281,6 +281,15 @@ function refreshData() {
                 const uptime = Math.floor(Date.now() / 1000 - m.start_time);
                 document.getElementById('uptime').textContent = 'Uptime: ' + formatUptime(uptime);
                 
+                // Calculate messages per minute
+                const uptimeMinutes = uptime / 60;
+                if (uptimeMinutes > 0) {
+                    const inRate = (m.messages_in / uptimeMinutes).toFixed(1);
+                    const outRate = (m.messages_out / uptimeMinutes).toFixed(1);
+                    document.getElementById('messages-in-rate').textContent = inRate + '/min';
+                    document.getElementById('messages-out-rate').textContent = outRate + '/min';
+                }
+                
                 if (m.messages_in > 0) {
                     const dedupRate = ((m.messages_dropped / m.messages_in) * 100).toFixed(1);
                     document.getElementById('dedup-rate').textContent = dedupRate + '% filtered';

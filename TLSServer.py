@@ -258,6 +258,7 @@ class TLSServer:
 
                 writer.write(full_message)
                 await writer.drain()
+                self.traffic_metrics['attach_requests'] += 1
 
                 # Track this attach request for correlation with response
                 self.pending_attach_requests[self.opID] = {
@@ -408,6 +409,7 @@ class TLSServer:
 
             writer.write(full_message)
             await writer.drain()
+            self.traffic_metrics['detach_requests'] += 1
             self.opID -= 1
 
             # Remove from registered sensors
@@ -1080,6 +1082,7 @@ class TLSServer:
 
                         self.deduplication_stats['total_messages'] += 1
                         self.traffic_metrics['messages_in'] += 1
+                        self.traffic_metrics['bytes_in'] += len(str(message.get('payload', '')))
 
                         # Check if message is a duplicate and if the new one has better SNR
                         is_duplicate = message_key in self.deduplication_buffer

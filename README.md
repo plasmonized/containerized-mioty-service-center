@@ -52,12 +52,23 @@ The BSSCI Service Center is a comprehensive IoT device management system that pr
 - **Automatic Registration**: Sensors are automatically registered when base stations connect
 - **Manual Detachment**: Individual sensor detachment via web UI
 - **Bulk Operations**: Clear all sensors with automatic detachment
+- **Bulk Import/Export**: CSV/TXT file support for mass sensor configuration
 - **Remote Commands**: MQTT-based sensor control (attach, detach, status)
 - **Auto-Detach**: Automatic removal of inactive sensors after configurable timeout
+
+### Variable MAC (VM) Sub-Channel Support
+
+Full ETSI TS 103357 compliant Variable MAC implementation for metering devices:
+- **vm.activate**: Activate VM sub-channel for sensor
+- **vm.deactivate**: Deactivate VM sub-channel
+- **vm.status**: Query VM sub-channel status
+- **vm.ulData**: Receive uplink data via VM channel
+- **vm.dlData**: Send downlink data via VM channel
 
 ### Real-Time Monitoring
 
 - **Live Dashboard**: Real-time sensor status and base station monitoring
+- **Traffic Visualization**: Real-time charts showing messages in/out, dropped packets, and connections
 - **Activity Tracking**: Monitor sensor communication and detect inactivity
 - **Warning System**: Proactive alerts before auto-detachment
 - **Signal Quality**: Track preferred downlink paths based on SNR
@@ -66,6 +77,7 @@ The BSSCI Service Center is a comprehensive IoT device management system that pr
 ### Data Processing
 
 - **Message Deduplication**: Intelligent filtering of duplicate messages from multiple base stations
+- **Base Station Deduplication**: Prevents duplicate base station connections using EUI-based identification
 - **Signal Optimization**: Automatic selection of best signal path
 - **Queue Management**: Asynchronous message processing with monitoring
 - **Performance Metrics**: Real-time statistics and monitoring
@@ -309,7 +321,13 @@ The system uses a simplified, unified MQTT topic structure under `{BASE_TOPIC}/e
 │   ├── status          # Sensor status updates
 │   ├── warning         # Inactivity warnings
 │   ├── response        # Command responses
-│   └── error           # Error notifications
+│   ├── error           # Error notifications
+│   └── vm/             # Variable MAC sub-channel
+│       ├── activate    # VM activation commands
+│       ├── deactivate  # VM deactivation commands
+│       ├── status      # VM status updates
+│       ├── ulData      # VM uplink data
+│       └── dlData      # VM downlink data
 ├── bs/{EUI}/           # Base station status
 ├── config/             # System configuration
 └── health_check        # Connection health monitoring
@@ -531,6 +549,85 @@ POST /api/sensors/clear
 ```
 
 Performs bulk detachment and clears all sensor configurations.
+
+#### Export Sensors to CSV
+```http
+GET /api/sensors/export
+```
+
+Downloads all sensor configurations as CSV file with columns: eui, nwKey, shortAddr, bidi.
+
+#### Import Sensors from CSV/TXT
+```http
+POST /api/sensors/import
+Content-Type: multipart/form-data
+
+file: <csv or txt file>
+```
+
+Imports sensors from CSV or TXT file. Supports comma, semicolon, and tab delimiters. Automatically detects header row.
+
+### Variable MAC (VM) Operations
+
+#### Activate VM Sub-Channel
+```http
+POST /api/vm/activate
+Content-Type: application/json
+
+{
+  "eui": "FCA84A0300001234"
+}
+```
+
+#### Deactivate VM Sub-Channel
+```http
+POST /api/vm/deactivate
+Content-Type: application/json
+
+{
+  "eui": "FCA84A0300001234"
+}
+```
+
+#### Get VM Status
+```http
+GET /api/vm/status
+```
+
+Returns status of all active VM sub-channels.
+
+#### Send VM Downlink Data
+```http
+POST /api/vm/dlData
+Content-Type: application/json
+
+{
+  "eui": "FCA84A0300001234",
+  "payload": "48656C6C6F"
+}
+```
+
+### Traffic Monitoring
+
+#### Get Traffic Metrics
+```http
+GET /api/traffic/metrics
+```
+
+Returns real-time traffic statistics including:
+- Messages in/out counts
+- Dropped messages (deduplication)
+- Bytes transferred
+- VM message counts
+- Operation counts (attach, detach, status)
+- 60-minute history for charting
+
+#### Reset Traffic Metrics
+```http
+POST /api/traffic/reset
+```
+
+Resets all traffic counters to zero.
 
 ### System Status
 

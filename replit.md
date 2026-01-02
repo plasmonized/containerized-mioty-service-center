@@ -52,6 +52,13 @@ JSON-based sensor configuration with support for:
 - Bidirectional communication flags
 - Dynamic attach/detach operations
 
+## Recent Changes
+
+- **Bulk Import/Export**: Added CSV/TXT sensor import/export functionality with flexible delimiter detection
+- **Variable MAC (VM)**: Full ETSI TS 103357 compliant VM sub-channel support for metering devices
+- **Traffic Dashboard**: Real-time traffic visualization with Chart.js showing messages, dropped packets, and connections
+- **Base Station Deduplication**: Fixed duplicate base station connections using EUI-based identification
+
 ## External Dependencies
 
 **MQTT Broker**: External MQTT broker for data publishing and configuration management. Supports standard MQTT authentication and configurable topic structures.

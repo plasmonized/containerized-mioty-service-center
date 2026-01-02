@@ -859,13 +859,10 @@ def get_base_stations():
             
             if eui_lower in connected_bs:
                 status = "connected"
-                ip_addr = connected_bs[eui_lower].get("address", "").split(":")[0]
             elif eui_lower in connecting_bs:
                 status = "connecting"
-                ip_addr = connecting_bs[eui_lower].get("address", "").split(":")[0]
             else:
                 status = "offline"
-                ip_addr = bs_data.get("last_ip", "")
             
             health = bs_health.get(eui_lower, {})
             
@@ -874,7 +871,7 @@ def get_base_stations():
                 "name": bs_data.get("name", ""),
                 "tags": bs_data.get("tags", []),
                 "status": status,
-                "ip_address": ip_addr,
+                "configured_ip": bs_data.get("ip", ""),
                 "health": health,
                 "connected_sensors": bs_sensors.get(eui_lower, 0)
             })
@@ -911,7 +908,8 @@ def add_base_station():
         
         config["base_stations"][eui] = {
             "name": data.get("name", ""),
-            "tags": data.get("tags", [])
+            "tags": data.get("tags", []),
+            "ip": data.get("ip", "")
         }
         save_base_station_config(config)
         
@@ -932,7 +930,8 @@ def update_base_station(eui):
         
         config["base_stations"][eui] = {
             "name": data.get("name", ""),
-            "tags": data.get("tags", [])
+            "tags": data.get("tags", []),
+            "ip": data.get("ip", "")
         }
         save_base_station_config(config)
         

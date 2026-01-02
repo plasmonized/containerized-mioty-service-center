@@ -94,6 +94,10 @@
                         <label for="bsTags" class="form-label">Tags (comma-separated)</label>
                         <input type="text" class="form-control" id="bsTags" placeholder="e.g., indoor, floor1, production">
                     </div>
+                    <div class="mb-3">
+                        <label for="bsIp" class="form-label">IP Address</label>
+                        <input type="text" class="form-control" id="bsIp" placeholder="e.g., 192.168.1.100">
+                    </div>
                 </form>
             </div>
             <div class="modal-footer">
@@ -137,7 +141,7 @@ function loadBaseStations() {
                 const tempDisplay = bs.health?.temperature !== undefined 
                     ? `${bs.health.temperature.toFixed(1)}°C` 
                     : '-';
-                const ipDisplay = bs.ip_address || '-';
+                const ipDisplay = bs.configured_ip || '-';
                 const tagsHtml = (bs.tags || []).map(t => 
                     `<span class="badge bg-info me-1">${t}</span>`
                 ).join('') || '-';
@@ -174,6 +178,7 @@ function openBsModal() {
     document.getElementById('bsEui').disabled = false;
     document.getElementById('bsName').value = '';
     document.getElementById('bsTags').value = '';
+    document.getElementById('bsIp').value = '';
 }
 
 function editBaseStation(eui) {
@@ -186,6 +191,7 @@ function editBaseStation(eui) {
             document.getElementById('bsEui').disabled = true;
             document.getElementById('bsName').value = bs.name || '';
             document.getElementById('bsTags').value = (bs.tags || []).join(', ');
+            document.getElementById('bsIp').value = bs.ip || '';
             new bootstrap.Modal(document.getElementById('bsModal')).show();
         });
 }
@@ -195,6 +201,7 @@ function saveBaseStation() {
     const name = document.getElementById('bsName').value.trim();
     const tagsStr = document.getElementById('bsTags').value;
     const tags = tagsStr ? tagsStr.split(',').map(t => t.trim()).filter(t => t) : [];
+    const ip = document.getElementById('bsIp').value.trim();
     
     if (!/^[0-9a-f]{16}$/i.test(eui)) {
         alert('EUI must be exactly 16 hex characters');
@@ -207,7 +214,7 @@ function saveBaseStation() {
     fetch(url, {
         method: method,
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({eui, name, tags})
+        body: JSON.stringify({eui, name, tags, ip})
     })
     .then(r => r.json())
     .then(data => {

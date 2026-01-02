@@ -757,6 +757,18 @@ class TLSServer:
                             and writer not in self.connected_base_stations
                         ):
                             bs_eui = self.connecting_base_stations.pop(writer)  # Remove from connecting
+                            
+                            # Deduplicate: Remove any existing connection with the same EUI
+                            old_writers = [w for w, eui in list(self.connected_base_stations.items()) if eui == bs_eui]
+                            for old_writer in old_writers:
+                                logger.warning(f"🔄 REPLACING duplicate connection for base station {bs_eui}")
+                                logger.warning(f"   Closing old connection, keeping new connection from {addr}")
+                                try:
+                                    old_writer.close()
+                                except Exception as e:
+                                    logger.debug(f"   Could not close old writer: {e}")
+                                self.connected_base_stations.pop(old_writer, None)
+                            
                             self.connected_base_stations[writer] = bs_eui
                             connection_time = asyncio.get_event_loop().time() - connection_start_time
 

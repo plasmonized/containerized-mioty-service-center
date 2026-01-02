@@ -1925,40 +1925,49 @@ class TLSServer:
     def get_base_station_status(self) -> dict:
         """Get status of connected base stations"""
         connected_stations = []
-        for writer, bs_eui in self.connected_base_stations.items():
-            addr = writer.get_extra_info("peername")
-            ssl_obj = writer.get_extra_info("ssl_object")
+        for writer, bs_eui in list(self.connected_base_stations.items()):
+            try:
+                if writer is None:
+                    continue
+                addr = writer.get_extra_info("peername")
+                ssl_obj = writer.get_extra_info("ssl_object")
 
-            station_info = {
-                "eui": bs_eui.upper(),
-                "address": f"{addr[0]}:{addr[1]}" if addr else "unknown",
-                "status": "connected"
-            }
+                station_info = {
+                    "eui": bs_eui.upper(),
+                    "address": f"{addr[0]}:{addr[1]}" if addr else "unknown",
+                    "status": "connected"
+                }
 
-            # Add SSL certificate info if available
-            if ssl_obj:
-                try:
-                    cert = ssl_obj.getpeercert()
-                    if cert:
-                        subject = cert.get('subject', [])
-                        for field in subject:
-                            for name, value in field:
-                                if name == 'commonName':
-                                    station_info['certificate_cn'] = value
-                                    break
-                except:
-                    pass
+                if ssl_obj:
+                    try:
+                        cert = ssl_obj.getpeercert()
+                        if cert:
+                            subject = cert.get('subject', [])
+                            for field in subject:
+                                for name, value in field:
+                                    if name == 'commonName':
+                                        station_info['certificate_cn'] = value
+                                        break
+                    except:
+                        pass
 
-            connected_stations.append(station_info)
+                connected_stations.append(station_info)
+            except Exception:
+                continue
 
         connecting_stations = []
-        for writer, bs_eui in self.connecting_base_stations.items():
-            addr = writer.get_extra_info("peername")
-            connecting_stations.append({
-                "eui": bs_eui.upper(),
-                "address": f"{addr[0]}:{addr[1]}" if addr else "unknown",
-                "status": "connecting"
-            })
+        for writer, bs_eui in list(self.connecting_base_stations.items()):
+            try:
+                if writer is None:
+                    continue
+                addr = writer.get_extra_info("peername")
+                connecting_stations.append({
+                    "eui": bs_eui.upper(),
+                    "address": f"{addr[0]}:{addr[1]}" if addr else "unknown",
+                    "status": "connecting"
+                })
+            except Exception:
+                continue
 
         return {
             "connected": connected_stations,

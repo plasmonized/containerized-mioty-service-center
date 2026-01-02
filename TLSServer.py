@@ -70,6 +70,9 @@ class TLSServer:
         self.active_sensors_hourly: set = set()
         self._current_hour = datetime.now(timezone.utc).hour
         self._last_hourly_active_count = 0
+        
+        # Base station health data (eui -> {cpu, temperature, ...})
+        self.base_station_health: Dict[str, dict] = {}
 
         # Auto-detach variables
         # eui -> timestamp of last message
@@ -889,6 +892,14 @@ class TLSServer:
                             "dutyCycle": message["dutyCycle"],
                             "time": message["time"],
                             "uptime": message["uptime"],
+                        }
+                        
+                        self.base_station_health[bs_eui.lower()] = {
+                            "cpu": message["cpuLoad"] * 100,
+                            "memory": message["memLoad"] * 100,
+                            "duty_cycle": message["dutyCycle"] * 100,
+                            "uptime": message["uptime"],
+                            "last_update": datetime.now(timezone.utc).isoformat()
                         }
 
                         mqtt_topic = f"bs/{bs_eui.upper()}"

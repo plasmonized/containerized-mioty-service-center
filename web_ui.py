@@ -792,6 +792,158 @@ def logs():
 def traffic():
     return render_template('traffic.html')
 
+@app.route('/base-stations')
+def base_stations():
+    return render_template('base_stations.html')
+
+def load_base_station_config():
+    """Load base station configuration from JSON file"""
+    try:
+        with open('base_stations.json', 'r') as f:
+            return json.load(f)
+    except:
+        return {"base_stations": {}}
+
+def save_base_station_config(config):
+    """Save base station configuration to JSON file"""
+    with open('base_stations.json', 'w') as f:
+        json.dump(config, f, indent=2)
+
+@app.route('/api/base-stations', methods=['GET'])
+def get_base_stations():
+    """Get all base stations with status and health data"""
+    try:
+        global tls_server_instance
+        config = load_base_station_config()
+        bs_config = config.get("base_stations", {})
+        
+        connected_bs = {}
+        connecting_bs = {}
+        bs_health = {}
+        bs_sensors = {}
+        
+        if tls_server_instance:
+            status = tls_server_instance.get_base_station_status()
+            for bs in status.get("connected", []):
+                eui = bs["eui"].lower()
+                connected_bs[eui] = bs
+            for bs in status.get("connecting", []):
+                eui = bs["eui"].lower()
+                connecting_bs[eui] = bs
+            if hasattr(tls_server_instance, 'base_station_health'):
+                bs_health = tls_server_instance.base_station_health
+            if hasattr(tls_server_instance, 'registered_sensors'):
+                for sensor_eui, sensor_data in tls_server_instance.registered_sensors.items():
+                    for bs_info in sensor_data.get('base_stations', []):
+                        bs_eui = bs_info.get('base_station_eui', '').lower()
+                        if bs_eui:
+                            bs_sensors[bs_eui] = bs_sensors.get(bs_eui, 0) + 1
+        
+        all_euis = set(bs_config.keys()) | set(connected_bs.keys()) | set(connecting_bs.keys())
+        
+        result = []
+        for eui in all_euis:
+            eui_lower = eui.lower()
+            bs_data = bs_config.get(eui_lower, {})
+            
+            if eui_lower in connected_bs:
+                status = "connected"
+                ip_addr = connected_bs[eui_lower].get("address", "").split(":")[0]
+            elif eui_lower in connecting_bs:
+                status = "connecting"
+                ip_addr = connecting_bs[eui_lower].get("address", "").split(":")[0]
+            else:
+                status = "offline"
+                ip_addr = bs_data.get("last_ip", "")
+            
+            health = bs_health.get(eui_lower, {})
+            
+            result.append({
+                "eui": eui_lower,
+                "name": bs_data.get("name", ""),
+                "tags": bs_data.get("tags", []),
+                "status": status,
+                "ip_address": ip_addr,
+                "health": health,
+                "connected_sensors": bs_sensors.get(eui_lower, 0)
+            })
+        
+        result.sort(key=lambda x: (x["status"] != "connected", x["status"] != "connecting", x["eui"]))
+        
+        return jsonify({"success": True, "base_stations": result})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/base-stations/<eui>', methods=['GET'])
+def get_base_station(eui):
+    """Get single base station details"""
+    try:
+        config = load_base_station_config()
+        bs_data = config.get("base_stations", {}).get(eui.lower(), {})
+        return jsonify({"eui": eui.lower(), **bs_data})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/base-stations', methods=['POST'])
+def add_base_station():
+    """Add new base station"""
+    try:
+        data = request.get_json()
+        eui = data.get("eui", "").lower()
+        
+        if not eui or len(eui) != 16:
+            return jsonify({"success": False, "error": "Invalid EUI"}), 400
+        
+        config = load_base_station_config()
+        if eui in config.get("base_stations", {}):
+            return jsonify({"success": False, "error": "Base station already exists"}), 400
+        
+        config["base_stations"][eui] = {
+            "name": data.get("name", ""),
+            "tags": data.get("tags", [])
+        }
+        save_base_station_config(config)
+        
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/base-stations/<eui>', methods=['PUT'])
+def update_base_station(eui):
+    """Update base station"""
+    try:
+        data = request.get_json()
+        eui = eui.lower()
+        
+        config = load_base_station_config()
+        if "base_stations" not in config:
+            config["base_stations"] = {}
+        
+        config["base_stations"][eui] = {
+            "name": data.get("name", ""),
+            "tags": data.get("tags", [])
+        }
+        save_base_station_config(config)
+        
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/base-stations/<eui>', methods=['DELETE'])
+def delete_base_station(eui):
+    """Delete base station from config"""
+    try:
+        config = load_base_station_config()
+        eui = eui.lower()
+        
+        if eui in config.get("base_stations", {}):
+            del config["base_stations"][eui]
+            save_base_station_config(config)
+        
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
 @app.route('/api/traffic/metrics')
 def get_traffic_metrics():
     """Get traffic metrics for visualization"""
@@ -1319,10 +1471,9 @@ def bssci_status():
         }
         return jsonify(error_response), 500
 
-@app.route('/api/base_stations')
-@app.route('/api/base-stations')  # Support both underscore and hyphen versions
-def get_base_stations():
-    """Get status of connected base stations - thread-safe version"""
+@app.route('/api/base_stations/status')
+def get_base_stations_status():
+    """Get status of connected base stations - thread-safe version (legacy endpoint)"""
     try:
         global tls_server_instance
         tls_server = tls_server_instance
@@ -1336,17 +1487,14 @@ def get_base_stations():
                 "error": "TLS server not initialized"
             }), 503
 
-        # Thread-safe access to base station data
         connected_stations = []
         connecting_stations = []
         
         try:
-            # Safely get connected base stations without asyncio operations
             if hasattr(tls_server, 'connected_base_stations'):
                 connected_dict = getattr(tls_server, 'connected_base_stations', {})
                 for writer, bs_eui in list(connected_dict.items()):
                     try:
-                        # Avoid asyncio operations in Flask thread
                         connected_stations.append({
                             "eui": bs_eui,
                             "address": "connected",
@@ -1355,7 +1503,6 @@ def get_base_stations():
                     except Exception as e:
                         print(f"Error processing connected station {bs_eui}: {e}")
             
-            # Safely get connecting base stations
             if hasattr(tls_server, 'connecting_base_stations'):
                 connecting_dict = getattr(tls_server, 'connecting_base_stations', {})
                 for writer, bs_eui in list(connecting_dict.items()):
@@ -1379,7 +1526,7 @@ def get_base_stations():
         })
             
     except Exception as e:
-        print(f"Error in get_base_stations endpoint: {e}")
+        print(f"Error in get_base_stations_status endpoint: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({

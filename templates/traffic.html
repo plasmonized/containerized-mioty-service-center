@@ -258,12 +258,20 @@ function initCharts() {
         data: {
             labels: [],
             datasets: [{
-                label: 'Sensors',
+                label: 'Registered Sensors',
                 data: [],
                 borderColor: '#28a745',
                 backgroundColor: 'rgba(40, 167, 69, 0.1)',
                 tension: 0.4,
-                fill: true,
+                fill: false,
+                yAxisID: 'y'
+            }, {
+                label: 'Active Sensors (this hour)',
+                data: [],
+                borderColor: '#17a2b8',
+                backgroundColor: 'rgba(23, 162, 184, 0.1)',
+                tension: 0.4,
+                fill: false,
                 yAxisID: 'y'
             }, {
                 label: 'Base Stations',
@@ -271,7 +279,7 @@ function initCharts() {
                 borderColor: '#ff8c00',
                 backgroundColor: 'rgba(255, 140, 0, 0.1)',
                 tension: 0.4,
-                fill: true,
+                fill: false,
                 yAxisID: 'y1'
             }]
         },
@@ -318,7 +326,8 @@ function updateCharts(history) {
     const msgsIn = history.map(h => h.messages_in || 0);
     const msgsOut = history.map(h => h.messages_out || 0);
     const dropped = history.map(h => h.messages_dropped || 0);
-    const sensors = history.map(h => h.sensors || 0);
+    const sensorsRegistered = history.map(h => h.sensors_registered || h.sensors || 0);
+    const sensorsActive = history.map(h => h.sensors_active || 0);
     const baseStations = history.map(h => h.base_stations || 0);
     
     messageChart.data.labels = labels;
@@ -328,8 +337,9 @@ function updateCharts(history) {
     messageChart.update('none');
     
     connectionsChart.data.labels = labels;
-    connectionsChart.data.datasets[0].data = sensors;
-    connectionsChart.data.datasets[1].data = baseStations;
+    connectionsChart.data.datasets[0].data = sensorsRegistered;
+    connectionsChart.data.datasets[1].data = sensorsActive;
+    connectionsChart.data.datasets[2].data = baseStations;
     connectionsChart.update('none');
 }
 

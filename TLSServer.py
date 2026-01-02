@@ -65,6 +65,11 @@ class TLSServer:
         # Time-series data for charts (last 60 minutes, 1-minute resolution)
         self.traffic_history: list = []
         self._last_history_update = 0
+        
+        # Track active sensors per hour (sensors that sent data)
+        self.active_sensors_hourly: set = set()
+        self._current_hour = datetime.now(timezone.utc).hour
+        self._last_hourly_active_count = 0
 
         # Auto-detach variables
         # eui -> timestamp of last message
@@ -1083,6 +1088,9 @@ class TLSServer:
                         self.deduplication_stats['total_messages'] += 1
                         self.traffic_metrics['messages_in'] += 1
                         self.traffic_metrics['bytes_in'] += len(str(message.get('payload', '')))
+                        
+                        # Track active sensor for hourly stats
+                        self.active_sensors_hourly.add(eui)
 
                         # Check if message is a duplicate and if the new one has better SNR
                         is_duplicate = message_key in self.deduplication_buffer
@@ -1854,6 +1862,13 @@ class TLSServer:
         import time
         current_time = time.time()
         
+        # Check for hour change and update hourly active count
+        current_hour = datetime.now(timezone.utc).hour
+        if current_hour != self._current_hour:
+            self._last_hourly_active_count = len(self.active_sensors_hourly)
+            self.active_sensors_hourly = set()
+            self._current_hour = current_hour
+        
         # Update history every minute
         if current_time - self._last_history_update >= 60:
             self.traffic_history.append({
@@ -1861,7 +1876,8 @@ class TLSServer:
                 'messages_in': self.traffic_metrics['messages_in'],
                 'messages_out': self.traffic_metrics['messages_out'],
                 'messages_dropped': self.traffic_metrics['messages_dropped'],
-                'sensors': len(self.registered_sensors),
+                'sensors_registered': len(self.registered_sensors),
+                'sensors_active': len(self.active_sensors_hourly),
                 'base_stations': len(self.connected_base_stations)
             })
             # Keep only last 720 entries (12 hours)
@@ -1874,7 +1890,8 @@ class TLSServer:
             'dedup_stats': dict(self.deduplication_stats),
             'history': list(self.traffic_history),
             'connections': len(self.connected_base_stations),
-            'sensors': len(self.registered_sensors)
+            'sensors_registered': len(self.registered_sensors),
+            'sensors_active': len(self.active_sensors_hourly)
         }
     
     def reset_traffic_metrics(self) -> None:

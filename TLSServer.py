@@ -48,6 +48,23 @@ class TLSServer:
             'duplicate_messages': 0,
             'published_messages': 0
         }
+        
+        # Traffic metrics for visualization
+        self.traffic_metrics = {
+            'messages_in': 0,          # Total messages received from base stations
+            'messages_out': 0,         # Total messages sent to MQTT
+            'messages_dropped': 0,     # Messages filtered by deduplication
+            'bytes_in': 0,             # Total bytes received
+            'bytes_out': 0,            # Total bytes sent to MQTT
+            'vm_messages': 0,          # VM sub-channel messages
+            'attach_requests': 0,      # Attach requests sent
+            'detach_requests': 0,      # Detach requests sent
+            'status_requests': 0,      # Status requests sent
+            'start_time': datetime.now(timezone.utc).timestamp()
+        }
+        # Time-series data for charts (last 60 minutes, 1-minute resolution)
+        self.traffic_history: list = []
+        self._last_history_update = 0
 
         # Auto-detach variables
         # eui -> timestamp of last message
@@ -323,6 +340,7 @@ class TLSServer:
                         try:
                             logger.info(f"📤 Sending status request to base station {bs_eui}")
                             logger.info(f"   Operation ID: {self.opID}")
+                            self.traffic_metrics['status_requests'] += 1
 
                             msg_pack = encode_message(messages.build_status_request(self.opID))
                             full_message = IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack
@@ -1054,6 +1072,7 @@ class TLSServer:
                         message_key = f"{eui}_{packet_cnt}"
 
                         self.deduplication_stats['total_messages'] += 1
+                        self.traffic_metrics['messages_in'] += 1
 
                         # Check if message is a duplicate and if the new one has better SNR
                         is_duplicate = message_key in self.deduplication_buffer
@@ -1078,6 +1097,7 @@ class TLSServer:
                             else:
                                 logger.debug(f"   🔽 DEDUPLICATION: Filtered duplicate message for {eui} with lower SNR ({snr:.2f} dB <= {existing_message['snr']:.2f} dB)")
                                 self.deduplication_stats['duplicate_messages'] += 1
+                                self.traffic_metrics['messages_dropped'] += 1
 
                                 # Send acknowledgment but don't queue for MQTT
                                 msg_pack = encode_message(
@@ -1429,6 +1449,8 @@ class TLSServer:
 
                     # Update statistics
                     self.deduplication_stats['published_messages'] += 1
+                    self.traffic_metrics['messages_out'] += 1
+                    self.traffic_metrics['bytes_out'] += len(payload_json)
                     total_msg = self.deduplication_stats['total_messages']
                     dup_msg = self.deduplication_stats['duplicate_messages']
                     pub_msg = self.deduplication_stats['published_messages']
@@ -1816,6 +1838,48 @@ class TLSServer:
             "active_sensors": dict(self.vm_active_sensors),
             "pending_operations": len(self.pending_vm_operations)
         }
+    
+    def get_traffic_metrics(self) -> dict:
+        """Get traffic metrics for visualization"""
+        import time
+        current_time = time.time()
+        
+        # Update history every minute
+        if current_time - self._last_history_update >= 60:
+            self.traffic_history.append({
+                'timestamp': current_time,
+                'messages_in': self.traffic_metrics['messages_in'],
+                'messages_out': self.traffic_metrics['messages_out'],
+                'messages_dropped': self.traffic_metrics['messages_dropped']
+            })
+            # Keep only last 60 entries (1 hour)
+            if len(self.traffic_history) > 60:
+                self.traffic_history = self.traffic_history[-60:]
+            self._last_history_update = current_time
+        
+        return {
+            'metrics': dict(self.traffic_metrics),
+            'dedup_stats': dict(self.deduplication_stats),
+            'history': list(self.traffic_history),
+            'connections': len(self.connected_base_stations)
+        }
+    
+    def reset_traffic_metrics(self) -> None:
+        """Reset traffic metrics"""
+        self.traffic_metrics = {
+            'messages_in': 0,
+            'messages_out': 0,
+            'messages_dropped': 0,
+            'bytes_in': 0,
+            'bytes_out': 0,
+            'vm_messages': 0,
+            'attach_requests': 0,
+            'detach_requests': 0,
+            'status_requests': 0,
+            'start_time': datetime.now(timezone.utc).timestamp()
+        }
+        self.traffic_history = []
+        self._last_history_update = 0
 
     def get_base_station_status(self) -> dict:
         """Get status of connected base stations"""

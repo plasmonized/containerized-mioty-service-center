@@ -770,6 +770,51 @@ def certificates():
 def logs():
     return render_template('logs.html')
 
+@app.route('/traffic')
+def traffic():
+    return render_template('traffic.html')
+
+@app.route('/api/traffic/metrics')
+def get_traffic_metrics():
+    """Get traffic metrics for visualization"""
+    try:
+        global tls_server_instance
+        if tls_server_instance and hasattr(tls_server_instance, 'get_traffic_metrics'):
+            data = tls_server_instance.get_traffic_metrics()
+            return jsonify({'success': True, **data})
+        return jsonify({
+            'success': True,
+            'metrics': {
+                'messages_in': 0,
+                'messages_out': 0,
+                'messages_dropped': 0,
+                'bytes_in': 0,
+                'bytes_out': 0,
+                'vm_messages': 0,
+                'attach_requests': 0,
+                'detach_requests': 0,
+                'status_requests': 0,
+                'start_time': 0
+            },
+            'dedup_stats': {'total_messages': 0, 'duplicate_messages': 0, 'published_messages': 0},
+            'history': [],
+            'connections': 0
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/traffic/reset', methods=['POST'])
+def reset_traffic_metrics():
+    """Reset traffic metrics"""
+    try:
+        global tls_server_instance
+        if tls_server_instance and hasattr(tls_server_instance, 'reset_traffic_metrics'):
+            tls_server_instance.reset_traffic_metrics()
+            return jsonify({'success': True, 'message': 'Traffic metrics reset successfully'})
+        return jsonify({'success': False, 'message': 'TLS server not available'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
 @app.route('/api/logs')
 def get_logs():
     global log_entries

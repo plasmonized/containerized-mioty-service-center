@@ -454,6 +454,179 @@ def reload_sensors():
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)})
 
+@app.route('/api/sensors/export', methods=['GET'])
+def export_sensors():
+    """Export all sensors as CSV file"""
+    try:
+        # Load sensors from config file
+        try:
+            with open(bssci_config.SENSOR_CONFIG_FILE, 'r') as f:
+                sensors = json.load(f)
+        except:
+            sensors = []
+        
+        if not sensors:
+            return jsonify({'success': False, 'message': 'No sensors to export'}), 404
+        
+        # Create CSV content
+        output = io.StringIO()
+        writer = csv.writer(output)
+        
+        # Write header
+        writer.writerow(['eui', 'nwKey', 'shortAddr', 'bidi'])
+        
+        # Write sensor data
+        for sensor in sensors:
+            writer.writerow([
+                sensor.get('eui', ''),
+                sensor.get('nwKey', ''),
+                sensor.get('shortAddr', ''),
+                'true' if sensor.get('bidi', False) else 'false'
+            ])
+        
+        # Create response with CSV file
+        output.seek(0)
+        return Response(
+            output.getvalue(),
+            mimetype='text/csv',
+            headers={'Content-Disposition': f'attachment; filename=sensors_export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'}
+        )
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/sensors/import', methods=['POST'])
+def import_sensors():
+    """Import sensors from CSV/TXT file"""
+    try:
+        if 'file' not in request.files:
+            return jsonify({'success': False, 'message': 'No file provided'}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'success': False, 'message': 'No file selected'}), 400
+        
+        # Read file content
+        content = file.read().decode('utf-8')
+        lines = content.strip().split('\n')
+        
+        if len(lines) < 1:
+            return jsonify({'success': False, 'message': 'File is empty'}), 400
+        
+        # Detect delimiter (comma, semicolon, or tab)
+        first_line = lines[0]
+        if ';' in first_line:
+            delimiter = ';'
+        elif '\t' in first_line:
+            delimiter = '\t'
+        else:
+            delimiter = ','
+        
+        # Parse CSV
+        reader = csv.reader(io.StringIO(content), delimiter=delimiter)
+        rows = list(reader)
+        
+        if len(rows) < 1:
+            return jsonify({'success': False, 'message': 'No data in file'}), 400
+        
+        # Check if first row is header
+        header = rows[0]
+        has_header = any(h.lower() in ['eui', 'nwkey', 'shortaddr', 'bidi', 'network_key', 'short_addr'] for h in header)
+        
+        if has_header:
+            # Map header columns
+            header_lower = [h.lower().strip() for h in header]
+            eui_idx = next((i for i, h in enumerate(header_lower) if h in ['eui', 'mac', 'address']), 0)
+            nwkey_idx = next((i for i, h in enumerate(header_lower) if h in ['nwkey', 'network_key', 'key', 'networkkey']), 1)
+            shortaddr_idx = next((i for i, h in enumerate(header_lower) if h in ['shortaddr', 'short_addr', 'shortaddress', 'addr']), 2)
+            bidi_idx = next((i for i, h in enumerate(header_lower) if h in ['bidi', 'bidirectional', 'bidir']), 3)
+            data_rows = rows[1:]
+        else:
+            # Assume order: eui, nwKey, shortAddr, bidi
+            eui_idx, nwkey_idx, shortaddr_idx, bidi_idx = 0, 1, 2, 3
+            data_rows = rows
+        
+        # Load existing sensors
+        try:
+            with open(bssci_config.SENSOR_CONFIG_FILE, 'r') as f:
+                existing_sensors = json.load(f)
+        except:
+            existing_sensors = []
+        
+        existing_euis = {s['eui'].upper() for s in existing_sensors}
+        
+        imported_count = 0
+        updated_count = 0
+        errors = []
+        
+        for row_idx, row in enumerate(data_rows):
+            try:
+                if len(row) < 3:  # At least eui, nwKey, shortAddr required
+                    errors.append(f"Row {row_idx + 1}: Not enough columns")
+                    continue
+                
+                eui = row[eui_idx].strip().upper() if eui_idx < len(row) else ''
+                nwkey = row[nwkey_idx].strip() if nwkey_idx < len(row) else ''
+                shortaddr = row[shortaddr_idx].strip() if shortaddr_idx < len(row) else '0000'
+                bidi_val = row[bidi_idx].strip().lower() if bidi_idx < len(row) else 'false'
+                bidi = bidi_val in ['true', '1', 'yes', 'on']
+                
+                # Validate EUI
+                if not eui or len(eui) < 8:
+                    errors.append(f"Row {row_idx + 1}: Invalid EUI '{eui}'")
+                    continue
+                
+                # Validate nwKey
+                if not nwkey or len(nwkey) < 16:
+                    errors.append(f"Row {row_idx + 1}: Invalid network key")
+                    continue
+                
+                sensor_data = {
+                    'eui': eui,
+                    'nwKey': nwkey,
+                    'shortAddr': shortaddr if shortaddr else '0000',
+                    'bidi': bidi
+                }
+                
+                if eui in existing_euis:
+                    # Update existing sensor
+                    for s in existing_sensors:
+                        if s['eui'].upper() == eui:
+                            s.update(sensor_data)
+                            break
+                    updated_count += 1
+                else:
+                    # Add new sensor
+                    existing_sensors.append(sensor_data)
+                    existing_euis.add(eui)
+                    imported_count += 1
+                    
+            except Exception as e:
+                errors.append(f"Row {row_idx + 1}: {str(e)}")
+        
+        # Save to file
+        with open(bssci_config.SENSOR_CONFIG_FILE, 'w') as f:
+            json.dump(existing_sensors, f, indent=4)
+        
+        # Reload TLS server config
+        global tls_server_instance
+        if tls_server_instance and hasattr(tls_server_instance, 'reload_sensor_config'):
+            tls_server_instance.reload_sensor_config()
+        
+        message = f'Import complete: {imported_count} new sensors, {updated_count} updated'
+        if errors:
+            message += f', {len(errors)} errors'
+        
+        return jsonify({
+            'success': True,
+            'message': message,
+            'imported': imported_count,
+            'updated': updated_count,
+            'errors': errors[:10] if errors else []  # Limit error messages
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
 @app.route('/config')
 def config():
     try:

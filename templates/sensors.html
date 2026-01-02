@@ -5,6 +5,15 @@
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h1>Sensor Management</h1>
     <div>
+        <div class="btn-group me-2">
+            <button class="btn btn-outline-secondary" onclick="exportSensors()" title="Export sensors to CSV file">
+                <i class="fas fa-download"></i> Export CSV
+            </button>
+            <button class="btn btn-outline-secondary" onclick="document.getElementById('importFile').click()" title="Import sensors from CSV/TXT file">
+                <i class="fas fa-upload"></i> Import
+            </button>
+            <input type="file" id="importFile" accept=".csv,.txt" style="display: none;" onchange="importSensors(this)">
+        </div>
         <button class="btn me-2" onclick="reloadSensors()" title="Reload sensor configuration" style="background-color: #6c757d; color: white; border-color: #6c757d;">
             Reload Config
         </button>
@@ -365,6 +374,44 @@ function clearAllSensors() {
             });
         }
     }
+
+function exportSensors() {
+    window.location.href = '/api/sensors/export';
+}
+
+function importSensors(input) {
+    if (input.files.length === 0) return;
+    
+    const file = input.files[0];
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    showAlert('info', 'Importing sensors...');
+    
+    fetch('/api/sensors/import', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            let message = data.message;
+            if (data.errors && data.errors.length > 0) {
+                message += '<br><small>Errors: ' + data.errors.join(', ') + '</small>';
+            }
+            showAlert('success', message);
+            loadSensors();
+        } else {
+            showAlert('danger', data.message);
+        }
+    })
+    .catch(error => {
+        showAlert('danger', 'Error importing sensors: ' + error.message);
+    })
+    .finally(() => {
+        input.value = '';
+    });
+}
 
 // Load sensors on page load
 loadSensors();

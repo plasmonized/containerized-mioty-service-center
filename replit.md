@@ -54,6 +54,8 @@ JSON-based sensor configuration with support for:
 
 ## Recent Changes
 
+- **Health Dashboard**: New system health monitoring page with packet loss detection, base station health charts (CPU/Memory/Duty Cycle), and per-sensor statistics including average SNR/RSSI
+- **Packet Loss Tracking**: 16-bit counter wrap-around handling for accurate packet loss rate calculation per sensor
 - **Base Station Management Page**: New dedicated page for managing base stations with name, tags, IP address, CPU/memory health data, and connected sensor counts
 - **Active Sensors Tracking**: Hourly tracking of sensors that sent data, displayed in traffic dashboard
 - **12-Hour Traffic History**: Extended sensor and base station history graph to 12 hours

@@ -843,12 +843,16 @@ def get_base_stations():
                 bs_health = tls_server_instance.base_station_health
             if hasattr(tls_server_instance, 'registered_sensors'):
                 for sensor_eui, sensor_data in tls_server_instance.registered_sensors.items():
-                    if isinstance(sensor_data, dict):
+                    if isinstance(sensor_data, dict) and sensor_data.get('registered', False):
                         for bs_info in sensor_data.get('base_stations', []):
-                            if isinstance(bs_info, dict):
+                            if isinstance(bs_info, str):
+                                bs_eui = bs_info.lower()
+                            elif isinstance(bs_info, dict):
                                 bs_eui = bs_info.get('base_station_eui', '').lower()
-                                if bs_eui:
-                                    bs_sensors[bs_eui] = bs_sensors.get(bs_eui, 0) + 1
+                            else:
+                                continue
+                            if bs_eui:
+                                bs_sensors[bs_eui] = bs_sensors.get(bs_eui, 0) + 1
         
         all_euis = set(bs_config.keys()) | set(connected_bs.keys()) | set(connecting_bs.keys())
         

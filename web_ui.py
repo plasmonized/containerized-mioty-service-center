@@ -898,6 +898,24 @@ def get_health_stats():
             
             # Include SNR/RSSI history
             result["snr_rssi_history"] = tls_server_instance.snr_rssi_history
+            
+            # Calculate signal score distribution based on SNR
+            # Excellent: >= 10 dB, Good: 5-10 dB, Fair: 0-5 dB, Poor: -5-0 dB, Critical: < -5 dB
+            distribution = {"excellent": 0, "good": 0, "fair": 0, "poor": 0, "critical": 0}
+            for stats in tls_server_instance.sensor_packet_stats.values():
+                if stats.get('snr_count', 0) > 0:
+                    avg_snr = stats['snr_sum'] / stats['snr_count']
+                    if avg_snr >= 10:
+                        distribution["excellent"] += 1
+                    elif avg_snr >= 5:
+                        distribution["good"] += 1
+                    elif avg_snr >= 0:
+                        distribution["fair"] += 1
+                    elif avg_snr >= -5:
+                        distribution["poor"] += 1
+                    else:
+                        distribution["critical"] += 1
+            result["signal_distribution"] = distribution
         
         return jsonify({"success": True, **result})
     except Exception as e:

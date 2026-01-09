@@ -75,6 +75,65 @@
     <div class="col-md-6">
         <div class="card">
             <div class="card-header">
+                <h5 class="mb-0">Signal Score Distribution</h5>
+                <small class="text-muted">Device breakdown by signal quality (SNR)</small>
+            </div>
+            <div class="card-body">
+                <canvas id="signalDistChart" height="200"></canvas>
+                <div class="row mt-3 text-center">
+                    <div class="col">
+                        <h4 class="text-success mb-0" id="strongSignalCount">0</h4>
+                        <small class="text-muted">Strong Signal</small>
+                    </div>
+                    <div class="col">
+                        <h4 class="text-warning mb-0" id="fairSignalCount">0</h4>
+                        <small class="text-muted">Fair Signal</small>
+                    </div>
+                    <div class="col">
+                        <h4 class="text-danger mb-0" id="needAttentionCount">0</h4>
+                        <small class="text-muted">Need Attention</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Signal Reference</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-6">
+                        <h6>SNR Reference</h6>
+                        <table class="table table-sm">
+                            <tr><td class="text-success">Excellent</td><td>>= 10 dB</td></tr>
+                            <tr><td style="color: #28a745;">Good</td><td>5 to 10 dB</td></tr>
+                            <tr><td class="text-warning">Fair</td><td>0 to 5 dB</td></tr>
+                            <tr><td style="color: #fd7e14;">Poor</td><td>-5 to 0 dB</td></tr>
+                            <tr><td class="text-danger">Critical</td><td>&lt; -5 dB</td></tr>
+                        </table>
+                    </div>
+                    <div class="col-6">
+                        <h6>RSSI Reference</h6>
+                        <table class="table table-sm">
+                            <tr><td class="text-success">Excellent</td><td>>= -70 dBm</td></tr>
+                            <tr><td style="color: #28a745;">Good</td><td>-70 to -85 dBm</td></tr>
+                            <tr><td class="text-warning">Fair</td><td>-85 to -100 dBm</td></tr>
+                            <tr><td style="color: #fd7e14;">Poor</td><td>-100 to -110 dBm</td></tr>
+                            <tr><td class="text-danger">Critical</td><td>&lt; -110 dBm</td></tr>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
                 <h5 class="mb-0">Base Station Health</h5>
             </div>
             <div class="card-body">
@@ -151,6 +210,7 @@
 let bsHealthChart = null;
 let sensorLossChart = null;
 let snrRssiChart = null;
+let signalDistChart = null;
 
 function formatUptime(seconds) {
     const days = Math.floor(seconds / 86400);
@@ -191,11 +251,46 @@ function loadHealth() {
             lossEl.className = lossRate < 1 ? 'text-success' : lossRate < 5 ? 'text-warning' : 'text-danger';
             
             updateSnrRssiChart(data.snr_rssi_history);
+            updateSignalDistChart(data.signal_distribution);
             updateBsHealthChart(data.base_stations);
             updateSensorLossChart(data.sensors.slice(0, 10));
             updateBsTable(data.base_stations);
             updateSensorTable(data.sensors.slice(0, 10));
         });
+}
+
+function updateSignalDistChart(dist) {
+    const ctx = document.getElementById('signalDistChart').getContext('2d');
+    
+    if (signalDistChart) signalDistChart.destroy();
+    
+    const strongCount = (dist.excellent || 0) + (dist.good || 0);
+    const fairCount = dist.fair || 0;
+    const needAttention = (dist.poor || 0) + (dist.critical || 0);
+    
+    document.getElementById('strongSignalCount').textContent = strongCount;
+    document.getElementById('fairSignalCount').textContent = fairCount;
+    document.getElementById('needAttentionCount').textContent = needAttention;
+    
+    signalDistChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: ['Excellent', 'Good', 'Fair', 'Poor', 'Critical'],
+            datasets: [{
+                label: 'Devices',
+                data: [dist.excellent || 0, dist.good || 0, dist.fair || 0, dist.poor || 0, dist.critical || 0],
+                backgroundColor: ['#198754', '#28a745', '#ffc107', '#fd7e14', '#dc3545']
+            }]
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { beginAtZero: true, ticks: { stepSize: 1 } }
+            }
+        }
+    });
 }
 
 function updateSnrRssiChart(history) {

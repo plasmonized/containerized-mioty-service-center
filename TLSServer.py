@@ -88,6 +88,10 @@ class TLSServer:
         # eui -> whether warning was sent
         self.sensor_warning_sent: Dict[str, bool] = {}
 
+        # Network topology tracking: which base stations receive which sensors
+        # sensor_eui -> {primary_bs: str, receiving_bases: {bs_eui: {snr, rssi, last_seen, count}}}
+        self.sensor_topology: Dict[str, Dict[str, Any]] = {}
+        
         # Variable MAC (VM) Sub-Channel tracking
         # eui -> {active: bool, vm_channel: int, activated_at: timestamp, bs_eui: str}
         self.vm_active_sensors: Dict[str, Dict[str, Any]] = {}
@@ -1110,6 +1114,32 @@ class TLSServer:
                         
                         # Track active sensor for hourly stats
                         self.active_sensors_hourly.add(eui)
+                        
+                        # Update network topology (track ALL receiving base stations, before dedup)
+                        eui_upper = eui.upper()
+                        rssi = message.get('rssi', 0)
+                        current_time = asyncio.get_event_loop().time()
+                        
+                        if eui_upper not in self.sensor_topology:
+                            self.sensor_topology[eui_upper] = {
+                                'primary_bs': bs_eui,
+                                'receiving_bases': {}
+                            }
+                        
+                        # Update or add this base station as a receiver
+                        if bs_eui not in self.sensor_topology[eui_upper]['receiving_bases']:
+                            self.sensor_topology[eui_upper]['receiving_bases'][bs_eui] = {
+                                'snr': snr,
+                                'rssi': rssi,
+                                'last_seen': current_time,
+                                'count': 1
+                            }
+                        else:
+                            rb = self.sensor_topology[eui_upper]['receiving_bases'][bs_eui]
+                            rb['snr'] = snr  # Update with latest
+                            rb['rssi'] = rssi
+                            rb['last_seen'] = current_time
+                            rb['count'] += 1
 
                         # Check if message is a duplicate and if the new one has better SNR
                         is_duplicate = message_key in self.deduplication_buffer
@@ -1124,6 +1154,10 @@ class TLSServer:
 
                                 # Update preferred downlink path in sensor config
                                 self.update_preferred_downlink_path(eui, bs_eui, snr)
+                                
+                                # Update topology primary BS
+                                if eui_upper in self.sensor_topology:
+                                    self.sensor_topology[eui_upper]['primary_bs'] = bs_eui
 
                                 self.deduplication_buffer[message_key] = {
                                     'message': message,
@@ -1155,6 +1189,10 @@ class TLSServer:
 
                             # Update preferred downlink path for new messages too
                             self.update_preferred_downlink_path(eui, bs_eui, snr)
+                            
+                            # Update topology primary BS for new messages
+                            if eui_upper in self.sensor_topology:
+                                self.sensor_topology[eui_upper]['primary_bs'] = bs_eui
 
                             self.deduplication_buffer[message_key] = {
                                 'message': message,

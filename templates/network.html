@@ -1,0 +1,281 @@
+{% extends "base.html" %}
+{% block title %}Network Topology{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2>Network Topology</h2>
+    <div>
+        <button class="btn btn-secondary btn-sm me-2" onclick="resetLayout()">Reset Layout</button>
+        <button class="btn btn-primary btn-sm" onclick="loadTopology()">Refresh</button>
+    </div>
+</div>
+
+<div class="row mb-3">
+    <div class="col-md-9">
+        <div class="card">
+            <div class="card-body p-0">
+                <div id="cy" style="height: 600px; width: 100%;"></div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card mb-3">
+            <div class="card-header">
+                <h6 class="mb-0">Legend</h6>
+            </div>
+            <div class="card-body">
+                <div class="d-flex align-items-center mb-2">
+                    <div style="width: 24px; height: 24px; background: #ff8c00; border-radius: 50%; margin-right: 10px;"></div>
+                    <span>Base Station</span>
+                </div>
+                <div class="d-flex align-items-center mb-2">
+                    <div style="width: 16px; height: 16px; background: #17a2b8; border-radius: 50%; margin-right: 10px;"></div>
+                    <span>Sensor</span>
+                </div>
+                <hr>
+                <div class="d-flex align-items-center mb-2">
+                    <div style="width: 30px; height: 4px; background: #28a745; margin-right: 10px;"></div>
+                    <span>Primary Route</span>
+                </div>
+                <div class="d-flex align-items-center">
+                    <div style="width: 30px; height: 2px; background: #aaa; margin-right: 10px;"></div>
+                    <span>Secondary Route</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card mb-3">
+            <div class="card-header">
+                <h6 class="mb-0">Statistics</h6>
+            </div>
+            <div class="card-body">
+                <div class="d-flex justify-content-between mb-2">
+                    <span>Base Stations:</span>
+                    <strong id="bsCount">0</strong>
+                </div>
+                <div class="d-flex justify-content-between mb-2">
+                    <span>Sensors:</span>
+                    <strong id="sensorCount">0</strong>
+                </div>
+                <div class="d-flex justify-content-between">
+                    <span>Connections:</span>
+                    <strong id="edgeCount">0</strong>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card" id="detailsCard" style="display: none;">
+            <div class="card-header">
+                <h6 class="mb-0" id="detailsTitle">Details</h6>
+            </div>
+            <div class="card-body" id="detailsBody">
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://unpkg.com/cytoscape@3.26.0/dist/cytoscape.min.js"></script>
+<script>
+let cy = null;
+
+function initCytoscape() {
+    cy = cytoscape({
+        container: document.getElementById('cy'),
+        style: [
+            {
+                selector: 'node[type="base_station"]',
+                style: {
+                    'background-color': '#ff8c00',
+                    'label': 'data(label)',
+                    'width': 50,
+                    'height': 50,
+                    'font-size': '12px',
+                    'text-valign': 'bottom',
+                    'text-margin-y': 5,
+                    'border-width': 3,
+                    'border-color': '#cc7000'
+                }
+            },
+            {
+                selector: 'node[type="base_station"][?connected]',
+                style: {
+                    'border-color': '#28a745',
+                    'border-width': 4
+                }
+            },
+            {
+                selector: 'node[type="sensor"]',
+                style: {
+                    'background-color': '#17a2b8',
+                    'label': 'data(label)',
+                    'width': 30,
+                    'height': 30,
+                    'font-size': '10px',
+                    'text-valign': 'bottom',
+                    'text-margin-y': 3
+                }
+            },
+            {
+                selector: 'edge',
+                style: {
+                    'width': 1,
+                    'line-color': '#aaa',
+                    'curve-style': 'bezier',
+                    'opacity': 0.6
+                }
+            },
+            {
+                selector: 'edge[?primary]',
+                style: {
+                    'width': 3,
+                    'line-color': '#28a745',
+                    'opacity': 1
+                }
+            },
+            {
+                selector: 'node:selected',
+                style: {
+                    'border-width': 4,
+                    'border-color': '#ffc107'
+                }
+            },
+            {
+                selector: '.highlighted',
+                style: {
+                    'opacity': 1
+                }
+            },
+            {
+                selector: '.faded',
+                style: {
+                    'opacity': 0.2
+                }
+            }
+        ],
+        layout: { name: 'preset' },
+        wheelSensitivity: 0.3
+    });
+    
+    cy.on('tap', 'node', function(evt) {
+        const node = evt.target;
+        showNodeDetails(node.data());
+        
+        cy.elements().removeClass('highlighted faded');
+        node.addClass('highlighted');
+        node.connectedEdges().addClass('highlighted');
+        node.neighborhood().addClass('highlighted');
+        cy.elements().not(node).not(node.connectedEdges()).not(node.neighborhood()).addClass('faded');
+    });
+    
+    cy.on('tap', function(evt) {
+        if (evt.target === cy) {
+            cy.elements().removeClass('highlighted faded');
+            document.getElementById('detailsCard').style.display = 'none';
+        }
+    });
+    
+    cy.on('mouseover', 'node', function(evt) {
+        document.body.style.cursor = 'pointer';
+    });
+    
+    cy.on('mouseout', 'node', function(evt) {
+        document.body.style.cursor = 'default';
+    });
+}
+
+function showNodeDetails(data) {
+    const card = document.getElementById('detailsCard');
+    const title = document.getElementById('detailsTitle');
+    const body = document.getElementById('detailsBody');
+    
+    card.style.display = 'block';
+    
+    if (data.type === 'base_station') {
+        title.textContent = 'Base Station';
+        body.innerHTML = `
+            <div class="mb-2"><strong>EUI:</strong><br><small>${data.eui}</small></div>
+            <div class="mb-2"><strong>Name:</strong> ${data.label}</div>
+            <div class="mb-2"><strong>Status:</strong> 
+                <span class="badge bg-${data.connected ? 'success' : 'secondary'}">${data.connected ? 'Connected' : 'Disconnected'}</span>
+            </div>
+            <hr>
+            <div class="mb-1"><strong>CPU:</strong> ${data.cpu}%</div>
+            <div class="mb-1"><strong>Memory:</strong> ${data.memory}%</div>
+            <div class="mb-1"><strong>Duty Cycle:</strong> ${data.duty_cycle}%</div>
+        `;
+    } else {
+        title.textContent = 'Sensor';
+        body.innerHTML = `
+            <div class="mb-2"><strong>EUI:</strong><br><small>${data.eui}</small></div>
+            <div class="mb-2"><strong>Name:</strong> ${data.label}</div>
+            <div class="mb-2"><strong>Primary BS:</strong><br><small>${data.primary_bs || 'N/A'}</small></div>
+            <div class="mb-2"><strong>Receivers:</strong> ${data.receiver_count}</div>
+        `;
+    }
+}
+
+function loadTopology() {
+    fetch('/api/network')
+        .then(r => r.json())
+        .then(data => {
+            if (!data.success) return;
+            
+            const elements = [];
+            
+            data.nodes.forEach(node => {
+                elements.push({ data: node });
+            });
+            
+            data.edges.forEach(edge => {
+                elements.push({ data: edge });
+            });
+            
+            cy.elements().remove();
+            cy.add(elements);
+            
+            const bsNodes = cy.nodes('[type="base_station"]');
+            const sensorNodes = cy.nodes('[type="sensor"]');
+            
+            document.getElementById('bsCount').textContent = bsNodes.length;
+            document.getElementById('sensorCount').textContent = sensorNodes.length;
+            document.getElementById('edgeCount').textContent = data.edges.length;
+            
+            if (elements.length > 0) {
+                cy.layout({
+                    name: 'concentric',
+                    concentric: function(node) {
+                        return node.data('type') === 'base_station' ? 2 : 1;
+                    },
+                    levelWidth: function() { return 1; },
+                    animate: true,
+                    animationDuration: 500,
+                    padding: 50
+                }).run();
+            }
+        });
+}
+
+function resetLayout() {
+    if (cy) {
+        cy.layout({
+            name: 'concentric',
+            concentric: function(node) {
+                return node.data('type') === 'base_station' ? 2 : 1;
+            },
+            levelWidth: function() { return 1; },
+            animate: true,
+            animationDuration: 500,
+            padding: 50
+        }).run();
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    initCytoscape();
+    loadTopology();
+    setInterval(loadTopology, 30000);
+});
+</script>
+{% endblock %}

@@ -925,6 +925,91 @@ def get_health_stats():
 def base_stations():
     return render_template('base_stations.html')
 
+@app.route('/network')
+def network():
+    return render_template('network.html')
+
+@app.route('/api/network')
+def api_network():
+    """Get network topology data for visualization"""
+    try:
+        global tls_server_instance
+        nodes = []
+        edges = []
+        
+        if tls_server_instance:
+            bs_config = load_base_station_config().get("base_stations", {})
+            
+            # Add base station nodes
+            connected_bs = set()
+            for writer, bs_eui in tls_server_instance.connected_base_stations.items():
+                connected_bs.add(bs_eui.upper())
+            
+            # Get all base stations from topology and connected list
+            all_bs = set(connected_bs)
+            for sensor_data in tls_server_instance.sensor_topology.values():
+                for bs_eui in sensor_data.get('receiving_bases', {}).keys():
+                    all_bs.add(bs_eui.upper())
+            
+            for bs_eui in all_bs:
+                bs_lower = bs_eui.lower()
+                config = bs_config.get(bs_lower, {})
+                health = tls_server_instance.base_station_health.get(bs_eui, {})
+                
+                nodes.append({
+                    'id': f'bs_{bs_eui}',
+                    'type': 'base_station',
+                    'eui': bs_eui,
+                    'label': config.get('name', bs_eui[:8] + '...'),
+                    'connected': bs_eui in connected_bs,
+                    'cpu': health.get('cpu', 0),
+                    'memory': health.get('memory', 0),
+                    'duty_cycle': health.get('duty_cycle', 0)
+                })
+            
+            # Add sensor nodes and edges
+            for sensor_eui, topo in tls_server_instance.sensor_topology.items():
+                primary_bs = topo.get('primary_bs', '').upper()
+                receiving = topo.get('receiving_bases', {})
+                
+                # Get sensor name from config if available
+                sensor_name = sensor_eui[:8] + '...'
+                for sensor in tls_server_instance.sensor_config:
+                    if sensor.get('eui', '').upper() == sensor_eui:
+                        sensor_name = sensor.get('name', sensor_name)
+                        break
+                
+                nodes.append({
+                    'id': f'sensor_{sensor_eui}',
+                    'type': 'sensor',
+                    'eui': sensor_eui,
+                    'label': sensor_name,
+                    'primary_bs': primary_bs,
+                    'receiver_count': len(receiving)
+                })
+                
+                # Add edges to all receiving base stations
+                for bs_eui, stats in receiving.items():
+                    bs_upper = bs_eui.upper()
+                    edges.append({
+                        'id': f'edge_{sensor_eui}_{bs_upper}',
+                        'source': f'sensor_{sensor_eui}',
+                        'target': f'bs_{bs_upper}',
+                        'primary': bs_upper == primary_bs,
+                        'snr': round(stats.get('snr', 0), 2),
+                        'rssi': round(stats.get('rssi', 0), 2),
+                        'last_seen': stats.get('last_seen', 0),
+                        'count': stats.get('count', 0)
+                    })
+        
+        return jsonify({
+            'success': True,
+            'nodes': nodes,
+            'edges': edges
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 def load_base_station_config():
     """Load base station configuration from JSON file"""
     try:

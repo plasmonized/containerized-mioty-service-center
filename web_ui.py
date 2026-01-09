@@ -1660,14 +1660,16 @@ def check_for_updates():
 def create_backup():
     """Create backup before update"""
     try:
-        backup_dir = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        # Use /tmp for Docker compatibility, fallback to current dir
+        backup_base = '/tmp' if os.path.exists('/tmp') and os.access('/tmp', os.W_OK) else '.'
+        backup_dir = os.path.join(backup_base, f"bssci_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
         
         # Create backup directory
         os.makedirs(backup_dir, exist_ok=True)
         
         # Backup important files
-        files_to_backup = ['.env', 'endpoints.json']
-        dirs_to_backup = ['logs', 'certs']
+        files_to_backup = ['.env', 'endpoints.json', 'VERSION']
+        dirs_to_backup = ['certs']
         
         for file in files_to_backup:
             if os.path.exists(file):
@@ -1675,7 +1677,10 @@ def create_backup():
                 
         for dir_name in dirs_to_backup:
             if os.path.exists(dir_name):
-                shutil.copytree(dir_name, os.path.join(backup_dir, dir_name))
+                try:
+                    shutil.copytree(dir_name, os.path.join(backup_dir, dir_name))
+                except Exception as e:
+                    logger.warning(f"Could not backup {dir_name}: {e}")
         
         return {'success': True, 'backup_dir': backup_dir}
     except Exception as e:

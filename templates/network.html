@@ -325,7 +325,9 @@ function runDefaultLayout() {
 function savePositions() {
     try {
         localStorage.setItem('bssci_network_positions', JSON.stringify(manualPositions));
-        alert('Positions saved successfully!');
+        localStorage.setItem('bssci_network_zoom', cy.zoom());
+        localStorage.setItem('bssci_network_pan', JSON.stringify(cy.pan()));
+        alert('Positions and view saved successfully!');
     } catch (e) {
         alert('Failed to save positions: ' + e);
     }
@@ -335,12 +337,25 @@ function resetLayout() {
     if (cy) {
         manualPositions = {};
         localStorage.removeItem('bssci_network_positions');
+        localStorage.removeItem('bssci_network_zoom');
+        localStorage.removeItem('bssci_network_pan');
         runDefaultLayout();
     }
 }
 
 document.addEventListener('DOMContentLoaded', function() {
     initCytoscape();
+    
+    // Load view state if exists
+    try {
+        const savedZoom = localStorage.getItem('bssci_network_zoom');
+        const savedPan = localStorage.getItem('bssci_network_pan');
+        if (savedZoom && savedPan) {
+            cy.zoom(parseFloat(savedZoom));
+            cy.pan(JSON.parse(savedPan));
+        }
+    } catch (e) { console.error('Failed to load view state', e); }
+
     loadTopology();
     setInterval(loadTopology, 30000);
 });

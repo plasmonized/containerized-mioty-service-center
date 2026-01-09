@@ -1318,11 +1318,33 @@ def get_current_version():
         return "version-unknown"
 
 def get_remote_version():
-    """Get latest remote version - works with or without Git"""
+    """Get latest remote version - works with or without Git using GitHub API"""
+    GITHUB_REPO = "plasmonized/containerized-mioty-Service-Center"
+    
     try:
-        # First try Git commands  
+        # Try GitHub API first (works without local git repo)
+        import urllib.request
+        import ssl
+        
+        # Create SSL context that works in Docker
+        ctx = ssl.create_default_context()
+        
+        # Get latest commit from main branch
+        api_url = f"https://api.github.com/repos/{GITHUB_REPO}/commits/main"
+        req = urllib.request.Request(api_url, headers={'User-Agent': 'BSSCI-Service-Center'})
+        
         try:
-            # Try to unlock git if needed
+            with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
+                import json
+                data = json.loads(response.read().decode())
+                commit_hash = data.get('sha', '')[:7]
+                commit_date = data.get('commit', {}).get('committer', {}).get('date', '')[:10]
+                return f"commit-{commit_hash} ({commit_date})"
+        except Exception as api_error:
+            logger.error(f"GitHub API error: {api_error}")
+        
+        # Fallback to Git commands if API fails
+        try:
             lock_file = '.git/index.lock'
             if os.path.exists(lock_file):
                 try:
@@ -1330,53 +1352,17 @@ def get_remote_version():
                 except:
                     pass
             
-            # Fetch latest from remote
-            try:
-                # Try fetch with different options to bypass common Docker/Git issues
-                subprocess.run(['git', 'fetch', '--tags', 'origin', 'main'], 
-                             capture_output=True, text=True, timeout=30)
-            except Exception as e:
-                logger.error(f"Git fetch exception: {e}")
+            subprocess.run(['git', 'fetch', '--tags', 'origin', 'main'], 
+                         capture_output=True, text=True, timeout=30)
             
-            # Get latest commit hash from origin/main
             result = subprocess.run(['git', 'rev-parse', '--short', 'origin/main'], 
                                   capture_output=True, text=True, timeout=10)
             if result.returncode == 0:
-                commit_hash = result.stdout.strip()
-                
-                # Try to get latest tag
-                tag_result = subprocess.run(['git', 'describe', '--tags', '--abbrev=0', 'origin/main'], 
-                                          capture_output=True, text=True, timeout=10)
-                if tag_result.returncode == 0:
-                    return tag_result.stdout.strip()
-                else:
-                    return f"commit-{commit_hash}"
-            
-            return "remote-unavailable"
-        except FileNotFoundError:
-            # Git not installed, can't check remote
+                return f"commit-{result.stdout.strip()}"
+        except:
             pass
-        except Exception as e:
-            if "No such file or directory" in str(e):
-                # Git not installed
-                pass
-            else:
-                print(f"Git command error: {e}")
         
-        # Without Git, we can't check remote versions
-        return "git-required-for-remote"
-    except Exception as e:
-        print(f"Error getting remote version: {e}")
-        return "remote-check-unavailable"
-        except Exception as e:
-            if "No such file or directory" in str(e):
-                # Git not installed
-                pass
-            else:
-                print(f"Git command error: {e}")
-        
-        # Without Git, we can't check remote versions
-        return "git-required-for-remote"
+        return "remote-unavailable"
     except Exception as e:
         print(f"Error getting remote version: {e}")
         return "remote-check-unavailable"
@@ -1427,46 +1413,59 @@ def get_commit_log(limit=5):
         return [{'hash': 'error', 'message': f'Unable to get history: {str(e)}'}]
 
 def check_for_updates():
-    """Check if updates are available"""
+    """Check if updates are available using GitHub API"""
+    GITHUB_REPO = "plasmonized/containerized-mioty-Service-Center"
+    
     try:
-        # First ensure we have latest info from remote
-        try:
-            subprocess.run(['git', 'fetch', 'origin'], timeout=30, capture_output=True)
-        except:
-            pass
-
         current = get_current_version()
         remote = get_remote_version()
+        
+        # Extract commit hash from versions for comparison
+        current_hash = ""
+        remote_hash = ""
+        
+        if "commit-" in current:
+            current_hash = current.split("commit-")[1].split()[0][:7]
+        elif current.startswith("local-"):
+            # local-YYYYMMDD format - can't compare directly
+            current_hash = current
+            
+        if "commit-" in remote:
+            remote_hash = remote.split("commit-")[1].split()[0][:7]
         
         # Determine if updates are available
         updates_available = False
         status_message = None
         
-        if remote in ['git-required-for-remote', 'remote-check-unavailable']:
+        if remote in ['remote-unavailable', 'remote-check-unavailable']:
             updates_available = False
-            status_message = 'Git installation required for remote version checking'
-        elif current.startswith('local-') and remote.startswith('git-required'):
-            updates_available = False
-            status_message = 'Local installation - remote checking requires Git'
-        elif current != remote and not remote.startswith('git-required') and not remote.startswith('remote-'):
-            # In git, if HEAD and origin/main differ, updates are available
+            status_message = 'Cannot connect to GitHub to check for updates'
+        elif current_hash and remote_hash and current_hash != remote_hash:
             updates_available = True
+        elif current.startswith("local-") and remote_hash:
+            # Local installation, can't compare versions
+            updates_available = True
+            status_message = 'Local installation detected - update recommended'
         
-        # Get recent commits if available
+        # Get recent commits via GitHub API
         recent_commits = []
         try:
-            cmd = ['git', 'log', 'HEAD..origin/main', '--oneline', '-n', '10']
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-            if res.returncode == 0:
-                for line in res.stdout.strip().split('\n'):
-                    if line:
-                        parts = line.split(' ', 1)
-                        recent_commits.append({
-                            'hash': parts[0],
-                            'message': parts[1] if len(parts) > 1 else ''
-                        })
-        except:
-            pass
+            import urllib.request
+            import ssl
+            ctx = ssl.create_default_context()
+            
+            api_url = f"https://api.github.com/repos/{GITHUB_REPO}/commits?per_page=5"
+            req = urllib.request.Request(api_url, headers={'User-Agent': 'BSSCI-Service-Center'})
+            
+            with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
+                commits_data = json.loads(response.read().decode())
+                for commit in commits_data:
+                    recent_commits.append({
+                        'hash': commit['sha'][:7],
+                        'message': commit['commit']['message'].split('\n')[0][:60]
+                    })
+        except Exception as e:
+            logger.error(f"Error fetching commits: {e}")
 
         result = {
             'current_version': current,
@@ -1509,37 +1508,91 @@ def create_backup():
         return {'success': False, 'error': str(e)}
 
 def perform_update():
-    """Perform git pull update"""
+    """Perform update by downloading from GitHub"""
+    GITHUB_REPO = "plasmonized/containerized-mioty-Service-Center"
+    
     try:
         # Create backup first
         backup_result = create_backup()
         if not backup_result['success']:
             return {'success': False, 'error': f"Backup failed: {backup_result['error']}"}
         
-        # Perform git reset and pull to ensure a clean update
-        # This is often needed in Docker environments where local files might have changed
-        try:
-            subprocess.run(['git', 'reset', '--hard', 'HEAD'], capture_output=True, timeout=30)
-        except:
-            pass
-            
-        result = subprocess.run(['git', 'pull', 'origin', 'main'], 
-                              capture_output=True, text=True, timeout=60)
+        # First try git pull if we have a git repo
+        if os.path.exists('.git'):
+            try:
+                subprocess.run(['git', 'reset', '--hard', 'HEAD'], capture_output=True, timeout=30)
+                result = subprocess.run(['git', 'pull', 'origin', 'main'], 
+                                      capture_output=True, text=True, timeout=60)
+                if result.returncode == 0:
+                    return {
+                        'success': True, 
+                        'message': 'Update completed successfully via git',
+                        'backup_dir': backup_result['backup_dir'],
+                        'git_output': result.stdout
+                    }
+            except Exception as e:
+                logger.error(f"Git pull failed, trying ZIP download: {e}")
         
-        if result.returncode == 0:
-            return {
-                'success': True, 
-                'message': 'Update completed successfully',
-                'backup_dir': backup_result['backup_dir'],
-                'git_output': result.stdout
-            }
-        else:
-            return {
-                'success': False, 
-                'error': f"Git pull failed: {result.stderr}",
-                'backup_dir': backup_result['backup_dir']
-            }
+        # Fallback: Download ZIP from GitHub
+        import urllib.request
+        import ssl
+        import zipfile
+        import tempfile
+        import shutil
+        
+        ctx = ssl.create_default_context()
+        zip_url = f"https://github.com/{GITHUB_REPO}/archive/refs/heads/main.zip"
+        
+        # Download to temp file
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp_file:
+            tmp_path = tmp_file.name
+            req = urllib.request.Request(zip_url, headers={'User-Agent': 'BSSCI-Service-Center'})
+            
+            with urllib.request.urlopen(req, timeout=60, context=ctx) as response:
+                tmp_file.write(response.read())
+        
+        # Extract ZIP
+        extract_dir = tempfile.mkdtemp()
+        with zipfile.ZipFile(tmp_path, 'r') as zip_ref:
+            zip_ref.extractall(extract_dir)
+        
+        # Find the extracted folder (usually repo-name-main)
+        extracted_folders = os.listdir(extract_dir)
+        if extracted_folders:
+            source_dir = os.path.join(extract_dir, extracted_folders[0])
+            
+            # Copy Python files and templates (preserve config files)
+            files_to_update = ['web_ui.py', 'TLSServer.py', 'main.py', 'web_main.py', 
+                             'mqtt_interface.py', 'messages.py', 'requirements.txt']
+            
+            updated_files = []
+            for filename in files_to_update:
+                src = os.path.join(source_dir, filename)
+                if os.path.exists(src):
+                    shutil.copy2(src, filename)
+                    updated_files.append(filename)
+            
+            # Update templates folder
+            templates_src = os.path.join(source_dir, 'templates')
+            if os.path.exists(templates_src):
+                for template in os.listdir(templates_src):
+                    shutil.copy2(os.path.join(templates_src, template), 
+                               os.path.join('templates', template))
+                    updated_files.append(f'templates/{template}')
+        
+        # Cleanup
+        os.unlink(tmp_path)
+        shutil.rmtree(extract_dir, ignore_errors=True)
+        
+        return {
+            'success': True, 
+            'message': 'Update completed successfully via GitHub download',
+            'backup_dir': backup_result['backup_dir'],
+            'updated_files': updated_files
+        }
+        
     except Exception as e:
+        logger.error(f"Update failed: {e}")
         return {'success': False, 'error': str(e)}
 
 @app.route('/api/system/version')

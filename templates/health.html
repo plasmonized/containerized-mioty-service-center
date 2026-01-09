@@ -4,13 +4,11 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h1>System Health</h1>
-    <button class="btn btn-outline-secondary" onclick="refreshHealth()">
-        <i class="fas fa-sync"></i> Refresh
-    </button>
+    <button class="btn btn-outline-secondary" onclick="refreshHealth()">Refresh</button>
 </div>
 
 <div class="row mb-4">
-    <div class="col-md-3">
+    <div class="col-md-2">
         <div class="card text-center">
             <div class="card-body">
                 <h6 class="card-subtitle mb-2 text-muted">System Uptime</h6>
@@ -18,7 +16,7 @@
             </div>
         </div>
     </div>
-    <div class="col-md-3">
+    <div class="col-md-2">
         <div class="card text-center">
             <div class="card-body">
                 <h6 class="card-subtitle mb-2 text-muted">Packets Received</h6>
@@ -26,7 +24,7 @@
             </div>
         </div>
     </div>
-    <div class="col-md-3">
+    <div class="col-md-2">
         <div class="card text-center">
             <div class="card-body">
                 <h6 class="card-subtitle mb-2 text-muted">Packets Lost</h6>
@@ -34,11 +32,40 @@
             </div>
         </div>
     </div>
-    <div class="col-md-3">
+    <div class="col-md-2">
         <div class="card text-center">
             <div class="card-body">
-                <h6 class="card-subtitle mb-2 text-muted">Overall Packet Loss</h6>
+                <h6 class="card-subtitle mb-2 text-muted">Packet Loss</h6>
                 <h3 id="overallLossRate">0%</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="card text-center">
+            <div class="card-body">
+                <h6 class="card-subtitle mb-2 text-muted">Avg SNR</h6>
+                <h3 class="text-info" id="avgSnr">0 dB</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="card text-center">
+            <div class="card-body">
+                <h6 class="card-subtitle mb-2 text-muted">Avg RSSI</h6>
+                <h3 class="text-secondary" id="avgRssi">0 dBm</h3>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">SNR / RSSI History (1 Hour)</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="snrRssiChart" height="120"></canvas>
             </div>
         </div>
     </div>
@@ -68,7 +95,7 @@
 </div>
 
 <div class="row">
-    <div class="col-md-6">
+    <div class="col-md-5">
         <div class="card">
             <div class="card-header">
                 <h5 class="mb-0">Base Station Details</h5>
@@ -91,21 +118,22 @@
             </div>
         </div>
     </div>
-    <div class="col-md-6">
+    <div class="col-md-7">
         <div class="card">
             <div class="card-header">
                 <h5 class="mb-0">Top 10 Sensors by Packet Loss</h5>
             </div>
             <div class="card-body">
                 <div class="table-responsive">
-                    <table class="table table-sm">
+                    <table class="table table-sm" style="table-layout: fixed;">
                         <thead>
                             <tr>
-                                <th>EUI</th>
-                                <th>Received</th>
-                                <th>Lost</th>
-                                <th>Loss Rate</th>
-                                <th>Avg SNR</th>
+                                <th style="width: 40%;">EUI</th>
+                                <th style="width: 12%;">Received</th>
+                                <th style="width: 12%;">Lost</th>
+                                <th style="width: 12%;">Loss</th>
+                                <th style="width: 12%;">SNR</th>
+                                <th style="width: 12%;">RSSI</th>
                             </tr>
                         </thead>
                         <tbody id="sensorTable"></tbody>
@@ -122,6 +150,7 @@
 <script>
 let bsHealthChart = null;
 let sensorLossChart = null;
+let snrRssiChart = null;
 
 function formatUptime(seconds) {
     const days = Math.floor(seconds / 86400);
@@ -139,6 +168,11 @@ function getLossColor(rate) {
     return '#dc3545';
 }
 
+function formatTime(timestamp) {
+    const date = new Date(timestamp * 1000);
+    return date.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+}
+
 function loadHealth() {
     fetch('/api/health')
         .then(r => r.json())
@@ -148,17 +182,70 @@ function loadHealth() {
             document.getElementById('systemUptime').textContent = formatUptime(data.system.uptime);
             document.getElementById('packetsReceived').textContent = data.system.total_packets_received.toLocaleString();
             document.getElementById('packetsLost').textContent = data.system.total_packets_lost.toLocaleString();
+            document.getElementById('avgSnr').textContent = data.system.avg_snr + ' dB';
+            document.getElementById('avgRssi').textContent = data.system.avg_rssi + ' dBm';
             
             const lossRate = data.system.overall_packet_loss_rate;
             const lossEl = document.getElementById('overallLossRate');
             lossEl.textContent = lossRate + '%';
             lossEl.className = lossRate < 1 ? 'text-success' : lossRate < 5 ? 'text-warning' : 'text-danger';
             
+            updateSnrRssiChart(data.snr_rssi_history);
             updateBsHealthChart(data.base_stations);
             updateSensorLossChart(data.sensors.slice(0, 10));
             updateBsTable(data.base_stations);
             updateSensorTable(data.sensors.slice(0, 10));
         });
+}
+
+function updateSnrRssiChart(history) {
+    const ctx = document.getElementById('snrRssiChart').getContext('2d');
+    const labels = history.map(h => formatTime(h.timestamp));
+    
+    if (snrRssiChart) snrRssiChart.destroy();
+    
+    snrRssiChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Avg SNR (dB)',
+                data: history.map(h => h.avg_snr),
+                borderColor: '#17a2b8',
+                backgroundColor: 'rgba(23, 162, 184, 0.1)',
+                fill: true,
+                tension: 0.3,
+                yAxisID: 'y'
+            }, {
+                label: 'Avg RSSI (dBm)',
+                data: history.map(h => h.avg_rssi),
+                borderColor: '#6c757d',
+                backgroundColor: 'rgba(108, 117, 125, 0.1)',
+                fill: true,
+                tension: 0.3,
+                yAxisID: 'y1'
+            }]
+        },
+        options: {
+            responsive: true,
+            interaction: { mode: 'index', intersect: false },
+            scales: {
+                y: {
+                    type: 'linear',
+                    display: true,
+                    position: 'left',
+                    title: { display: true, text: 'SNR (dB)' }
+                },
+                y1: {
+                    type: 'linear',
+                    display: true,
+                    position: 'right',
+                    title: { display: true, text: 'RSSI (dBm)' },
+                    grid: { drawOnChartArea: false }
+                }
+            }
+        }
+    });
 }
 
 function updateBsHealthChart(baseStations) {
@@ -187,9 +274,7 @@ function updateBsHealthChart(baseStations) {
         },
         options: {
             responsive: true,
-            scales: {
-                y: { beginAtZero: true, max: 100 }
-            }
+            scales: { y: { beginAtZero: true, max: 100 } }
         }
     });
 }
@@ -212,9 +297,7 @@ function updateSensorLossChart(sensors) {
         },
         options: {
             responsive: true,
-            scales: {
-                y: { beginAtZero: true }
-            }
+            scales: { y: { beginAtZero: true } }
         }
     });
 }
@@ -236,11 +319,12 @@ function updateSensorTable(sensors) {
     const table = document.getElementById('sensorTable');
     table.innerHTML = sensors.map(s => `
         <tr>
-            <td><code>${s.eui.substring(0, 12)}</code></td>
+            <td><code style="font-size: 0.85em;">${s.eui}</code></td>
             <td>${s.packets_received}</td>
             <td>${s.packets_lost}</td>
             <td style="color: ${getLossColor(s.packet_loss_rate)}">${s.packet_loss_rate}%</td>
             <td>${s.avg_snr} dB</td>
+            <td>${s.avg_rssi} dBm</td>
         </tr>
     `).join('');
 }

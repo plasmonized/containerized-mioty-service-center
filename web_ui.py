@@ -811,10 +811,13 @@ def get_health_stats():
                 "connected_base_stations": 0,
                 "total_packets_received": 0,
                 "total_packets_lost": 0,
-                "overall_packet_loss_rate": 0
+                "overall_packet_loss_rate": 0,
+                "avg_snr": 0,
+                "avg_rssi": 0
             },
             "base_stations": [],
-            "sensors": []
+            "sensors": [],
+            "snr_rssi_history": []
         }
         
         if tls_server_instance:
@@ -878,6 +881,23 @@ def get_health_stats():
             
             # Sort sensors by packet loss rate (worst first)
             result["sensors"].sort(key=lambda x: x["packet_loss_rate"], reverse=True)
+            
+            # Calculate overall average SNR/RSSI
+            total_snr = 0
+            total_rssi = 0
+            sensor_count = 0
+            for stats in tls_server_instance.sensor_packet_stats.values():
+                if stats.get('snr_count', 0) > 0:
+                    total_snr += stats['snr_sum'] / stats['snr_count']
+                    total_rssi += stats['rssi_sum'] / stats['rssi_count']
+                    sensor_count += 1
+            
+            if sensor_count > 0:
+                result["system"]["avg_snr"] = round(total_snr / sensor_count, 2)
+                result["system"]["avg_rssi"] = round(total_rssi / sensor_count, 2)
+            
+            # Include SNR/RSSI history
+            result["snr_rssi_history"] = tls_server_instance.snr_rssi_history
         
         return jsonify({"success": True, **result})
     except Exception as e:

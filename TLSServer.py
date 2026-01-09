@@ -77,6 +77,10 @@ class TLSServer:
         # Sensor packet tracking for packet loss detection
         # eui -> {last_packet_cnt, packets_received, packets_lost, snr_sum, snr_count}
         self.sensor_packet_stats: Dict[str, Dict[str, Any]] = {}
+        
+        # SNR/RSSI history for graphs (last 60 data points, ~1 per minute avg)
+        self.snr_rssi_history: list = []
+        self._last_snr_history_update = 0
 
         # Auto-detach variables
         # eui -> timestamp of last message
@@ -1190,6 +1194,11 @@ class TLSServer:
                                 stats['snr_count'] += 1
                                 stats['rssi_sum'] += message.get('rssi', 0)
                                 stats['rssi_count'] += 1
+                            
+                            # Update SNR/RSSI history (every 60 seconds)
+                            current_time = datetime.now(timezone.utc).timestamp()
+                            if current_time - self._last_snr_history_update >= 60:
+                                self._update_snr_rssi_history(current_time)
 
                         # Parse received timestamp if available
                         try:
@@ -2436,6 +2445,37 @@ class TLSServer:
                 })
             except:
                 pass  # Don't let error response fail
+
+    def _update_snr_rssi_history(self, current_time: float) -> None:
+        """Update SNR/RSSI history with current averages"""
+        total_snr = 0
+        total_rssi = 0
+        count = 0
+        
+        for stats in self.sensor_packet_stats.values():
+            if stats.get('snr_count', 0) > 0:
+                total_snr += stats['snr_sum'] / stats['snr_count']
+                total_rssi += stats['rssi_sum'] / stats['rssi_count']
+                count += 1
+        
+        if count > 0:
+            avg_snr = round(total_snr / count, 2)
+            avg_rssi = round(total_rssi / count, 2)
+        else:
+            avg_snr = 0
+            avg_rssi = 0
+        
+        self.snr_rssi_history.append({
+            'timestamp': current_time,
+            'avg_snr': avg_snr,
+            'avg_rssi': avg_rssi
+        })
+        
+        # Keep last 60 entries (1 hour of data)
+        if len(self.snr_rssi_history) > 60:
+            self.snr_rssi_history = self.snr_rssi_history[-60:]
+        
+        self._last_snr_history_update = current_time
 
     async def process_sensor_config(self, config: dict) -> None:
         """Process a single sensor configuration update from MQTT"""

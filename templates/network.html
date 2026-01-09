@@ -251,18 +251,19 @@ function loadTopology() {
             const newElements = [];
             const existingIds = new Set();
             
+            // Capture current view state BEFORE any changes
+            const currentZoom = cy.zoom();
+            const currentPan = {...cy.pan()};
+            
             data.nodes.forEach(node => {
                 existingIds.add(node.id);
                 const existing = cy.getElementById(node.id);
                 if (existing.length > 0) {
-                    // Update existing node data
                     existing.data(node);
-                    // Keep manual position if exists
                     if (manualPositions[node.id]) {
                         existing.position(manualPositions[node.id]);
                     }
                 } else {
-                    // New node
                     newElements.push({ data: node, position: manualPositions[node.id] || undefined });
                 }
             });
@@ -277,18 +278,22 @@ function loadTopology() {
                 }
             });
             
-            // Remove elements no longer in data
             cy.elements().filter(ele => !existingIds.has(ele.id())).remove();
             
-            // Add new elements
             if (newElements.length > 0) {
                 cy.add(newElements);
-                
-                // Only run layout for truly new nodes if they don't have a manual position
                 const nodesToLayout = cy.nodes().filter(n => !manualPositions[n.id()]);
                 if (nodesToLayout.length > 0 && Object.keys(manualPositions).length === 0) {
                     runDefaultLayout();
+                } else {
+                    // Restore view state if we didn't run a full layout
+                    cy.zoom(currentZoom);
+                    cy.pan(currentPan);
                 }
+            } else {
+                // Restore view state to ensure it doesn't jump
+                cy.zoom(currentZoom);
+                cy.pan(currentPan);
             }
             
             const bsNodes = cy.nodes('[type="base_station"]');

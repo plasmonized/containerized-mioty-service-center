@@ -15,10 +15,14 @@ services:
       - ./endpoints.json:/app/endpoints.json:rw
       - ./bssci_config.py:/app/bssci_config.py:rw
       - ./.env:/app/.env:rw
+      - ./base_stations.json:/app/data/base_stations.json:rw
       - ./logs:/app/logs
     restart: unless-stopped
     environment:
       - PYTHONUNBUFFERED=1
+      - PUID=1000
+      - PGID=1000
+      - BASE_STATION_CONFIG_FILE=/app/data/base_stations.json
     networks:
       - bssci-network
     logging:

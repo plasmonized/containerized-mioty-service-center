@@ -48,12 +48,55 @@ class TLSServer:
             'duplicate_messages': 0,
             'published_messages': 0
         }
+        
+        # Traffic metrics for visualization
+        self.traffic_metrics = {
+            'messages_in': 0,          # Total messages received from base stations
+            'messages_out': 0,         # Total messages sent to MQTT
+            'messages_dropped': 0,     # Messages filtered by deduplication
+            'bytes_in': 0,             # Total bytes received
+            'bytes_out': 0,            # Total bytes sent to MQTT
+            'vm_messages': 0,          # VM sub-channel messages
+            'attach_requests': 0,      # Attach requests sent
+            'detach_requests': 0,      # Detach requests sent
+            'status_requests': 0,      # Status requests sent
+            'start_time': datetime.now(timezone.utc).timestamp()
+        }
+        # Time-series data for charts (last 60 minutes, 1-minute resolution)
+        self.traffic_history: list = []
+        self._last_history_update = 0
+        
+        # Track active sensors per hour (sensors that sent data)
+        self.active_sensors_hourly: set = set()
+        self._current_hour = datetime.now(timezone.utc).hour
+        self._last_hourly_active_count = 0
+        
+        # Base station health data (eui -> {cpu, temperature, ...})
+        self.base_station_health: Dict[str, dict] = {}
+        
+        # Sensor packet tracking for packet loss detection
+        # eui -> {last_packet_cnt, packets_received, packets_lost, snr_sum, snr_count}
+        self.sensor_packet_stats: Dict[str, Dict[str, Any]] = {}
+        
+        # SNR/RSSI history for graphs (last 288 data points, 5 min intervals = 24 hours)
+        self.snr_rssi_history: list = []
+        self._last_snr_history_update = 0
 
         # Auto-detach variables
         # eui -> timestamp of last message
         self.sensor_last_seen: Dict[str, float] = {}
         # eui -> whether warning was sent
         self.sensor_warning_sent: Dict[str, bool] = {}
+
+        # Network topology tracking: which base stations receive which sensors
+        # sensor_eui -> {primary_bs: str, receiving_bases: {bs_eui: {snr, rssi, last_seen, count}}}
+        self.sensor_topology: Dict[str, Dict[str, Any]] = {}
+        
+        # Variable MAC (VM) Sub-Channel tracking
+        # eui -> {active: bool, vm_channel: int, activated_at: timestamp, bs_eui: str}
+        self.vm_active_sensors: Dict[str, Dict[str, Any]] = {}
+        # Pending VM operations: opID -> {eui, operation, timestamp}
+        self.pending_vm_operations: Dict[int, Dict[str, Any]] = {}
 
         # Start the deduplication task
         asyncio.create_task(self.process_deduplication_buffer())
@@ -74,9 +117,15 @@ class TLSServer:
         logger.info(f"   mqtt_in_queue ID: {id(self.mqtt_in_queue)}")
 
     def _get_local_time(self) -> str:
-        """Get current time in UTC+2 timezone"""
-        utc_time = datetime.now(timezone.utc)
-        local_time = utc_time + timedelta(hours=2)
+        """Get current time in configured timezone"""
+        try:
+            import zoneinfo
+            tz = zoneinfo.ZoneInfo(bssci_config.TIMEZONE)
+            local_time = datetime.now(tz)
+        except Exception:
+            # Fallback to UTC+1 (CET) if timezone not available
+            utc_time = datetime.now(timezone.utc)
+            local_time = utc_time + timedelta(hours=1)
         return local_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
 
     async def start_server(self) -> None:
@@ -229,6 +278,7 @@ class TLSServer:
 
                 writer.write(full_message)
                 await writer.drain()
+                self.traffic_metrics['attach_requests'] += 1
 
                 # Track this attach request for correlation with response
                 self.pending_attach_requests[self.opID] = {
@@ -317,6 +367,7 @@ class TLSServer:
                         try:
                             logger.info(f"📤 Sending status request to base station {bs_eui}")
                             logger.info(f"   Operation ID: {self.opID}")
+                            self.traffic_metrics['status_requests'] += 1
 
                             msg_pack = encode_message(messages.build_status_request(self.opID))
                             full_message = IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack
@@ -378,6 +429,7 @@ class TLSServer:
 
             writer.write(full_message)
             await writer.drain()
+            self.traffic_metrics['detach_requests'] += 1
             self.opID -= 1
 
             # Remove from registered sensors
@@ -722,6 +774,7 @@ class TLSServer:
                 data = await reader.read(4096)
                 if not data:
                     break
+                self.traffic_metrics['bytes_in'] += len(data)
                 # try:
                 for message in decode_messages(data):
                     msg_type = message.get("command", "")
@@ -752,11 +805,24 @@ class TLSServer:
 
                     elif msg_type == "conCmp":
                         logger.info(f"📨 BSSCI CONNECTION COMPLETE received from {addr}")
-                        if (
-                            writer in self.connecting_base_stations
-                            and writer not in self.connected_base_stations
-                        ):
-                            bs_eui = self.connecting_base_stations.pop(writer)  # Remove from connecting
+                        
+                        # Always remove from connecting first (fix for duplicate display bug)
+                        bs_eui = self.connecting_base_stations.pop(writer, None)
+                        
+                        if bs_eui and writer not in self.connected_base_stations:
+                            # Deduplicate: Remove any existing connection with the same EUI
+                            old_writers = [w for w, eui in list(self.connected_base_stations.items()) if eui == bs_eui]
+                            for old_writer in old_writers:
+                                logger.warning(f"🔄 REPLACING duplicate connection for base station {bs_eui}")
+                                logger.warning(f"   Closing old connection, keeping new connection from {addr}")
+                                try:
+                                    old_writer.close()
+                                except Exception as e:
+                                    logger.debug(f"   Could not close old writer: {e}")
+                                self.connected_base_stations.pop(old_writer, None)
+                                # Also remove from connecting if present there
+                                self.connecting_base_stations.pop(old_writer, None)
+                            
                             self.connected_base_stations[writer] = bs_eui
                             connection_time = asyncio.get_event_loop().time() - connection_start_time
 
@@ -839,6 +905,14 @@ class TLSServer:
                             "dutyCycle": message["dutyCycle"],
                             "time": message["time"],
                             "uptime": message["uptime"],
+                        }
+                        
+                        self.base_station_health[bs_eui.lower()] = {
+                            "cpu": message["cpuLoad"] * 100,
+                            "memory": message["memLoad"] * 100,
+                            "duty_cycle": message["dutyCycle"] * 100,
+                            "uptime": message["uptime"],
+                            "last_update": datetime.now(timezone.utc).isoformat()
                         }
 
                         mqtt_topic = f"bs/{bs_eui.upper()}"
@@ -1036,6 +1110,36 @@ class TLSServer:
                         message_key = f"{eui}_{packet_cnt}"
 
                         self.deduplication_stats['total_messages'] += 1
+                        self.traffic_metrics['messages_in'] += 1
+                        
+                        # Track active sensor for hourly stats
+                        self.active_sensors_hourly.add(eui)
+                        
+                        # Update network topology (track ALL receiving base stations, before dedup)
+                        eui_upper = eui.upper()
+                        rssi = message.get('rssi', 0)
+                        current_time = asyncio.get_event_loop().time()
+                        
+                        if eui_upper not in self.sensor_topology:
+                            self.sensor_topology[eui_upper] = {
+                                'primary_bs': bs_eui,
+                                'receiving_bases': {}
+                            }
+                        
+                        # Update or add this base station as a receiver
+                        if bs_eui not in self.sensor_topology[eui_upper]['receiving_bases']:
+                            self.sensor_topology[eui_upper]['receiving_bases'][bs_eui] = {
+                                'snr': snr,
+                                'rssi': rssi,
+                                'last_seen': current_time,
+                                'count': 1
+                            }
+                        else:
+                            rb = self.sensor_topology[eui_upper]['receiving_bases'][bs_eui]
+                            rb['snr'] = snr  # Update with latest
+                            rb['rssi'] = rssi
+                            rb['last_seen'] = current_time
+                            rb['count'] += 1
 
                         # Check if message is a duplicate and if the new one has better SNR
                         is_duplicate = message_key in self.deduplication_buffer
@@ -1050,6 +1154,10 @@ class TLSServer:
 
                                 # Update preferred downlink path in sensor config
                                 self.update_preferred_downlink_path(eui, bs_eui, snr)
+                                
+                                # Update topology primary BS
+                                if eui_upper in self.sensor_topology:
+                                    self.sensor_topology[eui_upper]['primary_bs'] = bs_eui
 
                                 self.deduplication_buffer[message_key] = {
                                     'message': message,
@@ -1060,6 +1168,7 @@ class TLSServer:
                             else:
                                 logger.debug(f"   🔽 DEDUPLICATION: Filtered duplicate message for {eui} with lower SNR ({snr:.2f} dB <= {existing_message['snr']:.2f} dB)")
                                 self.deduplication_stats['duplicate_messages'] += 1
+                                self.traffic_metrics['messages_dropped'] += 1
 
                                 # Send acknowledgment but don't queue for MQTT
                                 msg_pack = encode_message(
@@ -1080,6 +1189,10 @@ class TLSServer:
 
                             # Update preferred downlink path for new messages too
                             self.update_preferred_downlink_path(eui, bs_eui, snr)
+                            
+                            # Update topology primary BS for new messages
+                            if eui_upper in self.sensor_topology:
+                                self.sensor_topology[eui_upper]['primary_bs'] = bs_eui
 
                             self.deduplication_buffer[message_key] = {
                                 'message': message,
@@ -1087,6 +1200,94 @@ class TLSServer:
                                 'snr': snr,
                                 'bs_eui': bs_eui
                             }
+                            
+                            # Track packet statistics for packet loss detection (only for new messages, not duplicates)
+                            eui_upper = eui.upper()
+                            current_timestamp = datetime.now(timezone.utc).timestamp()
+                            
+                            # Extract transmission details from message
+                            airtime_ms = message.get('airtime', 0)  # in microseconds usually
+                            spreading_factor = message.get('sf', message.get('spreadingFactor', 7))
+                            frequency_hz = message.get('freq', message.get('frequency', 0))
+                            data_rate = message.get('dataRate', f'SF{spreading_factor}BW125')
+                            
+                            if eui_upper not in self.sensor_packet_stats:
+                                self.sensor_packet_stats[eui_upper] = {
+                                    'last_packet_cnt': packet_cnt,
+                                    'packets_received': 1,
+                                    'packets_lost': 0,
+                                    'snr_sum': snr,
+                                    'snr_count': 1,
+                                    'rssi_sum': message.get('rssi', 0),
+                                    'rssi_count': 1,
+                                    'first_seen': current_timestamp,
+                                    'last_seen': current_timestamp,
+                                    'last_airtime_ms': airtime_ms / 1000 if airtime_ms > 1000 else airtime_ms,
+                                    'total_airtime_ms': airtime_ms / 1000 if airtime_ms > 1000 else airtime_ms,
+                                    'spreading_factor': spreading_factor,
+                                    'frequency_mhz': frequency_hz / 1000000 if frequency_hz > 1000000 else frequency_hz,
+                                    'data_rate': data_rate,
+                                    'frame_counter': packet_cnt,
+                                    'min_snr': snr,
+                                    'max_snr': snr,
+                                    'min_rssi': message.get('rssi', 0),
+                                    'max_rssi': message.get('rssi', 0),
+                                    'snr_history': [],
+                                    'rssi_history': []
+                                }
+                            else:
+                                stats = self.sensor_packet_stats[eui_upper]
+                                last_cnt = stats['last_packet_cnt']
+                                # Packet counter wraps at 65536 (16-bit)
+                                expected_next = (last_cnt + 1) % 65536
+                                if packet_cnt != expected_next:
+                                    # Calculate lost packets (handle wrap-around)
+                                    if packet_cnt > last_cnt:
+                                        lost = packet_cnt - last_cnt - 1
+                                    else:
+                                        lost = (65536 - last_cnt - 1) + packet_cnt
+                                    if lost > 0 and lost < 1000:  # Sanity check
+                                        stats['packets_lost'] += lost
+                                stats['last_packet_cnt'] = packet_cnt
+                                stats['packets_received'] += 1
+                                stats['snr_sum'] += snr
+                                stats['snr_count'] += 1
+                                stats['rssi_sum'] += message.get('rssi', 0)
+                                stats['rssi_count'] += 1
+                                
+                                # Update extended stats
+                                stats['last_seen'] = current_timestamp
+                                airtime_val = airtime_ms / 1000 if airtime_ms > 1000 else airtime_ms
+                                stats['last_airtime_ms'] = airtime_val
+                                stats['total_airtime_ms'] = stats.get('total_airtime_ms', 0) + airtime_val
+                                stats['spreading_factor'] = spreading_factor
+                                stats['frequency_mhz'] = frequency_hz / 1000000 if frequency_hz > 1000000 else frequency_hz
+                                stats['data_rate'] = data_rate
+                                stats['frame_counter'] = packet_cnt
+                                
+                                # Track min/max values
+                                stats['min_snr'] = min(stats.get('min_snr', snr), snr)
+                                stats['max_snr'] = max(stats.get('max_snr', snr), snr)
+                                rssi = message.get('rssi', 0)
+                                stats['min_rssi'] = min(stats.get('min_rssi', rssi), rssi)
+                                stats['max_rssi'] = max(stats.get('max_rssi', rssi), rssi)
+                                
+                                # Keep last 100 values for history charts
+                                if 'snr_history' not in stats:
+                                    stats['snr_history'] = []
+                                if 'rssi_history' not in stats:
+                                    stats['rssi_history'] = []
+                                stats['snr_history'].append({'ts': current_timestamp, 'val': snr})
+                                stats['rssi_history'].append({'ts': current_timestamp, 'val': rssi})
+                                if len(stats['snr_history']) > 100:
+                                    stats['snr_history'] = stats['snr_history'][-100:]
+                                if len(stats['rssi_history']) > 100:
+                                    stats['rssi_history'] = stats['rssi_history'][-100:]
+                            
+                            # Update SNR/RSSI history (every 5 minutes)
+                            current_time = datetime.now(timezone.utc).timestamp()
+                            if current_time - self._last_snr_history_update >= 300:
+                                self._update_snr_rssi_history(current_time)
 
                         # Parse received timestamp if available
                         try:
@@ -1168,6 +1369,155 @@ class TLSServer:
                                 })
                             }
                             await self.mqtt_out_queue.put(detach_response_notification)
+
+                    # Variable MAC (VM) Sub-Channel Message Handlers
+                    elif msg_type == "vmActRsp":
+                        op_id = message.get("opId", "unknown")
+                        code = message.get("code", -1)
+                        bs_eui = self.connected_base_stations.get(writer, "unknown")
+                        
+                        if op_id in self.pending_vm_operations:
+                            pending = self.pending_vm_operations.pop(op_id)
+                            eui = pending.get("eui", "unknown")
+                            vm_channel = pending.get("vm_channel", 0)
+                            
+                            if code == 0:
+                                logger.info(f"✅ VM ACTIVATE SUCCESS for sensor {eui}")
+                                self.vm_active_sensors[eui.upper()] = {
+                                    "active": True,
+                                    "vm_channel": vm_channel,
+                                    "activated_at": asyncio.get_event_loop().time(),
+                                    "bs_eui": bs_eui
+                                }
+                            else:
+                                logger.warning(f"❌ VM ACTIVATE FAILED for sensor {eui}, code: {code}")
+                            
+                            if self.mqtt_out_queue:
+                                await self.mqtt_out_queue.put({
+                                    "topic": f"ep/{eui.upper()}/vm/status",
+                                    "payload": json.dumps({
+                                        "action": "vm_activate_response",
+                                        "eui": eui,
+                                        "success": code == 0,
+                                        "vm_channel": vm_channel,
+                                        "timestamp": asyncio.get_event_loop().time()
+                                    })
+                                })
+                    
+                    elif msg_type == "vmDeactRsp":
+                        op_id = message.get("opId", "unknown")
+                        code = message.get("code", -1)
+                        
+                        if op_id in self.pending_vm_operations:
+                            pending = self.pending_vm_operations.pop(op_id)
+                            eui = pending.get("eui", "unknown")
+                            
+                            if code == 0:
+                                logger.info(f"✅ VM DEACTIVATE SUCCESS for sensor {eui}")
+                                if eui.upper() in self.vm_active_sensors:
+                                    del self.vm_active_sensors[eui.upper()]
+                            else:
+                                logger.warning(f"❌ VM DEACTIVATE FAILED for sensor {eui}, code: {code}")
+                            
+                            if self.mqtt_out_queue:
+                                await self.mqtt_out_queue.put({
+                                    "topic": f"ep/{eui.upper()}/vm/status",
+                                    "payload": json.dumps({
+                                        "action": "vm_deactivate_response",
+                                        "eui": eui,
+                                        "success": code == 0,
+                                        "timestamp": asyncio.get_event_loop().time()
+                                    })
+                                })
+                    
+                    elif msg_type == "vmStatusRsp":
+                        op_id = message.get("opId", "unknown")
+                        active = message.get("active", False)
+                        vm_channel = message.get("vmChan", 0)
+                        
+                        if op_id in self.pending_vm_operations:
+                            pending = self.pending_vm_operations.pop(op_id)
+                            eui = pending.get("eui", "unknown")
+                            bs_eui = self.connected_base_stations.get(writer, "unknown")
+                            
+                            logger.info(f"📊 VM STATUS for sensor {eui}: active={active}, channel={vm_channel}")
+                            
+                            if active:
+                                self.vm_active_sensors[eui.upper()] = {
+                                    "active": True,
+                                    "vm_channel": vm_channel,
+                                    "activated_at": asyncio.get_event_loop().time(),
+                                    "bs_eui": bs_eui
+                                }
+                            elif eui.upper() in self.vm_active_sensors:
+                                del self.vm_active_sensors[eui.upper()]
+                            
+                            if self.mqtt_out_queue:
+                                await self.mqtt_out_queue.put({
+                                    "topic": f"ep/{eui.upper()}/vm/status",
+                                    "payload": json.dumps({
+                                        "action": "vm_status_response",
+                                        "eui": eui,
+                                        "active": active,
+                                        "vm_channel": vm_channel,
+                                        "timestamp": asyncio.get_event_loop().time()
+                                    })
+                                })
+                    
+                    elif msg_type == "vmUlData":
+                        eui = int(message["epEui"]).to_bytes(8, byteorder="big").hex()
+                        bs_eui = self.connected_base_stations.get(writer, "unknown")
+                        op_id = message.get("opId", 0)
+                        port = message.get("port", 1)
+                        data = message.get("data", [])
+                        
+                        logger.info(f"📨 VM UPLINK DATA received from sensor {eui}")
+                        logger.info(f"   Port: {port}, Data length: {len(data)} bytes")
+                        logger.info(f"   Via base station: {bs_eui}")
+                        
+                        # Send acknowledgment
+                        msg_pack = encode_message(messages.build_vm_ul_data_response(op_id))
+                        writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
+                        await writer.drain()
+                        
+                        # Update last seen
+                        self.sensor_last_seen[eui.upper()] = asyncio.get_event_loop().time()
+                        
+                        # Publish to MQTT
+                        if self.mqtt_out_queue:
+                            await self.mqtt_out_queue.put({
+                                "topic": f"ep/{eui.upper()}/vm/ul",
+                                "payload": json.dumps({
+                                    "bs_eui": bs_eui,
+                                    "port": port,
+                                    "data": bytes(data).hex() if isinstance(data, list) else data,
+                                    "timestamp": asyncio.get_event_loop().time()
+                                })
+                            })
+                    
+                    elif msg_type == "vmDlDataRsp":
+                        op_id = message.get("opId", "unknown")
+                        code = message.get("code", -1)
+                        
+                        if op_id in self.pending_vm_operations:
+                            pending = self.pending_vm_operations.pop(op_id)
+                            eui = pending.get("eui", "unknown")
+                            
+                            if code == 0:
+                                logger.info(f"✅ VM DOWNLINK DATA SENT successfully to sensor {eui}")
+                            else:
+                                logger.warning(f"❌ VM DOWNLINK DATA FAILED for sensor {eui}, code: {code}")
+                            
+                            if self.mqtt_out_queue:
+                                await self.mqtt_out_queue.put({
+                                    "topic": f"ep/{eui.upper()}/vm/dl/response",
+                                    "payload": json.dumps({
+                                        "action": "vm_dl_response",
+                                        "eui": eui,
+                                        "success": code == 0,
+                                        "timestamp": asyncio.get_event_loop().time()
+                                    })
+                                })
 
                     else:
                         logger.warning(f"[WARN] Unknown message type: {msg_type} - Message: {message}")
@@ -1262,6 +1612,8 @@ class TLSServer:
 
                     # Update statistics
                     self.deduplication_stats['published_messages'] += 1
+                    self.traffic_metrics['messages_out'] += 1
+                    self.traffic_metrics['bytes_out'] += len(payload_json)
                     total_msg = self.deduplication_stats['total_messages']
                     dup_msg = self.deduplication_stats['duplicate_messages']
                     pub_msg = self.deduplication_stats['published_messages']
@@ -1494,43 +1846,262 @@ class TLSServer:
             import traceback
             logger.error(f"   Traceback: {traceback.format_exc()}")
 
+    # ==================== Variable MAC (VM) Sub-Channel Methods ====================
+    
+    async def vm_activate(self, sensor_eui: str, vm_channel: int = 0) -> bool:
+        """Activate VM sub-channel for a sensor"""
+        sensor_eui = sensor_eui.upper()
+        logger.info(f"📡 VM ACTIVATE request for sensor {sensor_eui}, channel {vm_channel}")
+        
+        if not self.connected_base_stations:
+            logger.warning("   No base stations connected")
+            return False
+        
+        success = False
+        for writer, bs_eui in self.connected_base_stations.items():
+            try:
+                self.opID += 1
+                op_id = self.opID
+                
+                self.pending_vm_operations[op_id] = {
+                    "eui": sensor_eui,
+                    "operation": "activate",
+                    "vm_channel": vm_channel,
+                    "timestamp": asyncio.get_event_loop().time()
+                }
+                
+                msg_pack = encode_message(messages.build_vm_activate_request(sensor_eui, op_id, vm_channel))
+                writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
+                await writer.drain()
+                
+                logger.info(f"   Sent VM activate to base station {bs_eui}")
+                success = True
+            except Exception as e:
+                logger.error(f"   Failed to send VM activate to {bs_eui}: {e}")
+        
+        return success
+    
+    async def vm_deactivate(self, sensor_eui: str) -> bool:
+        """Deactivate VM sub-channel for a sensor"""
+        sensor_eui = sensor_eui.upper()
+        logger.info(f"📡 VM DEACTIVATE request for sensor {sensor_eui}")
+        
+        if not self.connected_base_stations:
+            logger.warning("   No base stations connected")
+            return False
+        
+        success = False
+        for writer, bs_eui in self.connected_base_stations.items():
+            try:
+                self.opID += 1
+                op_id = self.opID
+                
+                self.pending_vm_operations[op_id] = {
+                    "eui": sensor_eui,
+                    "operation": "deactivate",
+                    "timestamp": asyncio.get_event_loop().time()
+                }
+                
+                msg_pack = encode_message(messages.build_vm_deactivate_request(sensor_eui, op_id))
+                writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
+                await writer.drain()
+                
+                logger.info(f"   Sent VM deactivate to base station {bs_eui}")
+                success = True
+            except Exception as e:
+                logger.error(f"   Failed to send VM deactivate to {bs_eui}: {e}")
+        
+        return success
+    
+    async def vm_status(self, sensor_eui: str) -> bool:
+        """Query VM sub-channel status for a sensor"""
+        sensor_eui = sensor_eui.upper()
+        logger.info(f"📊 VM STATUS request for sensor {sensor_eui}")
+        
+        if not self.connected_base_stations:
+            logger.warning("   No base stations connected")
+            return False
+        
+        success = False
+        for writer, bs_eui in self.connected_base_stations.items():
+            try:
+                self.opID += 1
+                op_id = self.opID
+                
+                self.pending_vm_operations[op_id] = {
+                    "eui": sensor_eui,
+                    "operation": "status",
+                    "timestamp": asyncio.get_event_loop().time()
+                }
+                
+                msg_pack = encode_message(messages.build_vm_status_request(sensor_eui, op_id))
+                writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
+                await writer.drain()
+                
+                logger.info(f"   Sent VM status request to base station {bs_eui}")
+                success = True
+            except Exception as e:
+                logger.error(f"   Failed to send VM status to {bs_eui}: {e}")
+        
+        return success
+    
+    async def vm_send_data(self, sensor_eui: str, data: bytes, port: int = 1) -> bool:
+        """Send data to sensor via VM sub-channel (downlink)"""
+        sensor_eui = sensor_eui.upper()
+        logger.info(f"📤 VM DOWNLINK DATA for sensor {sensor_eui}")
+        logger.info(f"   Port: {port}, Data length: {len(data)} bytes")
+        
+        # Check if sensor has VM active
+        if sensor_eui not in self.vm_active_sensors:
+            logger.warning(f"   Sensor {sensor_eui} does not have VM sub-channel active")
+            return False
+        
+        vm_info = self.vm_active_sensors[sensor_eui]
+        preferred_bs = vm_info.get("bs_eui")
+        
+        # Find the writer for the preferred base station
+        target_writer = None
+        for writer, bs_eui in self.connected_base_stations.items():
+            if bs_eui == preferred_bs:
+                target_writer = writer
+                break
+        
+        if not target_writer:
+            # Use any connected base station if preferred one not found
+            if self.connected_base_stations:
+                target_writer = list(self.connected_base_stations.keys())[0]
+            else:
+                logger.warning("   No base stations connected")
+                return False
+        
+        try:
+            self.opID += 1
+            op_id = self.opID
+            
+            self.pending_vm_operations[op_id] = {
+                "eui": sensor_eui,
+                "operation": "dl_data",
+                "timestamp": asyncio.get_event_loop().time()
+            }
+            
+            msg_pack = encode_message(messages.build_vm_dl_data(sensor_eui, op_id, data, port))
+            target_writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
+            await target_writer.drain()
+            
+            bs_eui = self.connected_base_stations.get(target_writer, "unknown")
+            logger.info(f"   Sent VM downlink data via base station {bs_eui}")
+            return True
+        except Exception as e:
+            logger.error(f"   Failed to send VM downlink data: {e}")
+            return False
+    
+    def get_vm_status(self) -> dict:
+        """Get VM sub-channel status for all sensors"""
+        return {
+            "active_sensors": dict(self.vm_active_sensors),
+            "pending_operations": len(self.pending_vm_operations)
+        }
+    
+    def get_traffic_metrics(self) -> dict:
+        """Get traffic metrics for visualization"""
+        import time
+        current_time = time.time()
+        
+        # Check for hour change and update hourly active count
+        current_hour = datetime.now(timezone.utc).hour
+        if current_hour != self._current_hour:
+            self._last_hourly_active_count = len(self.active_sensors_hourly)
+            self.active_sensors_hourly = set()
+            self._current_hour = current_hour
+        
+        # Update history every minute
+        if current_time - self._last_history_update >= 60:
+            self.traffic_history.append({
+                'timestamp': current_time,
+                'messages_in': self.traffic_metrics['messages_in'],
+                'messages_out': self.traffic_metrics['messages_out'],
+                'messages_dropped': self.traffic_metrics['messages_dropped'],
+                'sensors_registered': len(self.registered_sensors),
+                'sensors_active': len(self.active_sensors_hourly),
+                'base_stations': len(self.connected_base_stations)
+            })
+            # Keep only last 720 entries (12 hours)
+            if len(self.traffic_history) > 720:
+                self.traffic_history = self.traffic_history[-720:]
+            self._last_history_update = current_time
+        
+        return {
+            'metrics': dict(self.traffic_metrics),
+            'dedup_stats': dict(self.deduplication_stats),
+            'history': list(self.traffic_history),
+            'connections': len(self.connected_base_stations),
+            'sensors_registered': len(self.registered_sensors),
+            'sensors_active': len(self.active_sensors_hourly)
+        }
+    
+    def reset_traffic_metrics(self) -> None:
+        """Reset traffic metrics"""
+        self.traffic_metrics = {
+            'messages_in': 0,
+            'messages_out': 0,
+            'messages_dropped': 0,
+            'bytes_in': 0,
+            'bytes_out': 0,
+            'vm_messages': 0,
+            'attach_requests': 0,
+            'detach_requests': 0,
+            'status_requests': 0,
+            'start_time': datetime.now(timezone.utc).timestamp()
+        }
+        self.traffic_history = []
+        self._last_history_update = 0
+
     def get_base_station_status(self) -> dict:
         """Get status of connected base stations"""
         connected_stations = []
-        for writer, bs_eui in self.connected_base_stations.items():
-            addr = writer.get_extra_info("peername")
-            ssl_obj = writer.get_extra_info("ssl_object")
+        for writer, bs_eui in list(self.connected_base_stations.items()):
+            try:
+                if writer is None:
+                    continue
+                addr = writer.get_extra_info("peername")
+                ssl_obj = writer.get_extra_info("ssl_object")
 
-            station_info = {
-                "eui": bs_eui.upper(),
-                "address": f"{addr[0]}:{addr[1]}" if addr else "unknown",
-                "status": "connected"
-            }
+                station_info = {
+                    "eui": bs_eui.upper(),
+                    "address": f"{addr[0]}:{addr[1]}" if addr else "unknown",
+                    "status": "connected"
+                }
 
-            # Add SSL certificate info if available
-            if ssl_obj:
-                try:
-                    cert = ssl_obj.getpeercert()
-                    if cert:
-                        subject = cert.get('subject', [])
-                        for field in subject:
-                            for name, value in field:
-                                if name == 'commonName':
-                                    station_info['certificate_cn'] = value
-                                    break
-                except:
-                    pass
+                if ssl_obj:
+                    try:
+                        cert = ssl_obj.getpeercert()
+                        if cert:
+                            subject = cert.get('subject', [])
+                            for field in subject:
+                                for name, value in field:
+                                    if name == 'commonName':
+                                        station_info['certificate_cn'] = value
+                                        break
+                    except:
+                        pass
 
-            connected_stations.append(station_info)
+                connected_stations.append(station_info)
+            except Exception:
+                continue
 
         connecting_stations = []
-        for writer, bs_eui in self.connecting_base_stations.items():
-            addr = writer.get_extra_info("peername")
-            connecting_stations.append({
-                "eui": bs_eui.upper(),
-                "address": f"{addr[0]}:{addr[1]}" if addr else "unknown",
-                "status": "connecting"
-            })
+        for writer, bs_eui in list(self.connecting_base_stations.items()):
+            try:
+                if writer is None:
+                    continue
+                addr = writer.get_extra_info("peername")
+                connecting_stations.append({
+                    "eui": bs_eui.upper(),
+                    "address": f"{addr[0]}:{addr[1]}" if addr else "unknown",
+                    "status": "connecting"
+                })
+            except Exception:
+                continue
 
         return {
             "connected": connected_stations,
@@ -1963,6 +2534,37 @@ class TLSServer:
                 })
             except:
                 pass  # Don't let error response fail
+
+    def _update_snr_rssi_history(self, current_time: float) -> None:
+        """Update SNR/RSSI history with current averages"""
+        total_snr = 0
+        total_rssi = 0
+        count = 0
+        
+        for stats in self.sensor_packet_stats.values():
+            if stats.get('snr_count', 0) > 0:
+                total_snr += stats['snr_sum'] / stats['snr_count']
+                total_rssi += stats['rssi_sum'] / stats['rssi_count']
+                count += 1
+        
+        if count > 0:
+            avg_snr = round(total_snr / count, 2)
+            avg_rssi = round(total_rssi / count, 2)
+        else:
+            avg_snr = 0
+            avg_rssi = 0
+        
+        self.snr_rssi_history.append({
+            'timestamp': current_time,
+            'avg_snr': avg_snr,
+            'avg_rssi': avg_rssi
+        })
+        
+        # Keep last 288 entries (24 hours of data at 5 min intervals)
+        if len(self.snr_rssi_history) > 288:
+            self.snr_rssi_history = self.snr_rssi_history[-288:]
+        
+        self._last_snr_history_update = current_time
 
     async def process_sensor_config(self, config: dict) -> None:
         """Process a single sensor configuration update from MQTT"""

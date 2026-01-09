@@ -1,0 +1,438 @@
+{% extends "base.html" %}
+{% block title %}Traffic{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Traffic Monitoring</h1>
+    <div>
+        <button class="btn btn-outline-secondary me-2" onclick="resetMetrics()" title="Reset all traffic metrics">
+            Reset Metrics
+        </button>
+        <button class="btn btn-primary" onclick="refreshData()" style="background-color: #ff8c00; border-color: #ff8c00;">
+            Refresh Now
+        </button>
+    </div>
+</div>
+
+<div id="alert-container"></div>
+
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card h-100">
+            <div class="card-body text-center">
+                <h6 class="text-muted">Messages In</h6>
+                <h2 id="messages-in" class="text-success">0</h2>
+                <small class="text-muted" id="messages-in-rate">0/min</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card h-100">
+            <div class="card-body text-center">
+                <h6 class="text-muted">Messages Out</h6>
+                <h2 id="messages-out" class="text-primary">0</h2>
+                <small class="text-muted" id="messages-out-rate">0/min</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card h-100">
+            <div class="card-body text-center">
+                <h6 class="text-muted">Dropped (Dedup)</h6>
+                <h2 id="messages-dropped" class="text-warning">0</h2>
+                <small class="text-muted" id="dedup-rate">0%</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card h-100">
+            <div class="card-body text-center">
+                <h6 class="text-muted">Base Stations</h6>
+                <h2 id="connections" class="text-info">0</h2>
+                <small class="text-muted" id="uptime">Uptime: --</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Message Traffic</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="messageChart" height="200"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Sensors & Base Stations (12h)</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="connectionsChart" height="200"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Operations</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="operationsChart" height="100"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Data Transfer</h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-sm">
+                    <tr>
+                        <td>Bytes Received</td>
+                        <td class="text-end" id="bytes-in">0 B</td>
+                    </tr>
+                    <tr>
+                        <td>Bytes Sent (MQTT)</td>
+                        <td class="text-end" id="bytes-out">0 B</td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Protocol Operations</h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-sm">
+                    <tr>
+                        <td>Attach Requests</td>
+                        <td class="text-end" id="attach-requests">0</td>
+                    </tr>
+                    <tr>
+                        <td>Detach Requests</td>
+                        <td class="text-end" id="detach-requests">0</td>
+                    </tr>
+                    <tr>
+                        <td>Status Requests</td>
+                        <td class="text-end" id="status-requests">0</td>
+                    </tr>
+                    <tr>
+                        <td>VM Messages</td>
+                        <td class="text-end" id="vm-messages">0</td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Deduplication Stats</h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-sm">
+                    <tr>
+                        <td>Total Messages</td>
+                        <td class="text-end" id="dedup-total">0</td>
+                    </tr>
+                    <tr>
+                        <td>Duplicates Filtered</td>
+                        <td class="text-end" id="dedup-filtered">0</td>
+                    </tr>
+                    <tr>
+                        <td>Published</td>
+                        <td class="text-end" id="dedup-published">0</td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+<script>
+let messageChart, operationsChart, connectionsChart;
+let historyData = [];
+let refreshInterval;
+
+function formatBytes(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+function formatUptime(seconds) {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    if (hours > 0) {
+        return `${hours}h ${minutes}m`;
+    }
+    return `${minutes}m`;
+}
+
+function initCharts() {
+    const ctxMessage = document.getElementById('messageChart').getContext('2d');
+    messageChart = new Chart(ctxMessage, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Messages In',
+                data: [],
+                borderColor: '#28a745',
+                backgroundColor: 'rgba(40, 167, 69, 0.1)',
+                tension: 0.4,
+                fill: true
+            }, {
+                label: 'Messages Out',
+                data: [],
+                borderColor: '#007bff',
+                backgroundColor: 'rgba(0, 123, 255, 0.1)',
+                tension: 0.4,
+                fill: true
+            }, {
+                label: 'Dropped',
+                data: [],
+                borderColor: '#ffc107',
+                backgroundColor: 'rgba(255, 193, 7, 0.1)',
+                tension: 0.4,
+                fill: true
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: true
+                }
+            },
+            plugins: {
+                legend: {
+                    position: 'bottom'
+                }
+            }
+        }
+    });
+
+    const ctxOps = document.getElementById('operationsChart').getContext('2d');
+    operationsChart = new Chart(ctxOps, {
+        type: 'doughnut',
+        data: {
+            labels: ['Attach', 'Detach', 'Status', 'VM'],
+            datasets: [{
+                data: [0, 0, 0, 0],
+                backgroundColor: ['#28a745', '#dc3545', '#17a2b8', '#ff8c00']
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: {
+                    position: 'bottom'
+                }
+            }
+        }
+    });
+
+    const ctxConn = document.getElementById('connectionsChart').getContext('2d');
+    connectionsChart = new Chart(ctxConn, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Registered Sensors',
+                data: [],
+                borderColor: '#28a745',
+                backgroundColor: 'rgba(40, 167, 69, 0.1)',
+                tension: 0.4,
+                fill: false,
+                yAxisID: 'y'
+            }, {
+                label: 'Active Sensors (this hour)',
+                data: [],
+                borderColor: '#17a2b8',
+                backgroundColor: 'rgba(23, 162, 184, 0.1)',
+                tension: 0.4,
+                fill: false,
+                yAxisID: 'y'
+            }, {
+                label: 'Base Stations',
+                data: [],
+                borderColor: '#ff8c00',
+                backgroundColor: 'rgba(255, 140, 0, 0.1)',
+                tension: 0.4,
+                fill: false,
+                yAxisID: 'y1'
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    type: 'linear',
+                    display: true,
+                    position: 'left',
+                    beginAtZero: true,
+                    title: {
+                        display: true,
+                        text: 'Sensors'
+                    }
+                },
+                y1: {
+                    type: 'linear',
+                    display: true,
+                    position: 'right',
+                    beginAtZero: true,
+                    title: {
+                        display: true,
+                        text: 'Base Stations'
+                    },
+                    grid: {
+                        drawOnChartArea: false
+                    }
+                }
+            },
+            plugins: {
+                legend: {
+                    position: 'bottom'
+                }
+            }
+        }
+    });
+}
+
+function updateCharts(history) {
+    if (!messageChart || !connectionsChart) return;
+    
+    const labels = history.map((_, i) => `-${history.length - i}m`);
+    const msgsIn = history.map(h => h.messages_in || 0);
+    const msgsOut = history.map(h => h.messages_out || 0);
+    const dropped = history.map(h => h.messages_dropped || 0);
+    const sensorsRegistered = history.map(h => h.sensors_registered || h.sensors || 0);
+    const sensorsActive = history.map(h => h.sensors_active || 0);
+    const baseStations = history.map(h => h.base_stations || 0);
+    
+    messageChart.data.labels = labels;
+    messageChart.data.datasets[0].data = msgsIn;
+    messageChart.data.datasets[1].data = msgsOut;
+    messageChart.data.datasets[2].data = dropped;
+    messageChart.update('none');
+    
+    connectionsChart.data.labels = labels;
+    connectionsChart.data.datasets[0].data = sensorsRegistered;
+    connectionsChart.data.datasets[1].data = sensorsActive;
+    connectionsChart.data.datasets[2].data = baseStations;
+    connectionsChart.update('none');
+}
+
+function updateOperationsChart(metrics) {
+    if (!operationsChart) return;
+    operationsChart.data.datasets[0].data = [
+        metrics.attach_requests || 0,
+        metrics.detach_requests || 0,
+        metrics.status_requests || 0,
+        metrics.vm_messages || 0
+    ];
+    operationsChart.update('none');
+}
+
+function refreshData() {
+    fetch('/api/traffic/metrics')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const m = data.metrics;
+                
+                document.getElementById('messages-in').textContent = m.messages_in.toLocaleString();
+                document.getElementById('messages-out').textContent = m.messages_out.toLocaleString();
+                document.getElementById('messages-dropped').textContent = m.messages_dropped.toLocaleString();
+                document.getElementById('connections').textContent = data.connections || 0;
+                
+                const uptime = Math.floor(Date.now() / 1000 - m.start_time);
+                document.getElementById('uptime').textContent = 'Uptime: ' + formatUptime(uptime);
+                
+                // Calculate messages per minute
+                const uptimeMinutes = uptime / 60;
+                if (uptimeMinutes > 0) {
+                    const inRate = (m.messages_in / uptimeMinutes).toFixed(1);
+                    const outRate = (m.messages_out / uptimeMinutes).toFixed(1);
+                    document.getElementById('messages-in-rate').textContent = inRate + '/min';
+                    document.getElementById('messages-out-rate').textContent = outRate + '/min';
+                }
+                
+                if (m.messages_in > 0) {
+                    const dedupRate = ((m.messages_dropped / m.messages_in) * 100).toFixed(1);
+                    document.getElementById('dedup-rate').textContent = dedupRate + '% filtered';
+                }
+                
+                document.getElementById('bytes-in').textContent = formatBytes(m.bytes_in);
+                document.getElementById('bytes-out').textContent = formatBytes(m.bytes_out);
+                document.getElementById('attach-requests').textContent = m.attach_requests.toLocaleString();
+                document.getElementById('detach-requests').textContent = m.detach_requests.toLocaleString();
+                document.getElementById('status-requests').textContent = m.status_requests.toLocaleString();
+                document.getElementById('vm-messages').textContent = m.vm_messages.toLocaleString();
+                
+                if (data.dedup_stats) {
+                    document.getElementById('dedup-total').textContent = data.dedup_stats.total_messages.toLocaleString();
+                    document.getElementById('dedup-filtered').textContent = data.dedup_stats.duplicate_messages.toLocaleString();
+                    document.getElementById('dedup-published').textContent = data.dedup_stats.published_messages.toLocaleString();
+                }
+                
+                updateOperationsChart(m);
+                
+                if (data.history && data.history.length > 0) {
+                    updateCharts(data.history);
+                }
+            }
+        })
+        .catch(error => console.error('Error fetching metrics:', error));
+}
+
+function resetMetrics() {
+    if (confirm('Are you sure you want to reset all traffic metrics?')) {
+        fetch('/api/traffic/reset', { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showAlert('success', 'Traffic metrics reset successfully');
+                    refreshData();
+                } else {
+                    showAlert('danger', data.message || 'Failed to reset metrics');
+                }
+            })
+            .catch(error => showAlert('danger', 'Error: ' + error.message));
+    }
+}
+
+function showAlert(type, message) {
+    const container = document.getElementById('alert-container');
+    const alert = document.createElement('div');
+    alert.className = `alert alert-${type} alert-dismissible fade show`;
+    alert.innerHTML = `${message}<button type="button" class="btn-close" data-bs-dismiss="alert"></button>`;
+    container.appendChild(alert);
+    setTimeout(() => alert.remove(), 5000);
+}
+
+initCharts();
+refreshData();
+refreshInterval = setInterval(refreshData, 5000);
+</script>
+{% endblock %}

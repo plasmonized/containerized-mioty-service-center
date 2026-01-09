@@ -1,3 +1,5 @@
+import csv
+import io
 import json
 import logging
 import os
@@ -6,7 +8,7 @@ import shutil
 import threading
 import time
 from datetime import datetime, timezone, timedelta
-from flask import Flask, render_template, request, jsonify, redirect, url_for
+from flask import Flask, render_template, request, jsonify, redirect, url_for, Response
 from typing import List, Dict, Any
 import bssci_config
 
@@ -58,8 +60,19 @@ max_log_entries = 1000
 class WebUILogHandler(logging.Handler):
     def __init__(self):
         super().__init__()
-        # Set timezone to UTC+2 (Central European Time)
-        self.timezone = timezone(timedelta(hours=2))
+        # Use configured timezone
+        self._update_timezone()
+    
+    def _update_timezone(self):
+        """Update timezone from config"""
+        try:
+            import zoneinfo
+            self.tz = zoneinfo.ZoneInfo(bssci_config.TIMEZONE)
+            self.use_zoneinfo = True
+        except Exception:
+            # Fallback to UTC+1 (CET)
+            self.tz = timezone(timedelta(hours=1))
+            self.use_zoneinfo = False
 
     def emit(self, record):
         global log_entries
@@ -72,7 +85,7 @@ class WebUILogHandler(logging.Handler):
 
         # Convert UTC timestamp to local timezone
         utc_time = datetime.fromtimestamp(record.created, tz=timezone.utc)
-        local_time = utc_time.astimezone(self.timezone)
+        local_time = utc_time.astimezone(self.tz)
         current_time = local_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
 
         message = record.getMessage()
@@ -359,6 +372,140 @@ def detach_sensor(eui):
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)})
 
+@app.route('/api/sensors/<eui>/details', methods=['GET'])
+def get_sensor_details(eui):
+    """Get detailed statistics for a specific sensor"""
+    try:
+        global tls_server_instance
+        tls_server = tls_server_instance
+        eui_upper = eui.upper()
+        
+        # Get base sensor config
+        sensor_config = None
+        try:
+            with open(bssci_config.SENSOR_CONFIG_FILE, 'r') as f:
+                sensors = json.load(f)
+                for s in sensors:
+                    if s.get('eui', '').upper() == eui_upper:
+                        sensor_config = s
+                        break
+        except:
+            pass
+        
+        if not sensor_config:
+            return jsonify({'success': False, 'message': 'Sensor not found'})
+        
+        # Get packet statistics
+        stats = {}
+        if tls_server and hasattr(tls_server, 'sensor_packet_stats'):
+            stats = tls_server.sensor_packet_stats.get(eui_upper, {})
+        
+        # Get topology info
+        topology = {}
+        if tls_server and hasattr(tls_server, 'sensor_topology'):
+            topology = tls_server.sensor_topology.get(eui_upper, {})
+        
+        # Get registration info
+        registration = {}
+        if tls_server and hasattr(tls_server, 'registered_sensors'):
+            registration = tls_server.registered_sensors.get(eui_upper, {})
+        
+        # Get preferred downlink path
+        downlink_path = {}
+        if tls_server and hasattr(tls_server, 'preferred_downlink_paths'):
+            downlink_path = tls_server.preferred_downlink_paths.get(eui_upper, {})
+        
+        # Calculate derived metrics
+        avg_snr = stats.get('snr_sum', 0) / stats.get('snr_count', 1) if stats.get('snr_count', 0) > 0 else 0
+        avg_rssi = stats.get('rssi_sum', 0) / stats.get('rssi_count', 1) if stats.get('rssi_count', 0) > 0 else 0
+        packets_received = stats.get('packets_received', 0)
+        packets_lost = stats.get('packets_lost', 0)
+        packet_loss_rate = (packets_lost / (packets_received + packets_lost) * 100) if (packets_received + packets_lost) > 0 else 0
+        
+        # Calculate send interval (based on last 10 messages if history available)
+        send_interval = 0
+        if 'snr_history' in stats and len(stats['snr_history']) >= 2:
+            history = stats['snr_history'][-10:]
+            intervals = []
+            for i in range(1, len(history)):
+                intervals.append(history[i]['ts'] - history[i-1]['ts'])
+            if intervals:
+                send_interval = sum(intervals) / len(intervals)
+        
+        # Calculate device health scores
+        signal_score = 5.0
+        if avg_snr < -5:
+            signal_score = 1.0
+        elif avg_snr < 0:
+            signal_score = 2.0
+        elif avg_snr < 5:
+            signal_score = 3.0
+        elif avg_snr < 10:
+            signal_score = 4.0
+        
+        energy_score = 3.0  # Default fair
+        if stats.get('spreading_factor', 7) <= 7:
+            energy_score = 5.0
+        elif stats.get('spreading_factor', 7) <= 9:
+            energy_score = 4.0
+        elif stats.get('spreading_factor', 7) <= 10:
+            energy_score = 3.0
+        elif stats.get('spreading_factor', 7) <= 11:
+            energy_score = 2.0
+        else:
+            energy_score = 1.0
+        
+        # Get gateway count from topology
+        gateway_count = len(topology.get('receiving_bases', {})) if topology else 0
+        
+        # Calculate duty cycle
+        total_airtime_ms = stats.get('total_airtime_ms', 0)
+        first_seen = stats.get('first_seen', 0)
+        last_seen = stats.get('last_seen', 0)
+        observation_time_s = (last_seen - first_seen) if first_seen and last_seen else 1
+        duty_cycle = (total_airtime_ms / 1000 / observation_time_s * 100) if observation_time_s > 0 else 0
+        
+        response = {
+            'success': True,
+            'eui': eui_upper,
+            'config': sensor_config,
+            'first_seen': stats.get('first_seen'),
+            'last_seen': stats.get('last_seen'),
+            'packets_received': packets_received,
+            'packets_lost': packets_lost,
+            'packet_loss_rate': round(packet_loss_rate, 2),
+            'avg_snr': round(avg_snr, 2),
+            'avg_rssi': round(avg_rssi, 2),
+            'min_snr': stats.get('min_snr', 0),
+            'max_snr': stats.get('max_snr', 0),
+            'min_rssi': stats.get('min_rssi', 0),
+            'max_rssi': stats.get('max_rssi', 0),
+            'current_rssi': stats.get('rssi_sum', 0) / stats.get('rssi_count', 1) if stats.get('rssi_count', 0) > 0 else 0,
+            'send_interval': round(send_interval, 1),
+            'gateway_count': gateway_count,
+            'primary_gateway': topology.get('primary_bs', ''),
+            'receiving_gateways': list(topology.get('receiving_bases', {}).keys()) if topology else [],
+            'receiving_bases_details': topology.get('receiving_bases', {}) if topology else {},
+            'signal_score': round(signal_score, 1),
+            'energy_score': round(energy_score, 1),
+            'spreading_factor': stats.get('spreading_factor', 7),
+            'data_rate': stats.get('data_rate', 'SF7BW125'),
+            'frequency_mhz': round(stats.get('frequency_mhz', 0), 3),
+            'frame_counter': stats.get('frame_counter', 0),
+            'last_airtime_ms': round(stats.get('last_airtime_ms', 0), 2),
+            'avg_airtime_ms': round(total_airtime_ms / packets_received, 2) if packets_received > 0 else 0,
+            'total_airtime_ms': round(total_airtime_ms, 2),
+            'duty_cycle': round(duty_cycle, 4),
+            'snr_history': stats.get('snr_history', [])[-50:],
+            'rssi_history': stats.get('rssi_history', [])[-50:],
+            'registration': registration,
+            'downlink_path': downlink_path
+        }
+        
+        return jsonify(response)
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
 @app.route('/api/sensors/attach-all', methods=['POST'])
 def attach_all_sensors():
     """Attach all configured sensors to base stations"""
@@ -454,6 +601,179 @@ def reload_sensors():
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)})
 
+@app.route('/api/sensors/export', methods=['GET'])
+def export_sensors():
+    """Export all sensors as CSV file"""
+    try:
+        # Load sensors from config file
+        try:
+            with open(bssci_config.SENSOR_CONFIG_FILE, 'r') as f:
+                sensors = json.load(f)
+        except:
+            sensors = []
+        
+        if not sensors:
+            return jsonify({'success': False, 'message': 'No sensors to export'}), 404
+        
+        # Create CSV content
+        output = io.StringIO()
+        writer = csv.writer(output)
+        
+        # Write header
+        writer.writerow(['eui', 'nwKey', 'shortAddr', 'bidi'])
+        
+        # Write sensor data
+        for sensor in sensors:
+            writer.writerow([
+                sensor.get('eui', ''),
+                sensor.get('nwKey', ''),
+                sensor.get('shortAddr', ''),
+                'true' if sensor.get('bidi', False) else 'false'
+            ])
+        
+        # Create response with CSV file
+        output.seek(0)
+        return Response(
+            output.getvalue(),
+            mimetype='text/csv',
+            headers={'Content-Disposition': f'attachment; filename=sensors_export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'}
+        )
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/sensors/import', methods=['POST'])
+def import_sensors():
+    """Import sensors from CSV/TXT file"""
+    try:
+        if 'file' not in request.files:
+            return jsonify({'success': False, 'message': 'No file provided'}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'success': False, 'message': 'No file selected'}), 400
+        
+        # Read file content
+        content = file.read().decode('utf-8')
+        lines = content.strip().split('\n')
+        
+        if len(lines) < 1:
+            return jsonify({'success': False, 'message': 'File is empty'}), 400
+        
+        # Detect delimiter (comma, semicolon, or tab)
+        first_line = lines[0]
+        if ';' in first_line:
+            delimiter = ';'
+        elif '\t' in first_line:
+            delimiter = '\t'
+        else:
+            delimiter = ','
+        
+        # Parse CSV
+        reader = csv.reader(io.StringIO(content), delimiter=delimiter)
+        rows = list(reader)
+        
+        if len(rows) < 1:
+            return jsonify({'success': False, 'message': 'No data in file'}), 400
+        
+        # Check if first row is header
+        header = rows[0]
+        has_header = any(h.lower() in ['eui', 'nwkey', 'shortaddr', 'bidi', 'network_key', 'short_addr'] for h in header)
+        
+        if has_header:
+            # Map header columns
+            header_lower = [h.lower().strip() for h in header]
+            eui_idx = next((i for i, h in enumerate(header_lower) if h in ['eui', 'mac', 'address']), 0)
+            nwkey_idx = next((i for i, h in enumerate(header_lower) if h in ['nwkey', 'network_key', 'key', 'networkkey']), 1)
+            shortaddr_idx = next((i for i, h in enumerate(header_lower) if h in ['shortaddr', 'short_addr', 'shortaddress', 'addr']), 2)
+            bidi_idx = next((i for i, h in enumerate(header_lower) if h in ['bidi', 'bidirectional', 'bidir']), 3)
+            data_rows = rows[1:]
+        else:
+            # Assume order: eui, nwKey, shortAddr, bidi
+            eui_idx, nwkey_idx, shortaddr_idx, bidi_idx = 0, 1, 2, 3
+            data_rows = rows
+        
+        # Load existing sensors
+        try:
+            with open(bssci_config.SENSOR_CONFIG_FILE, 'r') as f:
+                existing_sensors = json.load(f)
+        except:
+            existing_sensors = []
+        
+        existing_euis = {s['eui'].upper() for s in existing_sensors}
+        
+        imported_count = 0
+        updated_count = 0
+        errors = []
+        
+        for row_idx, row in enumerate(data_rows):
+            try:
+                if len(row) < 3:  # At least eui, nwKey, shortAddr required
+                    errors.append(f"Row {row_idx + 1}: Not enough columns")
+                    continue
+                
+                eui = row[eui_idx].strip().upper() if eui_idx < len(row) else ''
+                nwkey = row[nwkey_idx].strip() if nwkey_idx < len(row) else ''
+                shortaddr = row[shortaddr_idx].strip() if shortaddr_idx < len(row) else '0000'
+                bidi_val = row[bidi_idx].strip().lower() if bidi_idx < len(row) else 'false'
+                bidi = bidi_val in ['true', '1', 'yes', 'on']
+                
+                # Validate EUI
+                if not eui or len(eui) < 8:
+                    errors.append(f"Row {row_idx + 1}: Invalid EUI '{eui}'")
+                    continue
+                
+                # Validate nwKey
+                if not nwkey or len(nwkey) < 16:
+                    errors.append(f"Row {row_idx + 1}: Invalid network key")
+                    continue
+                
+                sensor_data = {
+                    'eui': eui,
+                    'nwKey': nwkey,
+                    'shortAddr': shortaddr if shortaddr else '0000',
+                    'bidi': bidi
+                }
+                
+                if eui in existing_euis:
+                    # Update existing sensor
+                    for s in existing_sensors:
+                        if s['eui'].upper() == eui:
+                            s.update(sensor_data)
+                            break
+                    updated_count += 1
+                else:
+                    # Add new sensor
+                    existing_sensors.append(sensor_data)
+                    existing_euis.add(eui)
+                    imported_count += 1
+                    
+            except Exception as e:
+                errors.append(f"Row {row_idx + 1}: {str(e)}")
+        
+        # Save to file
+        with open(bssci_config.SENSOR_CONFIG_FILE, 'w') as f:
+            json.dump(existing_sensors, f, indent=4)
+        
+        # Reload TLS server config
+        global tls_server_instance
+        if tls_server_instance and hasattr(tls_server_instance, 'reload_sensor_config'):
+            tls_server_instance.reload_sensor_config()
+        
+        message = f'Import complete: {imported_count} new sensors, {updated_count} updated'
+        if errors:
+            message += f', {len(errors)} errors'
+        
+        return jsonify({
+            'success': True,
+            'message': message,
+            'imported': imported_count,
+            'updated': updated_count,
+            'errors': errors[:10] if errors else []  # Limit error messages
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
 @app.route('/config')
 def config():
     try:
@@ -478,7 +798,8 @@ def config():
             'AUTO_DETACH_ENABLED': getattr(bssci_config, 'AUTO_DETACH_ENABLED', True),
             'AUTO_DETACH_TIMEOUT': getattr(bssci_config, 'AUTO_DETACH_TIMEOUT', 259200),
             'AUTO_DETACH_WARNING_TIMEOUT': getattr(bssci_config, 'AUTO_DETACH_WARNING_TIMEOUT', 129600),
-            'AUTO_DETACH_CHECK_INTERVAL': getattr(bssci_config, 'AUTO_DETACH_CHECK_INTERVAL', 3600)
+            'AUTO_DETACH_CHECK_INTERVAL': getattr(bssci_config, 'AUTO_DETACH_CHECK_INTERVAL', 3600),
+            'TIMEZONE': getattr(bssci_config, 'TIMEZONE', 'Europe/Berlin')
         }
         return render_template('config.html', config=config_data)
     except Exception as e:
@@ -497,7 +818,8 @@ def config():
             'AUTO_DETACH_ENABLED': True,
             'AUTO_DETACH_TIMEOUT': 259200,
             'AUTO_DETACH_WARNING_TIMEOUT': 129600,
-            'AUTO_DETACH_CHECK_INTERVAL': 3600
+            'AUTO_DETACH_CHECK_INTERVAL': 3600,
+            'TIMEZONE': 'Europe/Berlin'
         }
         return render_template('config.html', config=default_config)
 
@@ -550,6 +872,9 @@ AUTO_DETACH_WARNING_TIMEOUT={auto_detach_warning_timeout}
 AUTO_DETACH_WARNING_HOURS={auto_detach_warning_timeout // 3600}
 AUTO_DETACH_CHECK_INTERVAL={auto_detach_check_interval}
 
+# Timezone Configuration
+TIMEZONE={data.get('TIMEZONE', 'Europe/Berlin')}
+
 # Logging Configuration
 LOG_LEVEL=INFO
 LOG_FILE=logs/bssci_service.log
@@ -596,6 +921,426 @@ def certificates():
 @app.route('/logs')
 def logs():
     return render_template('logs.html')
+
+@app.route('/traffic')
+def traffic():
+    return render_template('traffic.html')
+
+@app.route('/health')
+def health():
+    return render_template('health.html')
+
+@app.route('/api/health', methods=['GET'])
+def get_health_stats():
+    """Get comprehensive health statistics for the system"""
+    try:
+        global tls_server_instance
+        
+        result = {
+            "system": {
+                "uptime": 0,
+                "total_sensors": 0,
+                "active_sensors": 0,
+                "total_base_stations": 0,
+                "connected_base_stations": 0,
+                "total_packets_received": 0,
+                "total_packets_lost": 0,
+                "overall_packet_loss_rate": 0,
+                "avg_snr": 0,
+                "avg_rssi": 0
+            },
+            "base_stations": [],
+            "sensors": [],
+            "snr_rssi_history": []
+        }
+        
+        if tls_server_instance:
+            # System stats
+            start_time = tls_server_instance.traffic_metrics.get('start_time', 0)
+            if start_time:
+                from datetime import datetime, timezone
+                result["system"]["uptime"] = int(datetime.now(timezone.utc).timestamp() - start_time)
+            
+            result["system"]["total_sensors"] = len(tls_server_instance.sensor_config)
+            result["system"]["active_sensors"] = len(tls_server_instance.active_sensors_hourly)
+            result["system"]["total_base_stations"] = len(tls_server_instance.connected_base_stations) + len(tls_server_instance.connecting_base_stations)
+            result["system"]["connected_base_stations"] = len(tls_server_instance.connected_base_stations)
+            
+            # Aggregate packet stats
+            total_received = 0
+            total_lost = 0
+            for eui, stats in tls_server_instance.sensor_packet_stats.items():
+                total_received += stats.get('packets_received', 0)
+                total_lost += stats.get('packets_lost', 0)
+            
+            result["system"]["total_packets_received"] = total_received
+            result["system"]["total_packets_lost"] = total_lost
+            if total_received + total_lost > 0:
+                result["system"]["overall_packet_loss_rate"] = round(total_lost / (total_received + total_lost) * 100, 2)
+            
+            # Base station health
+            bs_config = load_base_station_config().get("base_stations", {})
+            for writer, bs_eui in tls_server_instance.connected_base_stations.items():
+                eui_lower = bs_eui.lower()
+                health = tls_server_instance.base_station_health.get(eui_lower, {})
+                bs_info = bs_config.get(eui_lower, {})
+                result["base_stations"].append({
+                    "eui": eui_lower,
+                    "name": bs_info.get("name", ""),
+                    "status": "connected",
+                    "cpu": health.get("cpu", 0),
+                    "memory": health.get("memory", 0),
+                    "duty_cycle": health.get("duty_cycle", 0),
+                    "uptime": health.get("uptime", 0)
+                })
+            
+            # Sensor packet stats
+            for eui, stats in tls_server_instance.sensor_packet_stats.items():
+                received = stats.get('packets_received', 0)
+                lost = stats.get('packets_lost', 0)
+                snr_avg = stats.get('snr_sum', 0) / max(stats.get('snr_count', 1), 1)
+                rssi_avg = stats.get('rssi_sum', 0) / max(stats.get('rssi_count', 1), 1)
+                loss_rate = 0
+                if received + lost > 0:
+                    loss_rate = round(lost / (received + lost) * 100, 2)
+                
+                result["sensors"].append({
+                    "eui": eui.lower(),
+                    "packets_received": received,
+                    "packets_lost": lost,
+                    "packet_loss_rate": loss_rate,
+                    "avg_snr": round(snr_avg, 2),
+                    "avg_rssi": round(rssi_avg, 2)
+                })
+            
+            # Sort sensors by packet loss rate (worst first)
+            result["sensors"].sort(key=lambda x: x["packet_loss_rate"], reverse=True)
+            
+            # Calculate overall average SNR/RSSI
+            total_snr = 0
+            total_rssi = 0
+            sensor_count = 0
+            for stats in tls_server_instance.sensor_packet_stats.values():
+                if stats.get('snr_count', 0) > 0:
+                    total_snr += stats['snr_sum'] / stats['snr_count']
+                    total_rssi += stats['rssi_sum'] / stats['rssi_count']
+                    sensor_count += 1
+            
+            if sensor_count > 0:
+                result["system"]["avg_snr"] = round(total_snr / sensor_count, 2)
+                result["system"]["avg_rssi"] = round(total_rssi / sensor_count, 2)
+            
+            # Include SNR/RSSI history
+            result["snr_rssi_history"] = tls_server_instance.snr_rssi_history
+            
+            # Calculate signal score distribution based on SNR
+            # Excellent: >= 10 dB, Good: 5-10 dB, Fair: 0-5 dB, Poor: -5-0 dB, Critical: < -5 dB
+            distribution = {"excellent": 0, "good": 0, "fair": 0, "poor": 0, "critical": 0}
+            for stats in tls_server_instance.sensor_packet_stats.values():
+                if stats.get('snr_count', 0) > 0:
+                    avg_snr = stats['snr_sum'] / stats['snr_count']
+                    if avg_snr >= 10:
+                        distribution["excellent"] += 1
+                    elif avg_snr >= 5:
+                        distribution["good"] += 1
+                    elif avg_snr >= 0:
+                        distribution["fair"] += 1
+                    elif avg_snr >= -5:
+                        distribution["poor"] += 1
+                    else:
+                        distribution["critical"] += 1
+            result["signal_distribution"] = distribution
+        
+        return jsonify({"success": True, **result})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/base-stations')
+def base_stations():
+    return render_template('base_stations.html')
+
+@app.route('/network')
+def network():
+    return render_template('network.html')
+
+@app.route('/api/network')
+def api_network():
+    """Get network topology data for visualization"""
+    try:
+        global tls_server_instance
+        nodes = []
+        edges = []
+        
+        if tls_server_instance:
+            bs_config = load_base_station_config().get("base_stations", {})
+            
+            # Add base station nodes
+            connected_bs = set()
+            for writer, bs_eui in tls_server_instance.connected_base_stations.items():
+                connected_bs.add(bs_eui.upper())
+            
+            # Get all base stations from topology and connected list
+            all_bs = set(connected_bs)
+            for sensor_data in tls_server_instance.sensor_topology.values():
+                for bs_eui in sensor_data.get('receiving_bases', {}).keys():
+                    all_bs.add(bs_eui.upper())
+            
+            for bs_eui in all_bs:
+                bs_lower = bs_eui.lower()
+                config = bs_config.get(bs_lower, {})
+                health = tls_server_instance.base_station_health.get(bs_eui, {})
+                
+                nodes.append({
+                    'id': f'bs_{bs_eui}',
+                    'type': 'base_station',
+                    'eui': bs_eui,
+                    'label': config.get('name', bs_eui[:8] + '...'),
+                    'connected': bs_eui in connected_bs,
+                    'cpu': health.get('cpu', 0),
+                    'memory': health.get('memory', 0),
+                    'duty_cycle': health.get('duty_cycle', 0)
+                })
+            
+            # Add sensor nodes and edges
+            for sensor_eui, topo in tls_server_instance.sensor_topology.items():
+                primary_bs = topo.get('primary_bs', '').upper()
+                receiving = topo.get('receiving_bases', {})
+                
+                # Get sensor name from config if available
+                sensor_name = sensor_eui[:8] + '...'
+                for sensor in tls_server_instance.sensor_config:
+                    if sensor.get('eui', '').upper() == sensor_eui:
+                        sensor_name = sensor.get('name', sensor_name)
+                        break
+                
+                nodes.append({
+                    'id': f'sensor_{sensor_eui}',
+                    'type': 'sensor',
+                    'eui': sensor_eui,
+                    'label': sensor_name,
+                    'primary_bs': primary_bs,
+                    'receiver_count': len(receiving)
+                })
+                
+                # Add edges to all receiving base stations
+                for bs_eui, stats in receiving.items():
+                    bs_upper = bs_eui.upper()
+                    edges.append({
+                        'id': f'edge_{sensor_eui}_{bs_upper}',
+                        'source': f'sensor_{sensor_eui}',
+                        'target': f'bs_{bs_upper}',
+                        'primary': bs_upper == primary_bs,
+                        'snr': round(stats.get('snr', 0), 2),
+                        'rssi': round(stats.get('rssi', 0), 2),
+                        'last_seen': stats.get('last_seen', 0),
+                        'count': stats.get('count', 0)
+                    })
+        
+        return jsonify({
+            'success': True,
+            'nodes': nodes,
+            'edges': edges
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+def load_base_station_config():
+    """Load base station configuration from JSON file"""
+    try:
+        config_path = getattr(bssci_config, 'BASE_STATION_CONFIG_FILE', 'base_stations.json')
+        with open(config_path, 'r') as f:
+            return json.load(f)
+    except:
+        return {"base_stations": {}}
+
+def save_base_station_config(config):
+    """Save base station configuration to JSON file"""
+    import os
+    config_path = getattr(bssci_config, 'BASE_STATION_CONFIG_FILE', 'base_stations.json')
+    try:
+        dir_path = os.path.dirname(config_path)
+        if dir_path:
+            os.makedirs(dir_path, exist_ok=True)
+    except:
+        pass
+    with open(config_path, 'w') as f:
+        json.dump(config, f, indent=2)
+
+@app.route('/api/base-stations', methods=['GET'])
+def get_base_stations():
+    """Get all base stations with status and health data"""
+    try:
+        global tls_server_instance
+        config = load_base_station_config()
+        bs_config = config.get("base_stations", {})
+        
+        connected_bs = {}
+        connecting_bs = {}
+        bs_health = {}
+        bs_sensors = {}
+        
+        if tls_server_instance:
+            status = tls_server_instance.get_base_station_status()
+            for bs in status.get("connected", []):
+                eui = bs["eui"].lower()
+                connected_bs[eui] = bs
+            for bs in status.get("connecting", []):
+                eui = bs["eui"].lower()
+                connecting_bs[eui] = bs
+            if hasattr(tls_server_instance, 'base_station_health'):
+                bs_health = tls_server_instance.base_station_health
+            if hasattr(tls_server_instance, 'sensor_config'):
+                for sensor in tls_server_instance.sensor_config:
+                    preferred = sensor.get('preferredDownlinkPath', {})
+                    if isinstance(preferred, dict):
+                        bs_eui = preferred.get('baseStation', '').lower()
+                        if bs_eui:
+                            bs_sensors[bs_eui] = bs_sensors.get(bs_eui, 0) + 1
+        
+        all_euis = set(bs_config.keys()) | set(connected_bs.keys()) | set(connecting_bs.keys())
+        
+        result = []
+        for eui in all_euis:
+            eui_lower = eui.lower()
+            bs_data = bs_config.get(eui_lower, {})
+            
+            if eui_lower in connected_bs:
+                status = "connected"
+            elif eui_lower in connecting_bs:
+                status = "connecting"
+            else:
+                status = "offline"
+            
+            health = bs_health.get(eui_lower, {})
+            
+            result.append({
+                "eui": eui_lower,
+                "name": bs_data.get("name", ""),
+                "tags": bs_data.get("tags", []),
+                "status": status,
+                "configured_ip": bs_data.get("ip", ""),
+                "health": health,
+                "connected_sensors": bs_sensors.get(eui_lower, 0)
+            })
+        
+        result.sort(key=lambda x: (x["status"] != "connected", x["status"] != "connecting", x["eui"]))
+        
+        return jsonify({"success": True, "base_stations": result})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/base-stations/<eui>', methods=['GET'])
+def get_base_station(eui):
+    """Get single base station details"""
+    try:
+        config = load_base_station_config()
+        bs_data = config.get("base_stations", {}).get(eui.lower(), {})
+        return jsonify({"eui": eui.lower(), **bs_data})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/base-stations', methods=['POST'])
+def add_base_station():
+    """Add new base station"""
+    try:
+        data = request.get_json()
+        eui = data.get("eui", "").lower()
+        
+        if not eui or len(eui) != 16:
+            return jsonify({"success": False, "error": "Invalid EUI"}), 400
+        
+        config = load_base_station_config()
+        if eui in config.get("base_stations", {}):
+            return jsonify({"success": False, "error": "Base station already exists"}), 400
+        
+        config["base_stations"][eui] = {
+            "name": data.get("name", ""),
+            "tags": data.get("tags", []),
+            "ip": data.get("ip", "")
+        }
+        save_base_station_config(config)
+        
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/base-stations/<eui>', methods=['PUT'])
+def update_base_station(eui):
+    """Update base station"""
+    try:
+        data = request.get_json()
+        eui = eui.lower()
+        
+        config = load_base_station_config()
+        if "base_stations" not in config:
+            config["base_stations"] = {}
+        
+        config["base_stations"][eui] = {
+            "name": data.get("name", ""),
+            "tags": data.get("tags", []),
+            "ip": data.get("ip", "")
+        }
+        save_base_station_config(config)
+        
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/base-stations/<eui>', methods=['DELETE'])
+def delete_base_station(eui):
+    """Delete base station from config"""
+    try:
+        config = load_base_station_config()
+        eui = eui.lower()
+        
+        if eui in config.get("base_stations", {}):
+            del config["base_stations"][eui]
+            save_base_station_config(config)
+        
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/traffic/metrics')
+def get_traffic_metrics():
+    """Get traffic metrics for visualization"""
+    try:
+        global tls_server_instance
+        if tls_server_instance and hasattr(tls_server_instance, 'get_traffic_metrics'):
+            data = tls_server_instance.get_traffic_metrics()
+            return jsonify({'success': True, **data})
+        return jsonify({
+            'success': True,
+            'metrics': {
+                'messages_in': 0,
+                'messages_out': 0,
+                'messages_dropped': 0,
+                'bytes_in': 0,
+                'bytes_out': 0,
+                'vm_messages': 0,
+                'attach_requests': 0,
+                'detach_requests': 0,
+                'status_requests': 0,
+                'start_time': 0
+            },
+            'dedup_stats': {'total_messages': 0, 'duplicate_messages': 0, 'published_messages': 0},
+            'history': [],
+            'connections': 0
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/traffic/reset', methods=['POST'])
+def reset_traffic_metrics():
+    """Reset traffic metrics"""
+    try:
+        global tls_server_instance
+        if tls_server_instance and hasattr(tls_server_instance, 'reset_traffic_metrics'):
+            tls_server_instance.reset_traffic_metrics()
+            return jsonify({'success': True, 'message': 'Traffic metrics reset successfully'})
+        return jsonify({'success': False, 'message': 'TLS server not available'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/api/logs')
 def get_logs():
@@ -707,11 +1452,33 @@ def get_current_version():
         return "version-unknown"
 
 def get_remote_version():
-    """Get latest remote version - works with or without Git"""
+    """Get latest remote version - works with or without Git using GitHub API"""
+    GITHUB_REPO = "plasmonized/containerized-mioty-Service-Center"
+    
     try:
-        # First try Git commands  
+        # Try GitHub API first (works without local git repo)
+        import urllib.request
+        import ssl
+        
+        # Create SSL context that works in Docker
+        ctx = ssl.create_default_context()
+        
+        # Get latest commit from main branch
+        api_url = f"https://api.github.com/repos/{GITHUB_REPO}/commits/main"
+        req = urllib.request.Request(api_url, headers={'User-Agent': 'BSSCI-Service-Center'})
+        
         try:
-            # Try to unlock git if needed
+            with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
+                import json
+                data = json.loads(response.read().decode())
+                commit_hash = data.get('sha', '')[:7]
+                commit_date = data.get('commit', {}).get('committer', {}).get('date', '')[:10]
+                return f"commit-{commit_hash} ({commit_date})"
+        except Exception as api_error:
+            logger.error(f"GitHub API error: {api_error}")
+        
+        # Fallback to Git commands if API fails
+        try:
             lock_file = '.git/index.lock'
             if os.path.exists(lock_file):
                 try:
@@ -719,37 +1486,17 @@ def get_remote_version():
                 except:
                     pass
             
-            # Fetch latest from remote
-            fetch_result = subprocess.run(['git', 'fetch', 'origin'], capture_output=True, text=True, timeout=30)
-            if fetch_result.returncode != 0:
-                print(f"Git fetch failed: {fetch_result.stderr}")
-                return "fetch-failed"
+            subprocess.run(['git', 'fetch', '--tags', 'origin', 'main'], 
+                         capture_output=True, text=True, timeout=30)
             
-            # Get latest commit hash from origin/main
             result = subprocess.run(['git', 'rev-parse', '--short', 'origin/main'], 
                                   capture_output=True, text=True, timeout=10)
             if result.returncode == 0:
-                commit_hash = result.stdout.strip()
-                
-                # Try to get latest tag
-                tag_result = subprocess.run(['git', 'describe', '--tags', 'origin/main'], 
-                                          capture_output=True, text=True, timeout=10)
-                if tag_result.returncode == 0:
-                    return tag_result.stdout.strip().split('-')[0]  # Get tag without commit info
-                else:
-                    return f"commit-{commit_hash}"
-        except FileNotFoundError:
-            # Git not installed, can't check remote
+                return f"commit-{result.stdout.strip()}"
+        except:
             pass
-        except Exception as e:
-            if "No such file or directory" in str(e):
-                # Git not installed
-                pass
-            else:
-                print(f"Git command error: {e}")
         
-        # Without Git, we can't check remote versions
-        return "git-required-for-remote"
+        return "remote-unavailable"
     except Exception as e:
         print(f"Error getting remote version: {e}")
         return "remote-check-unavailable"
@@ -800,28 +1547,65 @@ def get_commit_log(limit=5):
         return [{'hash': 'error', 'message': f'Unable to get history: {str(e)}'}]
 
 def check_for_updates():
-    """Check if updates are available"""
+    """Check if updates are available using GitHub API"""
+    GITHUB_REPO = "plasmonized/containerized-mioty-Service-Center"
+    
     try:
         current = get_current_version()
         remote = get_remote_version()
+        
+        # Extract commit hash from versions for comparison
+        current_hash = ""
+        remote_hash = ""
+        
+        if "commit-" in current:
+            current_hash = current.split("commit-")[1].split()[0][:7]
+        elif current.startswith("local-"):
+            # local-YYYYMMDD format - can't compare directly
+            current_hash = current
+            
+        if "commit-" in remote:
+            remote_hash = remote.split("commit-")[1].split()[0][:7]
         
         # Determine if updates are available
         updates_available = False
         status_message = None
         
-        if remote in ['git-required-for-remote', 'remote-check-unavailable']:
+        if remote in ['remote-unavailable', 'remote-check-unavailable']:
             updates_available = False
-            status_message = 'Git installation required for remote version checking'
-        elif current.startswith('local-') and remote.startswith('git-required'):
-            updates_available = False
-            status_message = 'Local installation - remote checking requires Git'
-        elif current != remote and not remote.startswith('git-required') and not remote.startswith('remote-'):
+            status_message = 'Cannot connect to GitHub to check for updates'
+        elif current_hash and remote_hash and current_hash != remote_hash:
             updates_available = True
+        elif current.startswith("local-") and remote_hash:
+            # Local installation, can't compare versions
+            updates_available = True
+            status_message = 'Local installation detected - update recommended'
         
+        # Get recent commits via GitHub API
+        recent_commits = []
+        try:
+            import urllib.request
+            import ssl
+            ctx = ssl.create_default_context()
+            
+            api_url = f"https://api.github.com/repos/{GITHUB_REPO}/commits?per_page=5"
+            req = urllib.request.Request(api_url, headers={'User-Agent': 'BSSCI-Service-Center'})
+            
+            with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
+                commits_data = json.loads(response.read().decode())
+                for commit in commits_data:
+                    recent_commits.append({
+                        'hash': commit['sha'][:7],
+                        'message': commit['commit']['message'].split('\n')[0][:60]
+                    })
+        except Exception as e:
+            logger.error(f"Error fetching commits: {e}")
+
         result = {
             'current_version': current,
             'remote_version': remote,
             'updates_available': updates_available,
+            'recent_commits': recent_commits,
             'status': 'success'
         }
         
@@ -830,13 +1614,8 @@ def check_for_updates():
             
         return result
     except Exception as e:
-        return {
-            'current_version': 'unknown',
-            'remote_version': 'unknown', 
-            'updates_available': False,
-            'status': 'error',
-            'error': str(e)
-        }
+        logger.error(f"Error checking for updates: {e}")
+        return {'status': 'error', 'error': str(e)}
 
 def create_backup():
     """Create backup before update"""
@@ -863,31 +1642,91 @@ def create_backup():
         return {'success': False, 'error': str(e)}
 
 def perform_update():
-    """Perform git pull update"""
+    """Perform update by downloading from GitHub"""
+    GITHUB_REPO = "plasmonized/containerized-mioty-Service-Center"
+    
     try:
         # Create backup first
         backup_result = create_backup()
         if not backup_result['success']:
             return {'success': False, 'error': f"Backup failed: {backup_result['error']}"}
         
-        # Perform git pull
-        result = subprocess.run(['git', 'pull', 'origin', 'main'], 
-                              capture_output=True, text=True, timeout=60)
+        # First try git pull if we have a git repo
+        if os.path.exists('.git'):
+            try:
+                subprocess.run(['git', 'reset', '--hard', 'HEAD'], capture_output=True, timeout=30)
+                result = subprocess.run(['git', 'pull', 'origin', 'main'], 
+                                      capture_output=True, text=True, timeout=60)
+                if result.returncode == 0:
+                    return {
+                        'success': True, 
+                        'message': 'Update completed successfully via git',
+                        'backup_dir': backup_result['backup_dir'],
+                        'git_output': result.stdout
+                    }
+            except Exception as e:
+                logger.error(f"Git pull failed, trying ZIP download: {e}")
         
-        if result.returncode == 0:
-            return {
-                'success': True, 
-                'message': 'Update completed successfully',
-                'backup_dir': backup_result['backup_dir'],
-                'git_output': result.stdout
-            }
-        else:
-            return {
-                'success': False, 
-                'error': f"Git pull failed: {result.stderr}",
-                'backup_dir': backup_result['backup_dir']
-            }
+        # Fallback: Download ZIP from GitHub
+        import urllib.request
+        import ssl
+        import zipfile
+        import tempfile
+        import shutil
+        
+        ctx = ssl.create_default_context()
+        zip_url = f"https://github.com/{GITHUB_REPO}/archive/refs/heads/main.zip"
+        
+        # Download to temp file
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp_file:
+            tmp_path = tmp_file.name
+            req = urllib.request.Request(zip_url, headers={'User-Agent': 'BSSCI-Service-Center'})
+            
+            with urllib.request.urlopen(req, timeout=60, context=ctx) as response:
+                tmp_file.write(response.read())
+        
+        # Extract ZIP
+        extract_dir = tempfile.mkdtemp()
+        with zipfile.ZipFile(tmp_path, 'r') as zip_ref:
+            zip_ref.extractall(extract_dir)
+        
+        # Find the extracted folder (usually repo-name-main)
+        extracted_folders = os.listdir(extract_dir)
+        if extracted_folders:
+            source_dir = os.path.join(extract_dir, extracted_folders[0])
+            
+            # Copy Python files and templates (preserve config files)
+            files_to_update = ['web_ui.py', 'TLSServer.py', 'main.py', 'web_main.py', 
+                             'mqtt_interface.py', 'messages.py', 'requirements.txt']
+            
+            updated_files = []
+            for filename in files_to_update:
+                src = os.path.join(source_dir, filename)
+                if os.path.exists(src):
+                    shutil.copy2(src, filename)
+                    updated_files.append(filename)
+            
+            # Update templates folder
+            templates_src = os.path.join(source_dir, 'templates')
+            if os.path.exists(templates_src):
+                for template in os.listdir(templates_src):
+                    shutil.copy2(os.path.join(templates_src, template), 
+                               os.path.join('templates', template))
+                    updated_files.append(f'templates/{template}')
+        
+        # Cleanup
+        os.unlink(tmp_path)
+        shutil.rmtree(extract_dir, ignore_errors=True)
+        
+        return {
+            'success': True, 
+            'message': 'Update completed successfully via GitHub download',
+            'backup_dir': backup_result['backup_dir'],
+            'updated_files': updated_files
+        }
+        
     except Exception as e:
+        logger.error(f"Update failed: {e}")
         return {'success': False, 'error': str(e)}
 
 @app.route('/api/system/version')
@@ -1083,10 +1922,9 @@ def bssci_status():
         }
         return jsonify(error_response), 500
 
-@app.route('/api/base_stations')
-@app.route('/api/base-stations')  # Support both underscore and hyphen versions
-def get_base_stations():
-    """Get status of connected base stations - thread-safe version"""
+@app.route('/api/base_stations/status')
+def get_base_stations_status():
+    """Get status of connected base stations - thread-safe version (legacy endpoint)"""
     try:
         global tls_server_instance
         tls_server = tls_server_instance
@@ -1100,17 +1938,14 @@ def get_base_stations():
                 "error": "TLS server not initialized"
             }), 503
 
-        # Thread-safe access to base station data
         connected_stations = []
         connecting_stations = []
         
         try:
-            # Safely get connected base stations without asyncio operations
             if hasattr(tls_server, 'connected_base_stations'):
                 connected_dict = getattr(tls_server, 'connected_base_stations', {})
                 for writer, bs_eui in list(connected_dict.items()):
                     try:
-                        # Avoid asyncio operations in Flask thread
                         connected_stations.append({
                             "eui": bs_eui,
                             "address": "connected",
@@ -1119,7 +1954,6 @@ def get_base_stations():
                     except Exception as e:
                         print(f"Error processing connected station {bs_eui}: {e}")
             
-            # Safely get connecting base stations
             if hasattr(tls_server, 'connecting_base_stations'):
                 connecting_dict = getattr(tls_server, 'connecting_base_stations', {})
                 for writer, bs_eui in list(connecting_dict.items()):
@@ -1143,7 +1977,7 @@ def get_base_stations():
         })
             
     except Exception as e:
-        print(f"Error in get_base_stations endpoint: {e}")
+        print(f"Error in get_base_stations_status endpoint: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({
@@ -1153,6 +1987,118 @@ def get_base_stations():
             "total_connecting": 0,
             "error": f"Base stations error: {str(e)}"
         })
+
+# ==================== Variable MAC (VM) Sub-Channel API ====================
+
+@app.route('/api/vm/status')
+def get_vm_status():
+    """Get VM sub-channel status for all sensors"""
+    try:
+        global tls_server_instance
+        if tls_server_instance and hasattr(tls_server_instance, 'get_vm_status'):
+            status = tls_server_instance.get_vm_status()
+            return jsonify({'success': True, **status})
+        return jsonify({'success': False, 'message': 'TLS server not available', 'active_sensors': {}})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/vm/activate/<eui>', methods=['POST'])
+def vm_activate_sensor(eui):
+    """Activate VM sub-channel for a sensor"""
+    try:
+        global tls_server_instance
+        if not tls_server_instance:
+            return jsonify({'success': False, 'message': 'TLS server not available'}), 503
+        
+        data = request.json or {}
+        vm_channel = data.get('vm_channel', 0)
+        
+        import asyncio
+        loop = asyncio.new_event_loop()
+        try:
+            success = loop.run_until_complete(tls_server_instance.vm_activate(eui, vm_channel))
+        finally:
+            loop.close()
+        
+        if success:
+            return jsonify({'success': True, 'message': f'VM activate request sent for sensor {eui}'})
+        else:
+            return jsonify({'success': False, 'message': 'No base stations connected'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/vm/deactivate/<eui>', methods=['POST'])
+def vm_deactivate_sensor(eui):
+    """Deactivate VM sub-channel for a sensor"""
+    try:
+        global tls_server_instance
+        if not tls_server_instance:
+            return jsonify({'success': False, 'message': 'TLS server not available'}), 503
+        
+        import asyncio
+        loop = asyncio.new_event_loop()
+        try:
+            success = loop.run_until_complete(tls_server_instance.vm_deactivate(eui))
+        finally:
+            loop.close()
+        
+        if success:
+            return jsonify({'success': True, 'message': f'VM deactivate request sent for sensor {eui}'})
+        else:
+            return jsonify({'success': False, 'message': 'No base stations connected'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/vm/query/<eui>', methods=['POST'])
+def vm_query_sensor(eui):
+    """Query VM sub-channel status for a sensor"""
+    try:
+        global tls_server_instance
+        if not tls_server_instance:
+            return jsonify({'success': False, 'message': 'TLS server not available'}), 503
+        
+        import asyncio
+        loop = asyncio.new_event_loop()
+        try:
+            success = loop.run_until_complete(tls_server_instance.vm_status(eui))
+        finally:
+            loop.close()
+        
+        if success:
+            return jsonify({'success': True, 'message': f'VM status query sent for sensor {eui}'})
+        else:
+            return jsonify({'success': False, 'message': 'No base stations connected'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/vm/send/<eui>', methods=['POST'])
+def vm_send_data_to_sensor(eui):
+    """Send data to sensor via VM sub-channel (downlink)"""
+    try:
+        global tls_server_instance
+        if not tls_server_instance:
+            return jsonify({'success': False, 'message': 'TLS server not available'}), 503
+        
+        data = request.json
+        if not data or 'data' not in data:
+            return jsonify({'success': False, 'message': 'Missing data field'}), 400
+        
+        payload = bytes.fromhex(data['data']) if isinstance(data['data'], str) else bytes(data['data'])
+        port = data.get('port', 1)
+        
+        import asyncio
+        loop = asyncio.new_event_loop()
+        try:
+            success = loop.run_until_complete(tls_server_instance.vm_send_data(eui, payload, port))
+        finally:
+            loop.close()
+        
+        if success:
+            return jsonify({'success': True, 'message': f'VM downlink data sent to sensor {eui}'})
+        else:
+            return jsonify({'success': False, 'message': 'Failed to send VM data - VM may not be active for this sensor'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/api/certificates/status')
 def get_certificate_status():

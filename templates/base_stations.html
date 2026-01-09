@@ -1,0 +1,253 @@
+{% extends "base.html" %}
+{% block title %}Base Stations{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Base Station Management</h1>
+    <div>
+        <button class="btn btn-outline-secondary me-2" onclick="refreshBaseStations()">
+            <i class="fas fa-sync"></i> Refresh
+        </button>
+        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#bsModal" onclick="openBsModal()" style="background-color: #ff8c00; border-color: #ff8c00;">
+            Add Base Station
+        </button>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h6 class="card-subtitle mb-2 text-muted">Total Configured</h6>
+                <h2 class="text-primary" id="totalConfigured">0</h2>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h6 class="card-subtitle mb-2 text-muted">Connected</h6>
+                <h2 class="text-success" id="totalConnected">0</h2>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h6 class="card-subtitle mb-2 text-muted">Connecting</h6>
+                <h2 class="text-warning" id="totalConnecting">0</h2>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h6 class="card-subtitle mb-2 text-muted">Offline</h6>
+                <h2 class="text-danger" id="totalOffline">0</h2>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>Status</th>
+                        <th>EUI</th>
+                        <th>Name</th>
+                        <th>Tags</th>
+                        <th>IP Address</th>
+                        <th>CPU</th>
+                        <th>Memory</th>
+                        <th>Connected Sensors</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="bs-table">
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="bsModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="bsModalTitle">Add Base Station</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="bsForm">
+                    <div class="mb-3">
+                        <label for="bsEui" class="form-label">EUI (16 hex characters)</label>
+                        <input type="text" class="form-control" id="bsEui" required maxlength="16">
+                    </div>
+                    <div class="mb-3">
+                        <label for="bsName" class="form-label">Name</label>
+                        <input type="text" class="form-control" id="bsName" placeholder="e.g., Warehouse North">
+                    </div>
+                    <div class="mb-3">
+                        <label for="bsTags" class="form-label">Tags (comma-separated)</label>
+                        <input type="text" class="form-control" id="bsTags" placeholder="e.g., indoor, floor1, production">
+                    </div>
+                    <div class="mb-3">
+                        <label for="bsIp" class="form-label">IP Address</label>
+                        <input type="text" class="form-control" id="bsIp" placeholder="e.g., 192.168.1.100">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="saveBaseStation()">Save</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let editingEui = null;
+let refreshInterval;
+
+function loadBaseStations() {
+    fetch('/api/base-stations')
+        .then(r => r.json())
+        .then(data => {
+            const table = document.getElementById('bs-table');
+            table.innerHTML = '';
+            
+            let connected = 0, connecting = 0, offline = 0;
+            const allBs = data.base_stations || [];
+            
+            allBs.forEach(bs => {
+                if (bs.status === 'connected') connected++;
+                else if (bs.status === 'connecting') connecting++;
+                else offline++;
+                
+                const statusBadge = bs.status === 'connected' 
+                    ? '<span class="badge bg-success">Connected</span>'
+                    : bs.status === 'connecting'
+                    ? '<span class="badge bg-warning">Connecting</span>'
+                    : '<span class="badge bg-secondary">Offline</span>';
+                
+                const cpuDisplay = bs.health?.cpu !== undefined 
+                    ? `${bs.health.cpu.toFixed(1)}%` 
+                    : '-';
+                const memDisplay = bs.health?.memory !== undefined 
+                    ? `${bs.health.memory.toFixed(1)}%` 
+                    : '-';
+                const ipDisplay = bs.configured_ip || '-';
+                const tagsHtml = (bs.tags || []).map(t => 
+                    `<span class="badge bg-info me-1">${t}</span>`
+                ).join('') || '-';
+                
+                table.innerHTML += `
+                    <tr>
+                        <td>${statusBadge}</td>
+                        <td><code>${bs.eui}</code></td>
+                        <td>${bs.name || '-'}</td>
+                        <td>${tagsHtml}</td>
+                        <td>${ipDisplay}</td>
+                        <td>${cpuDisplay}</td>
+                        <td>${memDisplay}</td>
+                        <td>${bs.connected_sensors || 0}</td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-primary me-1" onclick="editBaseStation('${bs.eui}')">Edit</button>
+                            <button class="btn btn-sm btn-outline-danger" onclick="deleteBaseStation('${bs.eui}')">Delete</button>
+                        </td>
+                    </tr>
+                `;
+            });
+            
+            document.getElementById('totalConfigured').textContent = allBs.length;
+            document.getElementById('totalConnected').textContent = connected;
+            document.getElementById('totalConnecting').textContent = connecting;
+            document.getElementById('totalOffline').textContent = offline;
+        });
+}
+
+function openBsModal() {
+    editingEui = null;
+    document.getElementById('bsModalTitle').textContent = 'Add Base Station';
+    document.getElementById('bsEui').value = '';
+    document.getElementById('bsEui').disabled = false;
+    document.getElementById('bsName').value = '';
+    document.getElementById('bsTags').value = '';
+    document.getElementById('bsIp').value = '';
+}
+
+function editBaseStation(eui) {
+    fetch(`/api/base-stations/${eui}`)
+        .then(r => r.json())
+        .then(bs => {
+            editingEui = eui;
+            document.getElementById('bsModalTitle').textContent = 'Edit Base Station';
+            document.getElementById('bsEui').value = bs.eui;
+            document.getElementById('bsEui').disabled = true;
+            document.getElementById('bsName').value = bs.name || '';
+            document.getElementById('bsTags').value = (bs.tags || []).join(', ');
+            document.getElementById('bsIp').value = bs.ip || '';
+            new bootstrap.Modal(document.getElementById('bsModal')).show();
+        });
+}
+
+function saveBaseStation() {
+    const eui = document.getElementById('bsEui').value.toLowerCase().replace(/\s/g, '');
+    const name = document.getElementById('bsName').value.trim();
+    const tagsStr = document.getElementById('bsTags').value;
+    const tags = tagsStr ? tagsStr.split(',').map(t => t.trim()).filter(t => t) : [];
+    const ip = document.getElementById('bsIp').value.trim();
+    
+    if (!/^[0-9a-f]{16}$/i.test(eui)) {
+        alert('EUI must be exactly 16 hex characters');
+        return;
+    }
+    
+    const method = editingEui ? 'PUT' : 'POST';
+    const url = editingEui ? `/api/base-stations/${eui}` : '/api/base-stations';
+    
+    fetch(url, {
+        method: method,
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({eui, name, tags, ip})
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            bootstrap.Modal.getInstance(document.getElementById('bsModal')).hide();
+            loadBaseStations();
+        } else {
+            alert(data.error || 'Failed to save');
+        }
+    });
+}
+
+function deleteBaseStation(eui) {
+    if (!confirm(`Delete base station ${eui}?`)) return;
+    
+    fetch(`/api/base-stations/${eui}`, {method: 'DELETE'})
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                loadBaseStations();
+            } else {
+                alert(data.error || 'Failed to delete');
+            }
+        });
+}
+
+function refreshBaseStations() {
+    loadBaseStations();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadBaseStations();
+    refreshInterval = setInterval(loadBaseStations, 5000);
+});
+</script>
+{% endblock %}

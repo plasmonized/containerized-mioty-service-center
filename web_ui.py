@@ -1375,16 +1375,24 @@ def get_logs():
 # =========================
 
 def get_current_version():
-    """Get current version - works with or without Git"""
+    """Get current version from VERSION file or fallback methods"""
     try:
-        # First try Git commands
+        # First: Try to read VERSION file (preferred method)
+        if os.path.exists('VERSION'):
+            try:
+                with open('VERSION', 'r') as f:
+                    version = f.read().strip()
+                    if version:
+                        return f"v{version}" if not version.startswith('v') else version
+            except:
+                pass
+        
+        # Fallback: Try Git commands
         try:
-            # Try to unlock git if needed
             lock_file = '.git/index.lock'
             if os.path.exists(lock_file):
                 try:
                     os.remove(lock_file)
-                    print("Removed stale git lock file")
                 except:
                     pass
             
@@ -1393,7 +1401,6 @@ def get_current_version():
             if result.returncode == 0:
                 commit_hash = result.stdout.strip()
                 
-                # Try to get tag
                 tag_result = subprocess.run(['git', 'describe', '--tags', '--exact-match', 'HEAD'], 
                                           capture_output=True, text=True, timeout=10)
                 if tag_result.returncode == 0:
@@ -1401,13 +1408,9 @@ def get_current_version():
                 else:
                     return f"commit-{commit_hash}"
         except FileNotFoundError:
-            # Git not installed, use fallback
             pass
         except Exception as e:
-            if "No such file or directory" in str(e):
-                # Git not installed
-                pass
-            else:
+            if "No such file or directory" not in str(e):
                 print(f"Git command error: {e}")
         
         # Fallback 1: try to read .git/HEAD directly
@@ -1452,24 +1455,46 @@ def get_current_version():
         return "version-unknown"
 
 def get_remote_version():
-    """Get latest remote version - works with or without Git using GitHub API"""
+    """Get latest remote version - checks releases first, then commits"""
     GITHUB_REPO = "plasmonized/containerized-mioty-Service-Center"
     
     try:
-        # Try GitHub API first (works without local git repo)
         import urllib.request
         import ssl
         
-        # Create SSL context that works in Docker
         ctx = ssl.create_default_context()
         
-        # Get latest commit from main branch
+        # First: Try to get latest release/tag
+        try:
+            releases_url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+            req = urllib.request.Request(releases_url, headers={'User-Agent': 'BSSCI-Service-Center'})
+            with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
+                data = json.loads(response.read().decode())
+                tag_name = data.get('tag_name', '')
+                if tag_name:
+                    return tag_name if tag_name.startswith('v') else f"v{tag_name}"
+        except:
+            pass
+        
+        # Fallback: Try to get latest tag
+        try:
+            tags_url = f"https://api.github.com/repos/{GITHUB_REPO}/tags"
+            req = urllib.request.Request(tags_url, headers={'User-Agent': 'BSSCI-Service-Center'})
+            with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
+                tags = json.loads(response.read().decode())
+                if tags and len(tags) > 0:
+                    tag_name = tags[0].get('name', '')
+                    if tag_name:
+                        return tag_name if tag_name.startswith('v') else f"v{tag_name}"
+        except:
+            pass
+        
+        # Fallback: Get latest commit
         api_url = f"https://api.github.com/repos/{GITHUB_REPO}/commits/main"
         req = urllib.request.Request(api_url, headers={'User-Agent': 'BSSCI-Service-Center'})
         
         try:
             with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
-                import json
                 data = json.loads(response.read().decode())
                 commit_hash = data.get('sha', '')[:7]
                 commit_date = data.get('commit', {}).get('committer', {}).get('date', '')[:10]
@@ -1546,6 +1571,15 @@ def get_commit_log(limit=5):
         print(f"Error getting commit log: {e}")
         return [{'hash': 'error', 'message': f'Unable to get history: {str(e)}'}]
 
+def parse_version(version_str):
+    """Parse version string to comparable tuple"""
+    try:
+        v = version_str.lstrip('v').split('-')[0]
+        parts = v.replace('.', ' ').split()
+        return tuple(int(p) for p in parts if p.isdigit())
+    except:
+        return (0,)
+
 def check_for_updates():
     """Check if updates are available using GitHub API"""
     GITHUB_REPO = "plasmonized/containerized-mioty-Service-Center"
@@ -1554,32 +1588,29 @@ def check_for_updates():
         current = get_current_version()
         remote = get_remote_version()
         
-        # Extract commit hash from versions for comparison
-        current_hash = ""
-        remote_hash = ""
-        
-        if "commit-" in current:
-            current_hash = current.split("commit-")[1].split()[0][:7]
-        elif current.startswith("local-"):
-            # local-YYYYMMDD format - can't compare directly
-            current_hash = current
-            
-        if "commit-" in remote:
-            remote_hash = remote.split("commit-")[1].split()[0][:7]
-        
-        # Determine if updates are available
         updates_available = False
         status_message = None
         
         if remote in ['remote-unavailable', 'remote-check-unavailable']:
             updates_available = False
             status_message = 'Cannot connect to GitHub to check for updates'
-        elif current_hash and remote_hash and current_hash != remote_hash:
+        elif current.startswith('v') and remote.startswith('v'):
+            # Both are version numbers - compare them
+            current_ver = parse_version(current)
+            remote_ver = parse_version(remote)
+            if remote_ver > current_ver:
+                updates_available = True
+                status_message = f'Update available: {current} → {remote}'
+        elif "commit-" in current and "commit-" in remote:
+            # Both are commit hashes
+            current_hash = current.split("commit-")[1].split()[0][:7]
+            remote_hash = remote.split("commit-")[1].split()[0][:7]
+            if current_hash != remote_hash:
+                updates_available = True
+        elif current.startswith("local-") or current.startswith("v"):
+            # Local installation or version, but remote is commit-based
             updates_available = True
-        elif current.startswith("local-") and remote_hash:
-            # Local installation, can't compare versions
-            updates_available = True
-            status_message = 'Local installation detected - update recommended'
+            status_message = 'Update available'
         
         # Get recent commits via GitHub API
         recent_commits = []
@@ -1605,12 +1636,8 @@ def check_for_updates():
                     remote_hash = first_commit['sha'][:7]
                     commit_date = first_commit['commit']['committer']['date'][:10]
                     remote = f"commit-{remote_hash} ({commit_date})"
-                    # Re-check if updates available
-                    if current.startswith("local-"):
-                        updates_available = True
-                        status_message = 'Local installation detected - update available'
-                    elif current_hash and current_hash != remote_hash:
-                        updates_available = True
+                    updates_available = True
+                    status_message = 'Update available'
         except Exception as e:
             logger.error(f"Error fetching commits: {e}")
 

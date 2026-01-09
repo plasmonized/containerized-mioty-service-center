@@ -78,7 +78,7 @@ class TLSServer:
         # eui -> {last_packet_cnt, packets_received, packets_lost, snr_sum, snr_count}
         self.sensor_packet_stats: Dict[str, Dict[str, Any]] = {}
         
-        # SNR/RSSI history for graphs (last 60 data points, ~1 per minute avg)
+        # SNR/RSSI history for graphs (last 288 data points, 5 min intervals = 24 hours)
         self.snr_rssi_history: list = []
         self._last_snr_history_update = 0
 
@@ -1195,9 +1195,9 @@ class TLSServer:
                                 stats['rssi_sum'] += message.get('rssi', 0)
                                 stats['rssi_count'] += 1
                             
-                            # Update SNR/RSSI history (every 60 seconds)
+                            # Update SNR/RSSI history (every 5 minutes)
                             current_time = datetime.now(timezone.utc).timestamp()
-                            if current_time - self._last_snr_history_update >= 60:
+                            if current_time - self._last_snr_history_update >= 300:
                                 self._update_snr_rssi_history(current_time)
 
                         # Parse received timestamp if available
@@ -2471,9 +2471,9 @@ class TLSServer:
             'avg_rssi': avg_rssi
         })
         
-        # Keep last 60 entries (1 hour of data)
-        if len(self.snr_rssi_history) > 60:
-            self.snr_rssi_history = self.snr_rssi_history[-60:]
+        # Keep last 288 entries (24 hours of data at 5 min intervals)
+        if len(self.snr_rssi_history) > 288:
+            self.snr_rssi_history = self.snr_rssi_history[-288:]
         
         self._last_snr_history_update = current_time
 

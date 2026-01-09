@@ -92,6 +92,25 @@
         </div>
     </div>
 </div>
+
+<!-- Sensor Details Modal -->
+<div class="modal fade" id="sensorDetailsModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content" style="background-color: #1a1a2e; color: #e0e0e0;">
+            <div class="modal-header" style="border-bottom: 1px solid #333;">
+                <h5 class="modal-title" id="sensorDetailsTitle">Sensor Details</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="sensorDetailsBody">
+                <div class="text-center p-5">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -145,7 +164,7 @@ function loadSensors() {
             const tbody = document.getElementById('sensors-table');
             tbody.innerHTML = Object.values(sensorStatus).map(sensor => `
                 <tr>
-                    <td><code>${sensor.eui}</code></td>
+                    <td><a href="#" onclick="showSensorDetails('${sensor.eui}'); return false;" class="text-decoration-none"><code style="color: #17a2b8; cursor: pointer;">${sensor.eui}</code></a></td>
                     <td><code>${sensor.nwKey.substring(0, 8)}...</code></td>
                     <td><code>${sensor.shortAddr}</code></td>
                     <td>${sensor.bidi ? 'Yes' : 'No'}</td>
@@ -411,6 +430,284 @@ function importSensors(input) {
     .finally(() => {
         input.value = '';
     });
+}
+
+function showSensorDetails(eui) {
+    const modal = new bootstrap.Modal(document.getElementById('sensorDetailsModal'));
+    modal.show();
+    
+    document.getElementById('sensorDetailsTitle').textContent = `Sensor ${eui}`;
+    document.getElementById('sensorDetailsBody').innerHTML = `
+        <div class="text-center p-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+        </div>
+    `;
+    
+    fetch(`/api/sensors/${eui}/details`)
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) {
+                document.getElementById('sensorDetailsBody').innerHTML = `
+                    <div class="alert alert-warning">No data available for this sensor yet. Start receiving data to see statistics.</div>
+                `;
+                return;
+            }
+            
+            const firstSeen = data.first_seen ? new Date(data.first_seen * 1000).toLocaleDateString() : 'N/A';
+            const lastSeen = data.last_seen ? formatTimeAgo(data.last_seen * 1000) : 'N/A';
+            const sendInterval = data.send_interval > 0 ? Math.round(data.send_interval) + 's' : 'N/A';
+            
+            const signalLabel = getScoreLabel(data.signal_score);
+            const energyLabel = getScoreLabel(data.energy_score);
+            
+            document.getElementById('sensorDetailsBody').innerHTML = `
+                <!-- Header Info Bar -->
+                <div class="d-flex flex-wrap gap-4 p-3 mb-4" style="background: #0f0f1a; border-radius: 10px;">
+                    <div class="text-center">
+                        <small class="text-muted d-block"># Dev EUI</small>
+                        <strong class="text-info">${data.eui}</strong>
+                    </div>
+                    <div class="text-center">
+                        <small class="text-muted d-block">First Seen</small>
+                        <strong>${firstSeen}</strong>
+                    </div>
+                    <div class="text-center">
+                        <small class="text-muted d-block">Last Seen</small>
+                        <strong style="color: #00ff88;">${lastSeen}</strong>
+                    </div>
+                    <div class="text-center">
+                        <small class="text-muted d-block">Current RSSI</small>
+                        <strong>${data.avg_rssi.toFixed(1)} dBm</strong>
+                    </div>
+                    <div class="text-center">
+                        <small class="text-muted d-block">Gateways</small>
+                        <strong style="color: #ff8c00;">${data.gateway_count}</strong>
+                    </div>
+                    <div class="text-center">
+                        <small class="text-muted d-block">Spreading Factor</small>
+                        <strong>SF${data.spreading_factor}</strong>
+                    </div>
+                </div>
+                
+                <!-- Overview Cards -->
+                <div class="row g-3 mb-4">
+                    <div class="col-md-3">
+                        <div class="card h-100" style="background: #16213e; border: none;">
+                            <div class="card-body text-center">
+                                <small class="text-muted">Device Health</small>
+                                <h2 class="mt-2 mb-1" style="color: ${getScoreColor(data.energy_score)};">${energyLabel}</h2>
+                                <small>Energy score: ${data.energy_score.toFixed(1)}/5</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card h-100" style="background: #16213e; border: none;">
+                            <div class="card-body text-center">
+                                <small class="text-muted">Signal Quality</small>
+                                <h2 class="mt-2 mb-1" style="color: ${getScoreColor(data.signal_score)};">${signalLabel}</h2>
+                                <small>RSSI: ${data.avg_rssi.toFixed(1)} dBm, SNR: ${data.avg_snr.toFixed(1)} dB</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card h-100" style="background: #16213e; border: none;">
+                            <div class="card-body text-center">
+                                <small class="text-muted">Send Interval</small>
+                                <h2 class="mt-2 mb-1">${sendInterval}</h2>
+                                <small>${data.packets_lost} missed frames</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card h-100" style="background: #16213e; border: none;">
+                            <div class="card-body text-center">
+                                <small class="text-muted">Gateway Coverage</small>
+                                <h2 class="mt-2 mb-1" style="color: #ff8c00;">${data.gateway_count}</h2>
+                                <small>gateways receiving</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Device Health & Transmission Details -->
+                <div class="row g-3 mb-4">
+                    <div class="col-md-6">
+                        <div class="card h-100" style="background: #16213e; border: none;">
+                            <div class="card-body">
+                                <h5 class="mb-3"><i class="fas fa-heartbeat me-2" style="color: #00ff88;"></i>Device Health</h5>
+                                
+                                <div class="mb-3">
+                                    <div class="d-flex justify-content-between mb-1">
+                                        <span><i class="fas fa-bolt me-2"></i>Energy Efficiency</span>
+                                        <span style="color: ${getScoreColor(data.energy_score)};">${energyLabel} (${data.energy_score.toFixed(1)}/5)</span>
+                                    </div>
+                                    <div class="progress" style="height: 8px; background: #0f0f1a;">
+                                        <div class="progress-bar" style="width: ${data.energy_score * 20}%; background: linear-gradient(90deg, #ff4444, #ffcc00, #00ff88);"></div>
+                                    </div>
+                                    <small class="text-muted">SF${data.spreading_factor} - ${data.energy_score >= 4 ? 'Optimal energy usage' : data.energy_score >= 3 ? 'Moderate energy usage' : 'Consider optimizing transmission settings'}</small>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <div class="d-flex justify-content-between mb-1">
+                                        <span><i class="fas fa-signal me-2"></i>Signal Strength</span>
+                                        <span style="color: ${getScoreColor(data.signal_score)};">${signalLabel} (${data.signal_score.toFixed(1)}/5)</span>
+                                    </div>
+                                    <div class="progress" style="height: 8px; background: #0f0f1a;">
+                                        <div class="progress-bar" style="width: ${data.signal_score * 20}%; background: linear-gradient(90deg, #ff4444, #ffcc00, #00ff88);"></div>
+                                    </div>
+                                    <small class="text-muted">${data.signal_score >= 4 ? 'Excellent reception' : data.signal_score >= 3 ? 'Good reception' : 'Weak signal - consider repositioning'}</small>
+                                </div>
+                                
+                                ${data.packets_lost > 0 ? `
+                                <div class="alert alert-warning py-2 mb-0" style="background: rgba(255, 193, 7, 0.2); border-color: #ffc107;">
+                                    <i class="fas fa-exclamation-triangle me-2"></i><strong>Missed Frames Detected</strong>
+                                    <br><small>${data.packets_lost} frame(s) were not received. This may indicate interference or device issues.</small>
+                                </div>
+                                ` : `
+                                <div class="alert alert-success py-2 mb-0" style="background: rgba(0, 255, 136, 0.1); border-color: #00ff88;">
+                                    <i class="fas fa-check-circle me-2"></i>No missed frames detected
+                                </div>
+                                `}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <div class="card h-100" style="background: #16213e; border: none;">
+                            <div class="card-body">
+                                <h5 class="mb-3"><i class="fas fa-broadcast-tower me-2" style="color: #17a2b8;"></i>Transmission Details</h5>
+                                
+                                <div class="row">
+                                    <div class="col-6 mb-3">
+                                        <small class="text-muted d-block">Data Rate</small>
+                                        <strong>${data.data_rate}</strong>
+                                    </div>
+                                    <div class="col-6 mb-3">
+                                        <small class="text-muted d-block">Spreading Factor</small>
+                                        <strong>SF${data.spreading_factor}</strong>
+                                    </div>
+                                    <div class="col-6 mb-3">
+                                        <small class="text-muted d-block">Frequency</small>
+                                        <strong>${data.frequency_mhz > 0 ? data.frequency_mhz.toFixed(3) : '0.0'} MHz</strong>
+                                    </div>
+                                    <div class="col-6 mb-3">
+                                        <small class="text-muted d-block">Frame Counter</small>
+                                        <strong>${data.frame_counter.toLocaleString()}</strong>
+                                    </div>
+                                    <div class="col-6 mb-3">
+                                        <small class="text-muted d-block">Airtime (last)</small>
+                                        <strong>${data.last_airtime_ms.toFixed(1)} ms</strong>
+                                    </div>
+                                    <div class="col-6 mb-3">
+                                        <small class="text-muted d-block">Avg Airtime</small>
+                                        <strong>${data.avg_airtime_ms.toFixed(1)} ms</strong>
+                                    </div>
+                                    <div class="col-6 mb-3">
+                                        <small class="text-muted d-block">Duty Cycle</small>
+                                        <strong>${data.duty_cycle.toFixed(4)}%</strong>
+                                    </div>
+                                    <div class="col-6 mb-3">
+                                        <small class="text-muted d-block">Packets Received</small>
+                                        <strong>${data.packets_received.toLocaleString()}</strong>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Signal Statistics -->
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <div class="card" style="background: #16213e; border: none;">
+                            <div class="card-body">
+                                <h5 class="mb-3"><i class="fas fa-chart-line me-2" style="color: #00ff88;"></i>SNR Statistics</h5>
+                                <div class="row text-center">
+                                    <div class="col-4">
+                                        <small class="text-muted d-block">Min</small>
+                                        <strong>${data.min_snr?.toFixed(1) || '0'} dB</strong>
+                                    </div>
+                                    <div class="col-4">
+                                        <small class="text-muted d-block">Avg</small>
+                                        <strong style="color: #00ff88;">${data.avg_snr.toFixed(1)} dB</strong>
+                                    </div>
+                                    <div class="col-4">
+                                        <small class="text-muted d-block">Max</small>
+                                        <strong>${data.max_snr?.toFixed(1) || '0'} dB</strong>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card" style="background: #16213e; border: none;">
+                            <div class="card-body">
+                                <h5 class="mb-3"><i class="fas fa-signal me-2" style="color: #17a2b8;"></i>RSSI Statistics</h5>
+                                <div class="row text-center">
+                                    <div class="col-4">
+                                        <small class="text-muted d-block">Min</small>
+                                        <strong>${data.min_rssi?.toFixed(1) || '0'} dBm</strong>
+                                    </div>
+                                    <div class="col-4">
+                                        <small class="text-muted d-block">Avg</small>
+                                        <strong style="color: #17a2b8;">${data.avg_rssi.toFixed(1)} dBm</strong>
+                                    </div>
+                                    <div class="col-4">
+                                        <small class="text-muted d-block">Max</small>
+                                        <strong>${data.max_rssi?.toFixed(1) || '0'} dBm</strong>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Gateway Info -->
+                ${data.gateway_count > 0 ? `
+                <div class="card mt-3" style="background: #16213e; border: none;">
+                    <div class="card-body">
+                        <h5 class="mb-3"><i class="fas fa-network-wired me-2" style="color: #ff8c00;"></i>Connected Gateways</h5>
+                        <div class="d-flex flex-wrap gap-2">
+                            <span class="badge" style="background: #ff8c00;">Primary: ${data.primary_gateway || 'N/A'}</span>
+                            ${data.receiving_gateways.filter(g => g !== data.primary_gateway).map(g => 
+                                `<span class="badge bg-secondary">${g}</span>`
+                            ).join('')}
+                        </div>
+                    </div>
+                </div>
+                ` : ''}
+            `;
+        })
+        .catch(error => {
+            document.getElementById('sensorDetailsBody').innerHTML = `
+                <div class="alert alert-danger">Error loading sensor details: ${error.message}</div>
+            `;
+        });
+}
+
+function formatTimeAgo(timestamp) {
+    const seconds = Math.floor((Date.now() - timestamp) / 1000);
+    if (seconds < 60) return 'less than a minute ago';
+    if (seconds < 3600) return Math.floor(seconds / 60) + ' minutes ago';
+    if (seconds < 86400) return Math.floor(seconds / 3600) + ' hours ago';
+    return Math.floor(seconds / 86400) + ' days ago';
+}
+
+function getScoreLabel(score) {
+    if (score >= 4.5) return 'Excellent';
+    if (score >= 3.5) return 'Good';
+    if (score >= 2.5) return 'Fair';
+    if (score >= 1.5) return 'Poor';
+    return 'Critical';
+}
+
+function getScoreColor(score) {
+    if (score >= 4) return '#00ff88';
+    if (score >= 3) return '#00cc66';
+    if (score >= 2) return '#ffcc00';
+    return '#ff4444';
 }
 
 // Load sensors on page load

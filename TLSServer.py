@@ -1203,6 +1203,14 @@ class TLSServer:
                             
                             # Track packet statistics for packet loss detection (only for new messages, not duplicates)
                             eui_upper = eui.upper()
+                            current_timestamp = datetime.now(timezone.utc).timestamp()
+                            
+                            # Extract transmission details from message
+                            airtime_ms = message.get('airtime', 0)  # in microseconds usually
+                            spreading_factor = message.get('sf', message.get('spreadingFactor', 7))
+                            frequency_hz = message.get('freq', message.get('frequency', 0))
+                            data_rate = message.get('dataRate', f'SF{spreading_factor}BW125')
+                            
                             if eui_upper not in self.sensor_packet_stats:
                                 self.sensor_packet_stats[eui_upper] = {
                                     'last_packet_cnt': packet_cnt,
@@ -1211,7 +1219,21 @@ class TLSServer:
                                     'snr_sum': snr,
                                     'snr_count': 1,
                                     'rssi_sum': message.get('rssi', 0),
-                                    'rssi_count': 1
+                                    'rssi_count': 1,
+                                    'first_seen': current_timestamp,
+                                    'last_seen': current_timestamp,
+                                    'last_airtime_ms': airtime_ms / 1000 if airtime_ms > 1000 else airtime_ms,
+                                    'total_airtime_ms': airtime_ms / 1000 if airtime_ms > 1000 else airtime_ms,
+                                    'spreading_factor': spreading_factor,
+                                    'frequency_mhz': frequency_hz / 1000000 if frequency_hz > 1000000 else frequency_hz,
+                                    'data_rate': data_rate,
+                                    'frame_counter': packet_cnt,
+                                    'min_snr': snr,
+                                    'max_snr': snr,
+                                    'min_rssi': message.get('rssi', 0),
+                                    'max_rssi': message.get('rssi', 0),
+                                    'snr_history': [],
+                                    'rssi_history': []
                                 }
                             else:
                                 stats = self.sensor_packet_stats[eui_upper]
@@ -1232,6 +1254,35 @@ class TLSServer:
                                 stats['snr_count'] += 1
                                 stats['rssi_sum'] += message.get('rssi', 0)
                                 stats['rssi_count'] += 1
+                                
+                                # Update extended stats
+                                stats['last_seen'] = current_timestamp
+                                airtime_val = airtime_ms / 1000 if airtime_ms > 1000 else airtime_ms
+                                stats['last_airtime_ms'] = airtime_val
+                                stats['total_airtime_ms'] = stats.get('total_airtime_ms', 0) + airtime_val
+                                stats['spreading_factor'] = spreading_factor
+                                stats['frequency_mhz'] = frequency_hz / 1000000 if frequency_hz > 1000000 else frequency_hz
+                                stats['data_rate'] = data_rate
+                                stats['frame_counter'] = packet_cnt
+                                
+                                # Track min/max values
+                                stats['min_snr'] = min(stats.get('min_snr', snr), snr)
+                                stats['max_snr'] = max(stats.get('max_snr', snr), snr)
+                                rssi = message.get('rssi', 0)
+                                stats['min_rssi'] = min(stats.get('min_rssi', rssi), rssi)
+                                stats['max_rssi'] = max(stats.get('max_rssi', rssi), rssi)
+                                
+                                # Keep last 100 values for history charts
+                                if 'snr_history' not in stats:
+                                    stats['snr_history'] = []
+                                if 'rssi_history' not in stats:
+                                    stats['rssi_history'] = []
+                                stats['snr_history'].append({'ts': current_timestamp, 'val': snr})
+                                stats['rssi_history'].append({'ts': current_timestamp, 'val': rssi})
+                                if len(stats['snr_history']) > 100:
+                                    stats['snr_history'] = stats['snr_history'][-100:]
+                                if len(stats['rssi_history']) > 100:
+                                    stats['rssi_history'] = stats['rssi_history'][-100:]
                             
                             # Update SNR/RSSI history (every 5 minutes)
                             current_time = datetime.now(timezone.utc).timestamp()

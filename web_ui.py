@@ -372,6 +372,139 @@ def detach_sensor(eui):
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)})
 
+@app.route('/api/sensors/<eui>/details', methods=['GET'])
+def get_sensor_details(eui):
+    """Get detailed statistics for a specific sensor"""
+    try:
+        global tls_server_instance
+        tls_server = tls_server_instance
+        eui_upper = eui.upper()
+        
+        # Get base sensor config
+        sensor_config = None
+        try:
+            with open(bssci_config.SENSOR_CONFIG_FILE, 'r') as f:
+                sensors = json.load(f)
+                for s in sensors:
+                    if s.get('eui', '').upper() == eui_upper:
+                        sensor_config = s
+                        break
+        except:
+            pass
+        
+        if not sensor_config:
+            return jsonify({'success': False, 'message': 'Sensor not found'})
+        
+        # Get packet statistics
+        stats = {}
+        if tls_server and hasattr(tls_server, 'sensor_packet_stats'):
+            stats = tls_server.sensor_packet_stats.get(eui_upper, {})
+        
+        # Get topology info
+        topology = {}
+        if tls_server and hasattr(tls_server, 'sensor_topology'):
+            topology = tls_server.sensor_topology.get(eui_upper, {})
+        
+        # Get registration info
+        registration = {}
+        if tls_server and hasattr(tls_server, 'registered_sensors'):
+            registration = tls_server.registered_sensors.get(eui_upper, {})
+        
+        # Get preferred downlink path
+        downlink_path = {}
+        if tls_server and hasattr(tls_server, 'preferred_downlink_paths'):
+            downlink_path = tls_server.preferred_downlink_paths.get(eui_upper, {})
+        
+        # Calculate derived metrics
+        avg_snr = stats.get('snr_sum', 0) / stats.get('snr_count', 1) if stats.get('snr_count', 0) > 0 else 0
+        avg_rssi = stats.get('rssi_sum', 0) / stats.get('rssi_count', 1) if stats.get('rssi_count', 0) > 0 else 0
+        packets_received = stats.get('packets_received', 0)
+        packets_lost = stats.get('packets_lost', 0)
+        packet_loss_rate = (packets_lost / (packets_received + packets_lost) * 100) if (packets_received + packets_lost) > 0 else 0
+        
+        # Calculate send interval (based on last 10 messages if history available)
+        send_interval = 0
+        if 'snr_history' in stats and len(stats['snr_history']) >= 2:
+            history = stats['snr_history'][-10:]
+            intervals = []
+            for i in range(1, len(history)):
+                intervals.append(history[i]['ts'] - history[i-1]['ts'])
+            if intervals:
+                send_interval = sum(intervals) / len(intervals)
+        
+        # Calculate device health scores
+        signal_score = 5.0
+        if avg_snr < -5:
+            signal_score = 1.0
+        elif avg_snr < 0:
+            signal_score = 2.0
+        elif avg_snr < 5:
+            signal_score = 3.0
+        elif avg_snr < 10:
+            signal_score = 4.0
+        
+        energy_score = 3.0  # Default fair
+        if stats.get('spreading_factor', 7) <= 7:
+            energy_score = 5.0
+        elif stats.get('spreading_factor', 7) <= 9:
+            energy_score = 4.0
+        elif stats.get('spreading_factor', 7) <= 10:
+            energy_score = 3.0
+        elif stats.get('spreading_factor', 7) <= 11:
+            energy_score = 2.0
+        else:
+            energy_score = 1.0
+        
+        # Get gateway count from topology
+        gateway_count = len(topology.get('receiving_bases', {})) if topology else 0
+        
+        # Calculate duty cycle
+        total_airtime_ms = stats.get('total_airtime_ms', 0)
+        first_seen = stats.get('first_seen', 0)
+        last_seen = stats.get('last_seen', 0)
+        observation_time_s = (last_seen - first_seen) if first_seen and last_seen else 1
+        duty_cycle = (total_airtime_ms / 1000 / observation_time_s * 100) if observation_time_s > 0 else 0
+        
+        response = {
+            'success': True,
+            'eui': eui_upper,
+            'config': sensor_config,
+            'first_seen': stats.get('first_seen'),
+            'last_seen': stats.get('last_seen'),
+            'packets_received': packets_received,
+            'packets_lost': packets_lost,
+            'packet_loss_rate': round(packet_loss_rate, 2),
+            'avg_snr': round(avg_snr, 2),
+            'avg_rssi': round(avg_rssi, 2),
+            'min_snr': stats.get('min_snr', 0),
+            'max_snr': stats.get('max_snr', 0),
+            'min_rssi': stats.get('min_rssi', 0),
+            'max_rssi': stats.get('max_rssi', 0),
+            'current_rssi': stats.get('rssi_sum', 0) / stats.get('rssi_count', 1) if stats.get('rssi_count', 0) > 0 else 0,
+            'send_interval': round(send_interval, 1),
+            'gateway_count': gateway_count,
+            'primary_gateway': topology.get('primary_bs', ''),
+            'receiving_gateways': list(topology.get('receiving_bases', {}).keys()) if topology else [],
+            'signal_score': round(signal_score, 1),
+            'energy_score': round(energy_score, 1),
+            'spreading_factor': stats.get('spreading_factor', 7),
+            'data_rate': stats.get('data_rate', 'SF7BW125'),
+            'frequency_mhz': round(stats.get('frequency_mhz', 0), 3),
+            'frame_counter': stats.get('frame_counter', 0),
+            'last_airtime_ms': round(stats.get('last_airtime_ms', 0), 2),
+            'avg_airtime_ms': round(total_airtime_ms / packets_received, 2) if packets_received > 0 else 0,
+            'total_airtime_ms': round(total_airtime_ms, 2),
+            'duty_cycle': round(duty_cycle, 4),
+            'snr_history': stats.get('snr_history', [])[-50:],
+            'rssi_history': stats.get('rssi_history', [])[-50:],
+            'registration': registration,
+            'downlink_path': downlink_path
+        }
+        
+        return jsonify(response)
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
 @app.route('/api/sensors/attach-all', methods=['POST'])
 def attach_all_sensors():
     """Attach all configured sensors to base stations"""

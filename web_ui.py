@@ -1331,10 +1331,12 @@ def get_remote_version():
                     pass
             
             # Fetch latest from remote
-            fetch_result = subprocess.run(['git', 'fetch', 'origin'], capture_output=True, text=True, timeout=30)
-            if fetch_result.returncode != 0:
-                print(f"Git fetch failed: {fetch_result.stderr}")
-                return "fetch-failed"
+            try:
+                # Try fetch with different options to bypass common Docker/Git issues
+                subprocess.run(['git', 'fetch', '--tags', 'origin', 'main'], 
+                             capture_output=True, text=True, timeout=30)
+            except Exception as e:
+                logger.error(f"Git fetch exception: {e}")
             
             # Get latest commit hash from origin/main
             result = subprocess.run(['git', 'rev-parse', '--short', 'origin/main'], 
@@ -1343,15 +1345,29 @@ def get_remote_version():
                 commit_hash = result.stdout.strip()
                 
                 # Try to get latest tag
-                tag_result = subprocess.run(['git', 'describe', '--tags', 'origin/main'], 
+                tag_result = subprocess.run(['git', 'describe', '--tags', '--abbrev=0', 'origin/main'], 
                                           capture_output=True, text=True, timeout=10)
                 if tag_result.returncode == 0:
-                    return tag_result.stdout.strip().split('-')[0]  # Get tag without commit info
+                    return tag_result.stdout.strip()
                 else:
                     return f"commit-{commit_hash}"
+            
+            return "remote-unavailable"
         except FileNotFoundError:
             # Git not installed, can't check remote
             pass
+        except Exception as e:
+            if "No such file or directory" in str(e):
+                # Git not installed
+                pass
+            else:
+                print(f"Git command error: {e}")
+        
+        # Without Git, we can't check remote versions
+        return "git-required-for-remote"
+    except Exception as e:
+        print(f"Error getting remote version: {e}")
+        return "remote-check-unavailable"
         except Exception as e:
             if "No such file or directory" in str(e):
                 # Git not installed

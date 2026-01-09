@@ -89,20 +89,25 @@ function initCytoscape() {
                 style: {
                     'background-color': '#ff8c00',
                     'label': 'data(label)',
-                    'width': 50,
-                    'height': 50,
-                    'font-size': '12px',
+                    'width': 60,
+                    'height': 60,
+                    'font-size': '14px',
+                    'font-weight': 'bold',
                     'text-valign': 'bottom',
-                    'text-margin-y': 5,
+                    'text-margin-y': 8,
                     'border-width': 3,
-                    'border-color': '#cc7000'
+                    'border-color': '#cc7000',
+                    'text-background-opacity': 0.7,
+                    'text-background-color': '#ffffff',
+                    'text-background-padding': '2px',
+                    'text-background-shape': 'roundrectangle'
                 }
             },
             {
                 selector: 'node[type="base_station"][?connected]',
                 style: {
                     'border-color': '#28a745',
-                    'border-width': 4
+                    'border-width': 5
                 }
             },
             {
@@ -110,11 +115,15 @@ function initCytoscape() {
                 style: {
                     'background-color': '#17a2b8',
                     'label': 'data(label)',
-                    'width': 30,
-                    'height': 30,
-                    'font-size': '10px',
+                    'width': 25,
+                    'height': 25,
+                    'font-size': '11px',
                     'text-valign': 'bottom',
-                    'text-margin-y': 3
+                    'text-margin-y': 5,
+                    'text-background-opacity': 0.7,
+                    'text-background-color': '#ffffff',
+                    'text-background-padding': '1px',
+                    'text-background-shape': 'roundrectangle'
                 }
             },
             {
@@ -244,14 +253,23 @@ function loadTopology() {
             
             if (elements.length > 0) {
                 cy.layout({
-                    name: 'concentric',
-                    concentric: function(node) {
-                        return node.data('type') === 'base_station' ? 2 : 1;
-                    },
-                    levelWidth: function() { return 1; },
-                    animate: true,
-                    animationDuration: 500,
-                    padding: 50
+                    name: 'cose',
+                    idealEdgeLength: 150,
+                    nodeOverlap: 40,
+                    refresh: 20,
+                    fit: true,
+                    padding: 50,
+                    randomize: false,
+                    componentSpacing: 100,
+                    nodeRepulsion: 10000,
+                    edgeElasticity: 100,
+                    nestingFactor: 5,
+                    gravity: 80,
+                    numIter: 1000,
+                    initialTemp: 200,
+                    coolingFactor: 0.95,
+                    minTemp: 1.0,
+                    animate: true
                 }).run();
             }
         });
@@ -260,14 +278,11 @@ function loadTopology() {
 function resetLayout() {
     if (cy) {
         cy.layout({
-            name: 'concentric',
-            concentric: function(node) {
-                return node.data('type') === 'base_station' ? 2 : 1;
-            },
-            levelWidth: function() { return 1; },
-            animate: true,
-            animationDuration: 500,
-            padding: 50
+            name: 'cose',
+            idealEdgeLength: 150,
+            nodeOverlap: 40,
+            nodeRepulsion: 10000,
+            animate: true
         }).run();
     }
 }

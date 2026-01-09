@@ -460,7 +460,30 @@ function showSensorDetails(eui) {
             const sendInterval = data.send_interval > 0 ? Math.round(data.send_interval) + 's' : 'N/A';
             
             const signalLabel = getScoreLabel(data.signal_score);
-            const energyLabel = getScoreLabel(data.energy_score);
+            
+            // Calculate online status based on send interval
+            const now = Date.now() / 1000;
+            const lastSeenTs = data.last_seen || 0;
+            const timeSinceLastSeen = now - lastSeenTs;
+            const expectedInterval = data.send_interval > 0 ? data.send_interval : 60;
+            const missedIntervals = timeSinceLastSeen / expectedInterval;
+            
+            let deviceStatus = 'Online';
+            let statusColor = '#28a745';
+            let statusIcon = 'check-circle';
+            let statusMessage = 'Device is sending data as expected';
+            
+            if (missedIntervals > 5) {
+                deviceStatus = 'Offline';
+                statusColor = '#dc3545';
+                statusIcon = 'times-circle';
+                statusMessage = `No data received for ${Math.round(timeSinceLastSeen / 60)} minutes (expected every ${Math.round(expectedInterval)}s)`;
+            } else if (missedIntervals > 2) {
+                deviceStatus = 'Warning';
+                statusColor = '#ffc107';
+                statusIcon = 'exclamation-triangle';
+                statusMessage = `Last transmission delayed - ${Math.round(missedIntervals)} intervals missed`;
+            }
             
             document.getElementById('sensorDetailsBody').innerHTML = `
                 <!-- Header Info Bar -->
@@ -486,8 +509,8 @@ function showSensorDetails(eui) {
                         <strong style="color: #ff8c00;">${data.gateway_count}</strong>
                     </div>
                     <div class="text-center">
-                        <small class="text-muted d-block">Uplink Mode</small>
-                        <strong>TSMA</strong>
+                        <small class="text-muted d-block">Status</small>
+                        <strong style="color: ${statusColor};">${deviceStatus}</strong>
                     </div>
                 </div>
                 
@@ -496,9 +519,9 @@ function showSensorDetails(eui) {
                     <div class="col-md-3">
                         <div class="card h-100">
                             <div class="card-body text-center">
-                                <small class="text-muted">Device Health</small>
-                                <h2 class="mt-2 mb-1" style="color: ${getScoreColor(data.energy_score)};">${energyLabel}</h2>
-                                <small>Score: ${data.energy_score.toFixed(1)}/5</small>
+                                <small class="text-muted">Device Status</small>
+                                <h2 class="mt-2 mb-1" style="color: ${statusColor};">${deviceStatus}</h2>
+                                <small>${missedIntervals > 2 ? Math.round(missedIntervals) + ' intervals missed' : 'Active'}</small>
                             </div>
                         </div>
                     </div>
@@ -531,22 +554,22 @@ function showSensorDetails(eui) {
                     </div>
                 </div>
                 
-                <!-- Device Health & Transmission Details -->
+                <!-- Device Status & Transmission Details -->
                 <div class="row g-3 mb-4">
                     <div class="col-md-6">
                         <div class="card h-100">
                             <div class="card-body">
-                                <h5 class="mb-3" style="color: #ff8c00;">Device Health</h5>
+                                <h5 class="mb-3" style="color: #ff8c00;">Device Status</h5>
                                 
-                                <div class="mb-3">
-                                    <div class="d-flex justify-content-between mb-1">
-                                        <span>Energy Efficiency</span>
-                                        <span style="color: ${getScoreColor(data.energy_score)};">${energyLabel} (${data.energy_score.toFixed(1)}/5)</span>
+                                <!-- Online/Offline Status -->
+                                <div class="alert py-3 mb-3" style="background-color: ${statusColor}20; border-color: ${statusColor}; color: ${statusColor === '#28a745' ? '#155724' : statusColor === '#dc3545' ? '#721c24' : '#856404'};">
+                                    <div class="d-flex align-items-center">
+                                        <i class="fas fa-${statusIcon} fa-2x me-3"></i>
+                                        <div>
+                                            <strong>${deviceStatus}</strong>
+                                            <br><small>${statusMessage}</small>
+                                        </div>
                                     </div>
-                                    <div class="progress" style="height: 8px;">
-                                        <div class="progress-bar" style="width: ${data.energy_score * 20}%; background: linear-gradient(90deg, #dc3545, #ffc107, #28a745);"></div>
-                                    </div>
-                                    <small class="text-muted">${data.energy_score >= 4 ? 'Optimal energy usage' : data.energy_score >= 3 ? 'Moderate energy usage' : 'Consider optimizing transmission settings'}</small>
                                 </div>
                                 
                                 <div class="mb-3">
@@ -580,14 +603,6 @@ function showSensorDetails(eui) {
                                 <h5 class="mb-3" style="color: #ff8c00;">Transmission Details</h5>
                                 
                                 <div class="row">
-                                    <div class="col-6 mb-3">
-                                        <small class="text-muted d-block">Telegram Mode</small>
-                                        <strong>TSMA Uplink</strong>
-                                    </div>
-                                    <div class="col-6 mb-3">
-                                        <small class="text-muted d-block">Burst Pattern</small>
-                                        <strong>24 sub-packets</strong>
-                                    </div>
                                     <div class="col-6 mb-3">
                                         <small class="text-muted d-block">Frequency Band</small>
                                         <strong>${data.frequency_mhz > 0 ? data.frequency_mhz.toFixed(3) : '868'} MHz</strong>

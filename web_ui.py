@@ -1413,6 +1413,12 @@ def get_commit_log(limit=5):
 def check_for_updates():
     """Check if updates are available"""
     try:
+        # First ensure we have latest info from remote
+        try:
+            subprocess.run(['git', 'fetch', 'origin'], timeout=30, capture_output=True)
+        except:
+            pass
+
         current = get_current_version()
         remote = get_remote_version()
         
@@ -1427,12 +1433,30 @@ def check_for_updates():
             updates_available = False
             status_message = 'Local installation - remote checking requires Git'
         elif current != remote and not remote.startswith('git-required') and not remote.startswith('remote-'):
+            # In git, if HEAD and origin/main differ, updates are available
             updates_available = True
         
+        # Get recent commits if available
+        recent_commits = []
+        try:
+            cmd = ['git', 'log', 'HEAD..origin/main', '--oneline', '-n', '10']
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            if res.returncode == 0:
+                for line in res.stdout.strip().split('\n'):
+                    if line:
+                        parts = line.split(' ', 1)
+                        recent_commits.append({
+                            'hash': parts[0],
+                            'message': parts[1] if len(parts) > 1 else ''
+                        })
+        except:
+            pass
+
         result = {
             'current_version': current,
             'remote_version': remote,
             'updates_available': updates_available,
+            'recent_commits': recent_commits,
             'status': 'success'
         }
         
@@ -1441,13 +1465,8 @@ def check_for_updates():
             
         return result
     except Exception as e:
-        return {
-            'current_version': 'unknown',
-            'remote_version': 'unknown', 
-            'updates_available': False,
-            'status': 'error',
-            'error': str(e)
-        }
+        logger.error(f"Error checking for updates: {e}")
+        return {'status': 'error', 'error': str(e)}
 
 def create_backup():
     """Create backup before update"""
@@ -1481,7 +1500,13 @@ def perform_update():
         if not backup_result['success']:
             return {'success': False, 'error': f"Backup failed: {backup_result['error']}"}
         
-        # Perform git pull
+        # Perform git reset and pull to ensure a clean update
+        # This is often needed in Docker environments where local files might have changed
+        try:
+            subprocess.run(['git', 'reset', '--hard', 'HEAD'], capture_output=True, timeout=30)
+        except:
+            pass
+            
         result = subprocess.run(['git', 'pull', 'origin', 'main'], 
                               capture_output=True, text=True, timeout=60)
         

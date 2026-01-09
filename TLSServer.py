@@ -762,6 +762,7 @@ class TLSServer:
                 data = await reader.read(4096)
                 if not data:
                     break
+                self.traffic_metrics['bytes_in'] += len(data)
                 # try:
                 for message in decode_messages(data):
                     msg_type = message.get("command", "")
@@ -1098,7 +1099,6 @@ class TLSServer:
 
                         self.deduplication_stats['total_messages'] += 1
                         self.traffic_metrics['messages_in'] += 1
-                        self.traffic_metrics['bytes_in'] += len(str(message.get('payload', '')))
                         
                         # Track active sensor for hourly stats
                         self.active_sensors_hourly.add(eui)

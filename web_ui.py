@@ -485,6 +485,7 @@ def get_sensor_details(eui):
             'gateway_count': gateway_count,
             'primary_gateway': topology.get('primary_bs', ''),
             'receiving_gateways': list(topology.get('receiving_bases', {}).keys()) if topology else [],
+            'receiving_bases_details': topology.get('receiving_bases', {}) if topology else {},
             'signal_score': round(signal_score, 1),
             'energy_score': round(energy_score, 1),
             'spreading_factor': stats.get('spreading_factor', 7),

@@ -679,16 +679,41 @@ function showSensorDetails(eui) {
                     </div>
                 </div>
                 
-                <!-- Base Station Info -->
+                <!-- Base Station Coverage -->
                 ${data.gateway_count > 0 ? `
                 <div class="card mt-3">
                     <div class="card-body">
-                        <h5 class="mb-3" style="color: #ff8c00;">Connected Base Stations</h5>
-                        <div class="d-flex flex-wrap gap-2">
-                            <span class="badge" style="background: #ff8c00;">Primary: ${data.primary_gateway || 'N/A'}</span>
-                            ${data.receiving_gateways.filter(g => g !== data.primary_gateway).map(g => 
-                                `<span class="badge bg-secondary">${g}</span>`
-                            ).join('')}
+                        <h5 class="mb-3" style="color: #ff8c00;">Base Station Coverage</h5>
+                        <div class="table-responsive">
+                            <table class="table table-sm mb-0">
+                                <thead>
+                                    <tr>
+                                        <th>Base Station</th>
+                                        <th class="text-center">SNR</th>
+                                        <th class="text-center">RSSI</th>
+                                        <th class="text-center">Telegrams</th>
+                                        <th class="text-center">Last Seen</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${Object.entries(data.receiving_bases_details || {}).map(([bsEui, bsData]) => {
+                                        const isPrimary = bsEui === data.primary_gateway;
+                                        const lastSeenAgo = bsData.last_seen ? formatTimeAgo(bsData.last_seen * 1000) : 'N/A';
+                                        return \`
+                                            <tr>
+                                                <td>
+                                                    \${isPrimary ? '<span class="badge me-1" style="background: #ff8c00;">Primary</span>' : ''}
+                                                    <code>\${bsEui}</code>
+                                                </td>
+                                                <td class="text-center">\${bsData.snr?.toFixed(1) || 'N/A'} dB</td>
+                                                <td class="text-center">\${bsData.rssi?.toFixed(1) || 'N/A'} dBm</td>
+                                                <td class="text-center">\${bsData.count?.toLocaleString() || 0}</td>
+                                                <td class="text-center">\${lastSeenAgo}</td>
+                                            </tr>
+                                        \`;
+                                    }).join('')}
+                                </tbody>
+                            </table>
                         </div>
                     </div>
                 </div>

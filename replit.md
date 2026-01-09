@@ -54,6 +54,8 @@ JSON-based sensor configuration with support for:
 
 ## Recent Changes
 
+- **Sensor Detail Dashboard**: Click on any sensor EUI to view detailed statistics including Device Health (energy efficiency, signal strength), Transmission Details (data rate, spreading factor, frequency, frame counter, airtime, duty cycle), SNR/RSSI statistics (min/avg/max), and gateway coverage. Tracks first seen, last seen timestamps, and detects missed frames.
+- **GitHub API-based Update System**: Update checking and installation now works in Docker containers without requiring a mounted .git directory. Uses GitHub API to fetch latest commits and downloads updates as ZIP archives.
 - **Network Topology Visualization**: New interactive network page showing base stations (large orange nodes) and sensors (small blue nodes) with Cytoscape.js. Displays primary routes (green thick lines) and secondary reception paths (gray thin lines). Click nodes for details, auto-refreshes every 30 seconds.
 - **Signal Score Distribution Chart**: Horizontal bar chart showing device breakdown by SNR quality (Excellent/Good/Fair/Poor/Critical) with summary counters and reference tables.
 - **24-Hour SNR/RSSI History**: Extended history from 1 hour to 24 hours with 5-minute intervals (288 data points).

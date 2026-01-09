@@ -5,6 +5,7 @@
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h2>Network Topology</h2>
     <div>
+        <button class="btn btn-success btn-sm me-2" onclick="savePositions()">Save Positions</button>
         <button class="btn btn-secondary btn-sm me-2" onclick="resetLayout()">Reset Layout</button>
         <button class="btn btn-primary btn-sm" onclick="loadTopology()">Refresh</button>
     </div>
@@ -80,6 +81,12 @@
 <script>
 let cy = null;
 let manualPositions = {};
+
+// Load positions from localStorage on startup
+try {
+    const saved = localStorage.getItem('bssci_network_positions');
+    if (saved) manualPositions = JSON.parse(saved);
+} catch (e) { console.error('Failed to load positions', e); }
 
 function initCytoscape() {
     cy = cytoscape({
@@ -315,9 +322,19 @@ function runDefaultLayout() {
     }).run();
 }
 
+function savePositions() {
+    try {
+        localStorage.setItem('bssci_network_positions', JSON.stringify(manualPositions));
+        alert('Positions saved successfully!');
+    } catch (e) {
+        alert('Failed to save positions: ' + e);
+    }
+}
+
 function resetLayout() {
     if (cy) {
         manualPositions = {};
+        localStorage.removeItem('bssci_network_positions');
         runDefaultLayout();
     }
 }

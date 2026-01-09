@@ -1598,6 +1598,19 @@ def check_for_updates():
                         'hash': commit['sha'][:7],
                         'message': commit['commit']['message'].split('\n')[0][:60]
                     })
+                
+                # If we got commits but remote was unavailable, use first commit as remote version
+                if commits_data and remote in ['remote-unavailable', 'remote-check-unavailable']:
+                    first_commit = commits_data[0]
+                    remote_hash = first_commit['sha'][:7]
+                    commit_date = first_commit['commit']['committer']['date'][:10]
+                    remote = f"commit-{remote_hash} ({commit_date})"
+                    # Re-check if updates available
+                    if current.startswith("local-"):
+                        updates_available = True
+                        status_message = 'Local installation detected - update available'
+                    elif current_hash and current_hash != remote_hash:
+                        updates_available = True
         except Exception as e:
             logger.error(f"Error fetching commits: {e}")
 
@@ -1734,12 +1747,8 @@ def api_get_version():
     """Get current and remote version info"""
     try:
         version_info = check_for_updates()
-        recent_commits = get_commit_log(5)
-        
-        return jsonify({
-            **version_info,
-            'recent_commits': recent_commits
-        })
+        # Use remote commits from check_for_updates() - don't override with local git
+        return jsonify(version_info)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

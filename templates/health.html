@@ -1,0 +1,257 @@
+{% extends "base.html" %}
+{% block title %}System Health{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>System Health</h1>
+    <button class="btn btn-outline-secondary" onclick="refreshHealth()">
+        <i class="fas fa-sync"></i> Refresh
+    </button>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h6 class="card-subtitle mb-2 text-muted">System Uptime</h6>
+                <h3 class="text-primary" id="systemUptime">-</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h6 class="card-subtitle mb-2 text-muted">Packets Received</h6>
+                <h3 class="text-success" id="packetsReceived">0</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h6 class="card-subtitle mb-2 text-muted">Packets Lost</h6>
+                <h3 class="text-danger" id="packetsLost">0</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h6 class="card-subtitle mb-2 text-muted">Overall Packet Loss</h6>
+                <h3 id="overallLossRate">0%</h3>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Base Station Health</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="bsHealthChart" height="250"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Sensor Packet Loss Rate</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="sensorLossChart" height="250"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Base Station Details</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Name/EUI</th>
+                                <th>CPU</th>
+                                <th>Memory</th>
+                                <th>Duty Cycle</th>
+                                <th>Uptime</th>
+                            </tr>
+                        </thead>
+                        <tbody id="bsTable"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Top 10 Sensors by Packet Loss</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>EUI</th>
+                                <th>Received</th>
+                                <th>Lost</th>
+                                <th>Loss Rate</th>
+                                <th>Avg SNR</th>
+                            </tr>
+                        </thead>
+                        <tbody id="sensorTable"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+let bsHealthChart = null;
+let sensorLossChart = null;
+
+function formatUptime(seconds) {
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    if (days > 0) return `${days}d ${hours}h`;
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    return `${minutes}m`;
+}
+
+function getLossColor(rate) {
+    if (rate < 1) return '#28a745';
+    if (rate < 5) return '#ffc107';
+    if (rate < 10) return '#fd7e14';
+    return '#dc3545';
+}
+
+function loadHealth() {
+    fetch('/api/health')
+        .then(r => r.json())
+        .then(data => {
+            if (!data.success) return;
+            
+            document.getElementById('systemUptime').textContent = formatUptime(data.system.uptime);
+            document.getElementById('packetsReceived').textContent = data.system.total_packets_received.toLocaleString();
+            document.getElementById('packetsLost').textContent = data.system.total_packets_lost.toLocaleString();
+            
+            const lossRate = data.system.overall_packet_loss_rate;
+            const lossEl = document.getElementById('overallLossRate');
+            lossEl.textContent = lossRate + '%';
+            lossEl.className = lossRate < 1 ? 'text-success' : lossRate < 5 ? 'text-warning' : 'text-danger';
+            
+            updateBsHealthChart(data.base_stations);
+            updateSensorLossChart(data.sensors.slice(0, 10));
+            updateBsTable(data.base_stations);
+            updateSensorTable(data.sensors.slice(0, 10));
+        });
+}
+
+function updateBsHealthChart(baseStations) {
+    const ctx = document.getElementById('bsHealthChart').getContext('2d');
+    const labels = baseStations.map(bs => bs.name || bs.eui.substring(0, 8));
+    
+    if (bsHealthChart) bsHealthChart.destroy();
+    
+    bsHealthChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'CPU %',
+                data: baseStations.map(bs => bs.cpu),
+                backgroundColor: '#ff8c00'
+            }, {
+                label: 'Memory %',
+                data: baseStations.map(bs => bs.memory),
+                backgroundColor: '#17a2b8'
+            }, {
+                label: 'Duty Cycle %',
+                data: baseStations.map(bs => bs.duty_cycle),
+                backgroundColor: '#6c757d'
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: { beginAtZero: true, max: 100 }
+            }
+        }
+    });
+}
+
+function updateSensorLossChart(sensors) {
+    const ctx = document.getElementById('sensorLossChart').getContext('2d');
+    const labels = sensors.map(s => s.eui.substring(0, 8));
+    
+    if (sensorLossChart) sensorLossChart.destroy();
+    
+    sensorLossChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Packet Loss %',
+                data: sensors.map(s => s.packet_loss_rate),
+                backgroundColor: sensors.map(s => getLossColor(s.packet_loss_rate))
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: { beginAtZero: true }
+            }
+        }
+    });
+}
+
+function updateBsTable(baseStations) {
+    const table = document.getElementById('bsTable');
+    table.innerHTML = baseStations.map(bs => `
+        <tr>
+            <td>${bs.name || bs.eui.substring(0, 12)}</td>
+            <td>${bs.cpu.toFixed(1)}%</td>
+            <td>${bs.memory.toFixed(1)}%</td>
+            <td>${bs.duty_cycle.toFixed(1)}%</td>
+            <td>${formatUptime(bs.uptime)}</td>
+        </tr>
+    `).join('');
+}
+
+function updateSensorTable(sensors) {
+    const table = document.getElementById('sensorTable');
+    table.innerHTML = sensors.map(s => `
+        <tr>
+            <td><code>${s.eui.substring(0, 12)}</code></td>
+            <td>${s.packets_received}</td>
+            <td>${s.packets_lost}</td>
+            <td style="color: ${getLossColor(s.packet_loss_rate)}">${s.packet_loss_rate}%</td>
+            <td>${s.avg_snr} dB</td>
+        </tr>
+    `).join('');
+}
+
+function refreshHealth() {
+    loadHealth();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadHealth();
+    setInterval(loadHealth, 10000);
+});
+</script>
+{% endblock %}

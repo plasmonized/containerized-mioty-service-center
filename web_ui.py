@@ -792,6 +792,97 @@ def logs():
 def traffic():
     return render_template('traffic.html')
 
+@app.route('/health')
+def health():
+    return render_template('health.html')
+
+@app.route('/api/health', methods=['GET'])
+def get_health_stats():
+    """Get comprehensive health statistics for the system"""
+    try:
+        global tls_server_instance
+        
+        result = {
+            "system": {
+                "uptime": 0,
+                "total_sensors": 0,
+                "active_sensors": 0,
+                "total_base_stations": 0,
+                "connected_base_stations": 0,
+                "total_packets_received": 0,
+                "total_packets_lost": 0,
+                "overall_packet_loss_rate": 0
+            },
+            "base_stations": [],
+            "sensors": []
+        }
+        
+        if tls_server_instance:
+            # System stats
+            start_time = tls_server_instance.traffic_metrics.get('start_time', 0)
+            if start_time:
+                from datetime import datetime, timezone
+                result["system"]["uptime"] = int(datetime.now(timezone.utc).timestamp() - start_time)
+            
+            result["system"]["total_sensors"] = len(tls_server_instance.sensor_config)
+            result["system"]["active_sensors"] = len(tls_server_instance.active_sensors_hourly)
+            result["system"]["total_base_stations"] = len(tls_server_instance.connected_base_stations) + len(tls_server_instance.connecting_base_stations)
+            result["system"]["connected_base_stations"] = len(tls_server_instance.connected_base_stations)
+            
+            # Aggregate packet stats
+            total_received = 0
+            total_lost = 0
+            for eui, stats in tls_server_instance.sensor_packet_stats.items():
+                total_received += stats.get('packets_received', 0)
+                total_lost += stats.get('packets_lost', 0)
+            
+            result["system"]["total_packets_received"] = total_received
+            result["system"]["total_packets_lost"] = total_lost
+            if total_received + total_lost > 0:
+                result["system"]["overall_packet_loss_rate"] = round(total_lost / (total_received + total_lost) * 100, 2)
+            
+            # Base station health
+            bs_config = load_base_station_config().get("base_stations", {})
+            for writer, bs_eui in tls_server_instance.connected_base_stations.items():
+                eui_lower = bs_eui.lower()
+                health = tls_server_instance.base_station_health.get(eui_lower, {})
+                bs_info = bs_config.get(eui_lower, {})
+                result["base_stations"].append({
+                    "eui": eui_lower,
+                    "name": bs_info.get("name", ""),
+                    "status": "connected",
+                    "cpu": health.get("cpu", 0),
+                    "memory": health.get("memory", 0),
+                    "duty_cycle": health.get("duty_cycle", 0),
+                    "uptime": health.get("uptime", 0)
+                })
+            
+            # Sensor packet stats
+            for eui, stats in tls_server_instance.sensor_packet_stats.items():
+                received = stats.get('packets_received', 0)
+                lost = stats.get('packets_lost', 0)
+                snr_avg = stats.get('snr_sum', 0) / max(stats.get('snr_count', 1), 1)
+                rssi_avg = stats.get('rssi_sum', 0) / max(stats.get('rssi_count', 1), 1)
+                loss_rate = 0
+                if received + lost > 0:
+                    loss_rate = round(lost / (received + lost) * 100, 2)
+                
+                result["sensors"].append({
+                    "eui": eui.lower(),
+                    "packets_received": received,
+                    "packets_lost": lost,
+                    "packet_loss_rate": loss_rate,
+                    "avg_snr": round(snr_avg, 2),
+                    "avg_rssi": round(rssi_avg, 2)
+                })
+            
+            # Sort sensors by packet loss rate (worst first)
+            result["sensors"].sort(key=lambda x: x["packet_loss_rate"], reverse=True)
+        
+        return jsonify({"success": True, **result})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
 @app.route('/base-stations')
 def base_stations():
     return render_template('base_stations.html')

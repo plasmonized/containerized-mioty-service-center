@@ -73,6 +73,10 @@ class TLSServer:
         
         # Base station health data (eui -> {cpu, temperature, ...})
         self.base_station_health: Dict[str, dict] = {}
+        
+        # Sensor packet tracking for packet loss detection
+        # eui -> {last_packet_cnt, packets_received, packets_lost, snr_sum, snr_count}
+        self.sensor_packet_stats: Dict[str, Dict[str, Any]] = {}
 
         # Auto-detach variables
         # eui -> timestamp of last message
@@ -1154,6 +1158,38 @@ class TLSServer:
                                 'snr': snr,
                                 'bs_eui': bs_eui
                             }
+                            
+                            # Track packet statistics for packet loss detection (only for new messages, not duplicates)
+                            eui_upper = eui.upper()
+                            if eui_upper not in self.sensor_packet_stats:
+                                self.sensor_packet_stats[eui_upper] = {
+                                    'last_packet_cnt': packet_cnt,
+                                    'packets_received': 1,
+                                    'packets_lost': 0,
+                                    'snr_sum': snr,
+                                    'snr_count': 1,
+                                    'rssi_sum': message.get('rssi', 0),
+                                    'rssi_count': 1
+                                }
+                            else:
+                                stats = self.sensor_packet_stats[eui_upper]
+                                last_cnt = stats['last_packet_cnt']
+                                # Packet counter wraps at 65536 (16-bit)
+                                expected_next = (last_cnt + 1) % 65536
+                                if packet_cnt != expected_next:
+                                    # Calculate lost packets (handle wrap-around)
+                                    if packet_cnt > last_cnt:
+                                        lost = packet_cnt - last_cnt - 1
+                                    else:
+                                        lost = (65536 - last_cnt - 1) + packet_cnt
+                                    if lost > 0 and lost < 1000:  # Sanity check
+                                        stats['packets_lost'] += lost
+                                stats['last_packet_cnt'] = packet_cnt
+                                stats['packets_received'] += 1
+                                stats['snr_sum'] += snr
+                                stats['snr_count'] += 1
+                                stats['rssi_sum'] += message.get('rssi', 0)
+                                stats['rssi_count'] += 1
 
                         # Parse received timestamp if available
                         try:

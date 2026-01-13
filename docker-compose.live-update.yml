@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  bssci-service-center:
+    build: .
+    container_name: bssci-service-center
+    init: true
+    ports:
+      - "16019:16018"
+      - "5056:5000"
+    volumes:
+      - bssci-app-data:/app-data
+      - ./certs:/certs:ro
+      - ./config:/config:ro
+      - ./logs:/app-data/logs
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
+      - ENABLE_LIVE_UPDATE=1
+      - BASE_STATION_CONFIG_FILE=/app-data/data/base_stations.json
+    networks:
+      - bssci-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s1 = socket.create_connection(('localhost', 16018), timeout=5); s2 = socket.create_connection(('localhost', 5000), timeout=5); s1.close(); s2.close()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  bssci-app-data:
+    driver: local
+
+networks:
+  bssci-network:
+    driver: bridge

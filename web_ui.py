@@ -1777,8 +1777,19 @@ def perform_update():
         
         return {'success': False, 'error': 'Could not download from GitHub (no valid branch found)'}
         
+    except PermissionError as e:
+        logger.error(f"Update failed - permission denied: {e}")
+        return {
+            'success': False, 
+            'error': 'Permission denied - files are read-only. For Docker: rebuild container with "docker-compose up -d --build"'
+        }
     except Exception as e:
         logger.error(f"Update failed: {e}")
+        if 'Permission denied' in str(e):
+            return {
+                'success': False, 
+                'error': 'Permission denied - files are read-only. For Docker: rebuild container with "docker-compose up -d --build"'
+            }
         return {'success': False, 'error': str(e)}
 
 @app.route('/api/system/version')

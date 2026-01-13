@@ -1,29 +1,23 @@
-
 version: '3.8'
 
 services:
   bssci-service-center:
     build: .
     container_name: bssci-service-center
-    #user: "${UID:-1000}:${GID:-1000}"
-    user: "0:0"  # Als root ausführen
     init: true
     ports:
-      - "16019:16018"  # TLS Server port
-      - "5056:5000"    # Web UI port
+      - "16019:16018"
+      - "5056:5000"
     volumes:
-      - ./certs:/app/certs:ro
-      - ./endpoints.json:/app/endpoints.json:rw
-      - ./bssci_config.py:/app/bssci_config.py:rw
-      - ./.env:/app/.env:rw
-      - ./base_stations.json:/app/data/base_stations.json:rw
-      - ./logs:/app/logs
+      - bssci-app-data:/app-data
+      - ./certs:/certs:ro
+      - ./config:/config:ro
+      - ./logs:/app-data/logs
     restart: unless-stopped
     environment:
       - PYTHONUNBUFFERED=1
-      - PUID=1000
-      - PGID=1000
-      - BASE_STATION_CONFIG_FILE=/app/data/base_stations.json
+      - ENABLE_LIVE_UPDATE=1
+      - BASE_STATION_CONFIG_FILE=/app-data/data/base_stations.json
     networks:
       - bssci-network
     logging:
@@ -37,6 +31,10 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+volumes:
+  bssci-app-data:
+    driver: local
 
 networks:
   bssci-network:

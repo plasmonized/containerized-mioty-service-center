@@ -117,6 +117,30 @@
 <script>
 let editingEui = null;
 
+function showAlert(type, message) {
+    const alertContainer = document.getElementById('alert-container') || createAlertContainer();
+    const alertId = 'alert-' + Date.now();
+    const alertHtml = `
+        <div id="${alertId}" class="alert alert-${type} alert-dismissible fade show" role="alert">
+            ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+    `;
+    alertContainer.innerHTML = alertHtml + alertContainer.innerHTML;
+    setTimeout(() => {
+        const alert = document.getElementById(alertId);
+        if (alert) alert.remove();
+    }, 5000);
+}
+
+function createAlertContainer() {
+    const container = document.createElement('div');
+    container.id = 'alert-container';
+    container.style.cssText = 'position: fixed; top: 70px; right: 20px; z-index: 9999; max-width: 400px;';
+    document.body.appendChild(container);
+    return container;
+}
+
 function getActivityStatusHtml(sensor) {
     const lastSeenHours = sensor.hours_since_last_seen || 0;
     

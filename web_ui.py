@@ -1717,61 +1717,79 @@ def perform_update():
         import ssl
         import zipfile
         import tempfile
-        import shutil
         
         ctx = ssl.create_default_context()
-        zip_url = f"https://github.com/{GITHUB_REPO}/archive/refs/heads/main.zip"
         
-        # Download to temp file
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp_file:
-            tmp_path = tmp_file.name
-            req = urllib.request.Request(zip_url, headers={'User-Agent': 'BSSCI-Service-Center'})
+        # Try main branch first, then master
+        for branch in ['main', 'master']:
+            zip_url = f"https://github.com/{GITHUB_REPO}/archive/refs/heads/{branch}.zip"
             
-            with urllib.request.urlopen(req, timeout=60, context=ctx) as response:
-                tmp_file.write(response.read())
+            try:
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp_file:
+                    tmp_path = tmp_file.name
+                    req = urllib.request.Request(zip_url, headers={'User-Agent': 'BSSCI-Service-Center'})
+                    
+                    with urllib.request.urlopen(req, timeout=60, context=ctx) as response:
+                        tmp_file.write(response.read())
+                
+                # Extract ZIP
+                extract_dir = tempfile.mkdtemp()
+                with zipfile.ZipFile(tmp_path, 'r') as zip_ref:
+                    zip_ref.extractall(extract_dir)
+                
+                extracted_folders = os.listdir(extract_dir)
+                if extracted_folders:
+                    source_dir = os.path.join(extract_dir, extracted_folders[0])
+                    
+                    files_to_update = ['web_ui.py', 'TLSServer.py', 'main.py', 'web_main.py', 
+                                     'mqtt_interface.py', 'messages.py', 'requirements.txt', 'VERSION']
+                    dirs_to_update = ['templates', 'static']
+                    
+                    updated_files = []
+                    for filename in files_to_update:
+                        src = os.path.join(source_dir, filename)
+                        if os.path.exists(src):
+                            shutil.copy2(src, filename)
+                            updated_files.append(filename)
+                    
+                    for dirname in dirs_to_update:
+                        src_dir = os.path.join(source_dir, dirname)
+                        if os.path.exists(src_dir):
+                            for item in os.listdir(src_dir):
+                                shutil.copy2(os.path.join(src_dir, item), 
+                                           os.path.join(dirname, item))
+                                updated_files.append(f'{dirname}/{item}')
+                
+                os.unlink(tmp_path)
+                shutil.rmtree(extract_dir, ignore_errors=True)
+                
+                return {
+                    'success': True, 
+                    'message': f'Update completed via GitHub ({branch} branch)',
+                    'backup_dir': backup_result['backup_dir'],
+                    'updated_files': updated_files
+                }
+            except urllib.error.HTTPError as e:
+                if e.code == 404:
+                    logger.warning(f"Branch {branch} not found, trying next...")
+                    continue
+                raise
         
-        # Extract ZIP
-        extract_dir = tempfile.mkdtemp()
-        with zipfile.ZipFile(tmp_path, 'r') as zip_ref:
-            zip_ref.extractall(extract_dir)
+        return {'success': False, 'error': 'Could not download from GitHub (no valid branch found)'}
         
-        # Find the extracted folder (usually repo-name-main)
-        extracted_folders = os.listdir(extract_dir)
-        if extracted_folders:
-            source_dir = os.path.join(extract_dir, extracted_folders[0])
-            
-            # Copy Python files and templates (preserve config files)
-            files_to_update = ['web_ui.py', 'TLSServer.py', 'main.py', 'web_main.py', 
-                             'mqtt_interface.py', 'messages.py', 'requirements.txt']
-            
-            updated_files = []
-            for filename in files_to_update:
-                src = os.path.join(source_dir, filename)
-                if os.path.exists(src):
-                    shutil.copy2(src, filename)
-                    updated_files.append(filename)
-            
-            # Update templates folder
-            templates_src = os.path.join(source_dir, 'templates')
-            if os.path.exists(templates_src):
-                for template in os.listdir(templates_src):
-                    shutil.copy2(os.path.join(templates_src, template), 
-                               os.path.join('templates', template))
-                    updated_files.append(f'templates/{template}')
-        
-        # Cleanup
-        os.unlink(tmp_path)
-        shutil.rmtree(extract_dir, ignore_errors=True)
-        
+    except PermissionError as e:
+        logger.error(f"Update failed - permission denied: {e}")
         return {
-            'success': True, 
-            'message': 'Update completed successfully via GitHub download',
-            'backup_dir': backup_result['backup_dir'],
-            'updated_files': updated_files
+            'success': False, 
+            'error': 'Permission denied - files are read-only. For Docker: rebuild container with "docker-compose up -d --build"'
         }
-        
     except Exception as e:
         logger.error(f"Update failed: {e}")
+        if 'Permission denied' in str(e):
+            return {
+                'success': False, 
+                'error': 'Permission denied - files are read-only. For Docker: rebuild container with "docker-compose up -d --build"'
+            }
         return {'success': False, 'error': str(e)}
 
 @app.route('/api/system/version')

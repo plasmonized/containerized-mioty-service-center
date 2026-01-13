@@ -5,7 +5,8 @@ services:
   bssci-service-center:
     build: .
     container_name: bssci-service-center
-    user: "${UID:-1000}:${GID:-1000}"
+    #user: "${UID:-1000}:${GID:-1000}"
+    user: "0:0"  # Als root ausführen
     init: true
     ports:
       - "16019:16018"  # TLS Server port

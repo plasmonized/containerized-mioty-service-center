@@ -3,3 +3,4 @@ _pycache_
 attached_assets/*
 .env
 logs/
+base_stations.json

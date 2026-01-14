@@ -55,6 +55,54 @@ The BSSCI Service Center is a comprehensive IoT device management system that pr
 - **Bulk Import/Export**: CSV/TXT file support for mass sensor configuration
 - **Remote Commands**: MQTT-based sensor control (attach, detach, status)
 - **Auto-Detach**: Automatic removal of inactive sensors after configurable timeout
+- **Automatic Offline Detection**: Based on send_interval - shows Online/Warning/Offline status
+
+### Sensor Detail Dashboard (NEW)
+
+Click on any sensor EUI to view comprehensive statistics:
+- **Device Health**: Energy efficiency, signal strength indicators
+- **Transmission Details**: Data rate, spreading factor, frequency, frame counter, airtime, duty cycle
+- **SNR/RSSI Statistics**: Min/Avg/Max values with historical trends
+- **Base Station Coverage**: All base stations receiving this sensor with individual signal quality
+- **Telegram Tracking**: First seen, last seen timestamps, missed telegram detection
+- **Activity Status**: Real-time online/warning/offline indicator based on send interval
+
+### Network Topology Visualization (NEW)
+
+Interactive network visualization showing the complete mioty infrastructure:
+- **Cytoscape.js Based**: Smooth, interactive graph visualization
+- **Base Stations**: Large orange nodes representing gateways
+- **Sensors**: Small blue nodes representing endpoints
+- **Primary Routes**: Thick green lines showing best signal paths
+- **Secondary Routes**: Thin gray lines showing alternative reception paths
+- **Interactive**: Click nodes for details, drag to reposition
+- **Position Saving**: Save and restore custom layout positions
+- **Auto-Refresh**: Updates every 30 seconds
+
+### System Health Dashboard (NEW)
+
+Comprehensive system monitoring and health metrics:
+- **Packet Loss Detection**: 16-bit counter wrap-around handling for accurate loss calculation
+- **Base Station Health Charts**: Real-time CPU, Memory, and Duty Cycle monitoring
+- **Per-Sensor Statistics**: Individual sensor health with average SNR/RSSI
+- **Signal Score Distribution**: Horizontal bar chart showing device breakdown by SNR quality (Excellent/Good/Fair/Poor/Critical)
+- **24-Hour History**: Extended SNR/RSSI history with 5-minute intervals (288 data points)
+
+### Base Station Management (NEW)
+
+Dedicated management interface for base stations:
+- **Configuration**: Name, tags, IP address management
+- **Health Monitoring**: CPU usage, memory usage, duty cycle
+- **Connected Sensors**: Count of sensors per base station
+- **Status Tracking**: Online/offline status with last seen timestamps
+
+### Traffic Dashboard
+
+Enhanced real-time traffic visualization:
+- **12-Hour History**: Extended historical graphs for sensors and base stations
+- **Active Sensor Tracking**: Hourly tracking of sensors that sent data
+- **Message Statistics**: Real-time messages in/out, dropped packets
+- **Connection Monitoring**: Base station connection status over time
 
 ### Variable MAC (VM) Sub-Channel Support
 
@@ -81,6 +129,15 @@ Full ETSI TS 103357 compliant Variable MAC implementation for metering devices:
 - **Signal Optimization**: Automatic selection of best signal path
 - **Queue Management**: Asynchronous message processing with monitoring
 - **Performance Metrics**: Real-time statistics and monitoring
+
+### Update System (NEW)
+
+Seamless software updates for both standalone and Docker installations:
+- **GitHub API Integration**: Check for updates without requiring git repository
+- **Version Management**: Semantic versioning via VERSION file
+- **Docker Live-Updates**: Optional live-update mode for Docker containers
+- **Automatic Backup**: Creates backup before applying updates
+- **Branch Support**: Supports both main and master branches
 
 ## Installation & Setup
 
@@ -944,12 +1001,61 @@ python main.py
 - Production-ready performance
 
 ### Docker Deployment
+
+#### Standard Deployment
 ```bash
 docker-compose up -d --build
 ```
 - Containerized deployment
 - Automatic certificate generation
 - Volume persistence for configuration and logs
+
+#### Docker Compose Configuration
+```yaml
+version: '3.8'
+
+services:
+  bssci-service-center:
+    build: .
+    container_name: bssci-service-center
+    user: "0:0"  # Run as root for write permissions
+    init: true
+    ports:
+      - "16019:16018"  # TLS Server port
+      - "5056:5000"    # Web UI port
+    volumes:
+      - ./certs:/app/certs:ro
+      - ./endpoints.json:/app/endpoints.json:rw
+      - ./bssci_config.py:/app/bssci_config.py:rw
+      - ./.env:/app/.env:rw
+      - ./base_stations.json:/app/data/base_stations.json:rw
+      - ./logs:/app/logs
+      - ./VERSION:/app/VERSION:rw  # Required for persistent updates
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
+      - BASE_STATION_CONFIG_FILE=/app/data/base_stations.json
+```
+
+#### Live-Update Mode (Synology/Docker)
+For installations where you want to update via the web UI without rebuilding the container:
+
+```bash
+docker-compose -f docker-compose.live-update.yml up -d --build
+```
+
+**Important for Live-Updates:**
+- Mount `VERSION` file as volume for persistent version tracking
+- Set `user: "0:0"` for write permissions on mounted files
+- After updates, restart container: `docker-compose restart`
+
+#### Synology NAS Setup
+```bash
+# Set file permissions
+chmod 666 /volume1/docker/bssci/endpoints.json
+chmod 666 /volume1/docker/bssci/VERSION
+chmod 666 /volume1/docker/bssci/.env
+```
 
 ## Monitoring and Alerting
 

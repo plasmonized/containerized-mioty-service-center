@@ -201,28 +201,28 @@ let originalImageWidth = 0;
 let originalImageHeight = 0;
 let topologyData = { sensors: {}, base_stations: [] };
 
-// Load saved positions and zoom
-try {
-    const saved = localStorage.getItem('bssci_coverage_positions');
-    if (saved) {
-        const data = JSON.parse(saved);
-        // Handle both old format (just positions) and new format (positions + zoom)
-        if (data.positions) {
-            devicePositions = data.positions;
-            if (data.floorplanZoom) {
-                currentZoom = data.floorplanZoom;
+// Load saved positions and zoom from server (persistent across devices)
+async function loadPositionsFromServer() {
+    try {
+        const response = await fetch('/api/coverage/positions');
+        if (response.ok) {
+            const data = await response.json();
+            if (data.positions) {
+                devicePositions = data.positions;
+                if (data.floorplanZoom) {
+                    currentZoom = data.floorplanZoom;
+                }
+            } else if (Object.keys(data).length > 0 && !data.error) {
+                devicePositions = data;
             }
-        } else {
-            devicePositions = data;
         }
+    } catch (e) {
+        console.error('Failed to load positions from server', e);
     }
-    const savedZoom = localStorage.getItem('bssci_floorplan_zoom');
-    if (savedZoom) {
-        currentZoom = parseFloat(savedZoom);
-    }
-} catch (e) { console.error('Failed to load positions', e); }
+}
 
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', async function() {
+    await loadPositionsFromServer();
     initOSMMap();
     initFloorplan();
     loadDevices();
@@ -276,11 +276,35 @@ function initFloorplan() {
                     fitFloorplan();
                 };
                 floorplanImage.src = event.target.result;
-                localStorage.setItem('bssci_floorplan', event.target.result);
+                // Save to server for persistent storage across devices
+                fetch('/api/coverage/floorplan', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({image: event.target.result})
+                }).catch(e => console.error('Failed to save floorplan to server', e));
             };
             reader.readAsDataURL(file);
         }
     });
+    
+    // Load floorplan from server on init
+    fetch('/api/coverage/floorplan')
+        .then(r => r.json())
+        .then(data => {
+            if (data.image) {
+                floorplanImage = new Image();
+                floorplanImage.onload = function() {
+                    originalImageWidth = floorplanImage.width;
+                    originalImageHeight = floorplanImage.height;
+                    canvas.style.display = 'block';
+                    document.getElementById('floorplanPlaceholder').style.display = 'none';
+                    document.getElementById('zoomControls').style.display = 'flex';
+                    fitFloorplan();
+                };
+                floorplanImage.src = data.image;
+            }
+        })
+        .catch(e => console.error('Failed to load floorplan from server', e));
     
     canvas.addEventListener('click', function(e) {
         const rect = canvas.getBoundingClientRect();

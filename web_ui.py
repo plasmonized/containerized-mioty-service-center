@@ -1067,6 +1067,47 @@ def network():
 def coverage():
     return render_template('coverage.html')
 
+@app.route('/api/coverage/topology')
+def api_coverage_topology():
+    """Get sensor topology with SNR/RSSI per base station for coverage heatmap"""
+    try:
+        global tls_server_instance
+        result = {
+            'sensors': {},
+            'base_stations': []
+        }
+        
+        if tls_server_instance and hasattr(tls_server_instance, 'sensor_topology'):
+            for sensor_eui, topo in tls_server_instance.sensor_topology.items():
+                receiving = topo.get('receiving_bases', {})
+                if receiving:
+                    result['sensors'][sensor_eui] = {
+                        'base_stations': {}
+                    }
+                    for bs_eui, bs_data in receiving.items():
+                        result['sensors'][sensor_eui]['base_stations'][bs_eui] = {
+                            'snr': bs_data.get('snr', 0),
+                            'rssi': bs_data.get('rssi', -100),
+                            'count': bs_data.get('count', 0)
+                        }
+        
+        # Get base station list
+        bs_config = load_base_station_config().get("base_stations", {})
+        connected_euis = set()
+        if tls_server_instance and hasattr(tls_server_instance, 'connected_base_stations'):
+            for writer, bs_eui in tls_server_instance.connected_base_stations.items():
+                connected_euis.add(bs_eui.upper())
+        
+        all_bs = set(bs_config.keys())
+        all_bs.update(connected_euis)
+        
+        for bs_eui in all_bs:
+            result['base_stations'].append(bs_eui.upper())
+        
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'sensors': {}, 'base_stations': [], 'error': str(e)})
+
 @app.route('/api/coverage/positions', methods=['GET', 'POST'])
 def api_coverage_positions():
     """Get or save coverage map device positions"""

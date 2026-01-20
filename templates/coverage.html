@@ -40,9 +40,17 @@
             </div>
             <div class="tab-pane fade" id="floorplan-pane" role="tabpanel">
                 <div class="card">
-                    <div class="card-header">
-                        <input type="file" id="floorplanUpload" accept="image/*" class="form-control form-control-sm" style="max-width: 300px; display: inline-block;">
-                        <span class="text-muted ms-2">Upload a floor plan image</span>
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <div>
+                            <input type="file" id="floorplanUpload" accept="image/*" class="form-control form-control-sm" style="max-width: 250px; display: inline-block;">
+                        </div>
+                        <div class="btn-group btn-group-sm" id="zoomControls" style="display: none;">
+                            <button class="btn btn-outline-secondary" onclick="zoomFloorplan(-0.25)" title="Zoom Out">-</button>
+                            <button class="btn btn-outline-secondary" id="zoomLevel">100%</button>
+                            <button class="btn btn-outline-secondary" onclick="zoomFloorplan(0.25)" title="Zoom In">+</button>
+                            <button class="btn btn-outline-secondary ms-2" onclick="fitFloorplan()" title="Fit to View">Fit</button>
+                            <button class="btn btn-outline-secondary" onclick="resetZoom()" title="Reset to 100%">1:1</button>
+                        </div>
                     </div>
                     <div class="card-body p-0" style="position: relative;">
                         <div id="floorplanContainer" style="height: 600px; width: 100%; overflow: auto; background: #f5f5f5; display: flex; align-items: center; justify-content: center;">
@@ -188,6 +196,9 @@ let selectedDevice = null;
 let floorplanImage = null;
 let floorplanCtx = null;
 let devices = { baseStations: [], sensors: [] };
+let currentZoom = 1.0;
+let originalImageWidth = 0;
+let originalImageHeight = 0;
 
 // Load saved positions
 try {
@@ -231,6 +242,7 @@ function initOSMMap() {
 function initFloorplan() {
     const upload = document.getElementById('floorplanUpload');
     const canvas = document.getElementById('floorplanCanvas');
+    const container = document.getElementById('floorplanContainer');
     floorplanCtx = canvas.getContext('2d');
     
     upload.addEventListener('change', function(e) {
@@ -240,11 +252,12 @@ function initFloorplan() {
             reader.onload = function(event) {
                 floorplanImage = new Image();
                 floorplanImage.onload = function() {
-                    canvas.width = floorplanImage.width;
-                    canvas.height = floorplanImage.height;
+                    originalImageWidth = floorplanImage.width;
+                    originalImageHeight = floorplanImage.height;
                     canvas.style.display = 'block';
                     document.getElementById('floorplanPlaceholder').style.display = 'none';
-                    drawFloorplan();
+                    document.getElementById('zoomControls').style.display = 'flex';
+                    fitFloorplan();
                 };
                 floorplanImage.src = event.target.result;
                 localStorage.setItem('bssci_floorplan', event.target.result);
@@ -256,27 +269,65 @@ function initFloorplan() {
     canvas.addEventListener('click', function(e) {
         if (selectedDevice && floorplanImage) {
             const rect = canvas.getBoundingClientRect();
-            const scaleX = canvas.width / rect.width;
-            const scaleY = canvas.height / rect.height;
-            const x = (e.clientX - rect.left) * scaleX;
-            const y = (e.clientY - rect.top) * scaleY;
+            const x = (e.clientX - rect.left) / currentZoom;
+            const y = (e.clientY - rect.top) / currentZoom;
             placeDeviceOnFloorplan(selectedDevice, x, y);
         }
     });
+    
+    // Mouse wheel zoom
+    container.addEventListener('wheel', function(e) {
+        if (floorplanImage && e.ctrlKey) {
+            e.preventDefault();
+            const delta = e.deltaY > 0 ? -0.1 : 0.1;
+            zoomFloorplan(delta);
+        }
+    }, { passive: false });
     
     // Load saved floorplan
     const savedFloorplan = localStorage.getItem('bssci_floorplan');
     if (savedFloorplan) {
         floorplanImage = new Image();
         floorplanImage.onload = function() {
-            canvas.width = floorplanImage.width;
-            canvas.height = floorplanImage.height;
+            originalImageWidth = floorplanImage.width;
+            originalImageHeight = floorplanImage.height;
             canvas.style.display = 'block';
             document.getElementById('floorplanPlaceholder').style.display = 'none';
-            drawFloorplan();
+            document.getElementById('zoomControls').style.display = 'flex';
+            fitFloorplan();
         };
         floorplanImage.src = savedFloorplan;
     }
+}
+
+function zoomFloorplan(delta) {
+    currentZoom = Math.max(0.1, Math.min(3.0, currentZoom + delta));
+    applyZoom();
+}
+
+function fitFloorplan() {
+    if (!floorplanImage) return;
+    const container = document.getElementById('floorplanContainer');
+    const maxWidth = container.clientWidth - 20;
+    const maxHeight = container.clientHeight - 20;
+    const scaleX = maxWidth / originalImageWidth;
+    const scaleY = maxHeight / originalImageHeight;
+    currentZoom = Math.min(scaleX, scaleY, 1.0);
+    applyZoom();
+}
+
+function resetZoom() {
+    currentZoom = 1.0;
+    applyZoom();
+}
+
+function applyZoom() {
+    if (!floorplanImage) return;
+    const canvas = document.getElementById('floorplanCanvas');
+    canvas.width = Math.round(originalImageWidth * currentZoom);
+    canvas.height = Math.round(originalImageHeight * currentZoom);
+    document.getElementById('zoomLevel').textContent = Math.round(currentZoom * 100) + '%';
+    drawFloorplan();
 }
 
 function loadDevices() {
@@ -285,7 +336,19 @@ function loadDevices() {
         fetch('/api/sensors').then(r => r.json())
     ]).then(([bsData, sensorData]) => {
         devices.baseStations = bsData.base_stations || [];
-        devices.sensors = sensorData.sensors || [];
+        
+        // Sensors API returns a dict, convert to array
+        if (Array.isArray(sensorData.sensors)) {
+            devices.sensors = sensorData.sensors;
+        } else if (typeof sensorData === 'object' && !Array.isArray(sensorData)) {
+            devices.sensors = Object.entries(sensorData).map(([eui, data]) => ({
+                eui: eui,
+                EUI: eui,
+                ...data
+            }));
+        } else {
+            devices.sensors = [];
+        }
         
         document.getElementById('bsCount').textContent = devices.baseStations.length;
         document.getElementById('sensorCount').textContent = devices.sensors.length;
@@ -293,6 +356,8 @@ function loadDevices() {
         renderDeviceLists();
         restorePositions();
         updatePositionedCount();
+    }).catch(err => {
+        console.error('Error loading devices:', err);
     });
 }
 
@@ -405,21 +470,26 @@ function drawFloorplan() {
     
     const canvas = document.getElementById('floorplanCanvas');
     floorplanCtx.clearRect(0, 0, canvas.width, canvas.height);
-    floorplanCtx.drawImage(floorplanImage, 0, 0);
+    
+    // Draw scaled image
+    floorplanCtx.drawImage(floorplanImage, 0, 0, canvas.width, canvas.height);
     
     // Draw heatmap if enabled
     if (document.getElementById('showHeatmap').checked) {
         drawFloorplanHeatmap();
     }
     
-    // Draw devices
+    // Draw devices with zoom scaling
     Object.entries(devicePositions).forEach(([key, pos]) => {
         if (pos.type === 'floorplan') {
             const color = pos.deviceType === 'bs' ? '#ff8c00' : '#17a2b8';
-            const size = pos.deviceType === 'bs' ? 20 : 12;
+            const baseSize = pos.deviceType === 'bs' ? 20 : 12;
+            const size = baseSize * currentZoom;
+            const x = pos.x * currentZoom;
+            const y = pos.y * currentZoom;
             
             floorplanCtx.beginPath();
-            floorplanCtx.arc(pos.x, pos.y, size, 0, Math.PI * 2);
+            floorplanCtx.arc(x, y, size, 0, Math.PI * 2);
             floorplanCtx.fillStyle = color;
             floorplanCtx.fill();
             floorplanCtx.strokeStyle = 'white';
@@ -428,14 +498,14 @@ function drawFloorplan() {
             
             // Label
             floorplanCtx.fillStyle = 'black';
-            floorplanCtx.font = '12px Arial';
-            floorplanCtx.fillText(pos.eui.substring(0, 8), pos.x - 25, pos.y + size + 15);
+            floorplanCtx.font = Math.max(10, 12 * currentZoom) + 'px Arial';
+            floorplanCtx.fillText(pos.eui.substring(0, 8), x - 25 * currentZoom, y + size + 15);
         }
     });
 }
 
 function drawFloorplanHeatmap() {
-    // Get sensor positions with signal data
+    // Get sensor positions with signal data (scaled)
     const sensorPoints = [];
     devices.sensors.forEach(sensor => {
         const key = `sensor_${sensor.eui || sensor.EUI}`;
@@ -443,7 +513,7 @@ function drawFloorplanHeatmap() {
         if (pos && pos.type === 'floorplan') {
             const metric = document.getElementById('metricSelect').value;
             const value = metric === 'snr' ? (sensor.avg_snr || sensor.snr || 0) : (sensor.avg_rssi || sensor.rssi || -100);
-            sensorPoints.push({ x: pos.x, y: pos.y, value: value, metric: metric });
+            sensorPoints.push({ x: pos.x * currentZoom, y: pos.y * currentZoom, value: value, metric: metric });
         }
     });
     
@@ -453,9 +523,10 @@ function drawFloorplanHeatmap() {
     const canvas = document.getElementById('floorplanCanvas');
     const imageData = floorplanCtx.getImageData(0, 0, canvas.width, canvas.height);
     const data = imageData.data;
+    const step = Math.max(5, Math.round(10 * currentZoom));
     
-    for (let y = 0; y < canvas.height; y += 10) {
-        for (let x = 0; x < canvas.width; x += 10) {
+    for (let y = 0; y < canvas.height; y += step) {
+        for (let x = 0; x < canvas.width; x += step) {
             let totalWeight = 0;
             let weightedValue = 0;
             
@@ -470,8 +541,8 @@ function drawFloorplanHeatmap() {
             const color = getHeatmapColor(avgValue, sensorPoints[0].metric);
             
             // Draw semi-transparent overlay
-            for (let dy = 0; dy < 10 && y + dy < canvas.height; dy++) {
-                for (let dx = 0; dx < 10 && x + dx < canvas.width; dx++) {
+            for (let dy = 0; dy < step && y + dy < canvas.height; dy++) {
+                for (let dx = 0; dx < step && x + dx < canvas.width; dx++) {
                     const idx = ((y + dy) * canvas.width + (x + dx)) * 4;
                     data[idx] = Math.round(data[idx] * 0.7 + color.r * 0.3);
                     data[idx + 1] = Math.round(data[idx + 1] * 0.7 + color.g * 0.3);

@@ -1,0 +1,23 @@
+{
+  "bs_70B3D59CD00009F6": {
+    "type": "floorplan",
+    "x": 4046.1206896551726,
+    "y": 536.4722521551724,
+    "deviceType": "bs",
+    "eui": "70B3D59CD00009F6"
+  },
+  "sensor_TEST1234567890AB": {
+    "type": "floorplan",
+    "x": 3930.5172413793107,
+    "y": 1415.0584590517242,
+    "deviceType": "sensor",
+    "eui": "TEST1234567890AB"
+  },
+  "sensor_TEST1234567890GH": {
+    "type": "floorplan",
+    "x": 1078.9655172413793,
+    "y": 914.1101831896552,
+    "deviceType": "sensor",
+    "eui": "TEST1234567890GH"
+  }
+}

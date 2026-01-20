@@ -542,12 +542,13 @@ function drawFloorplan() {
     
     Object.entries(devicePositions).forEach(([key, pos]) => {
         if (pos.type === 'floorplan') {
-            const isBs = pos.deviceType === 'bs';
+            // Determine device type from key or deviceType property
+            const isBs = key.startsWith('bs_') || pos.deviceType === 'bs';
+            const isSensor = key.startsWith('sensor_') || pos.deviceType === 'sensor';
             
             // Check filter
-            if ((isBs && !showBs) || (!isBs && !showSensors)) {
-                return;
-            }
+            if (isBs && !showBs) return;
+            if (isSensor && !showSensors) return;
             
             const color = isBs ? '#ff8c00' : '#17a2b8';
             const baseSize = isBs ? 20 : 12;

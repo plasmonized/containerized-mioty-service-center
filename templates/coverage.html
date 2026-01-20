@@ -363,9 +363,9 @@ function applyZoom() {
 
 function loadDevices() {
     Promise.all([
-        fetch('/api/base_stations').then(r => r.json()),
-        fetch('/api/sensors').then(r => r.json()),
-        fetch('/api/coverage/topology').then(r => r.json())
+        fetch('/api/base_stations').then(r => r.ok ? r.json() : { base_stations: [] }),
+        fetch('/api/sensors').then(r => r.ok ? r.json() : {}),
+        fetch('/api/coverage/topology').then(r => r.ok ? r.json() : { sensors: {}, base_stations: [] })
     ]).then(([bsData, sensorData, topoData]) => {
         devices.baseStations = bsData.base_stations || [];
         topologyData = topoData || { sensors: {}, base_stations: [] };
@@ -373,7 +373,7 @@ function loadDevices() {
         // Sensors API returns a dict, convert to array
         if (Array.isArray(sensorData.sensors)) {
             devices.sensors = sensorData.sensors;
-        } else if (typeof sensorData === 'object' && !Array.isArray(sensorData)) {
+        } else if (sensorData && typeof sensorData === 'object' && !Array.isArray(sensorData)) {
             devices.sensors = Object.entries(sensorData).map(([eui, data]) => ({
                 eui: eui,
                 EUI: eui,
@@ -386,7 +386,7 @@ function loadDevices() {
         // Enrich sensors with topology data
         devices.sensors.forEach(sensor => {
             const eui = (sensor.eui || sensor.EUI || '').toUpperCase();
-            if (topologyData.sensors[eui]) {
+            if (topologyData.sensors && topologyData.sensors[eui]) {
                 sensor.topology = topologyData.sensors[eui];
             }
         });
@@ -399,6 +399,10 @@ function loadDevices() {
         updatePositionedCount();
     }).catch(err => {
         console.error('Error loading devices:', err);
+        // Still try to render with empty data
+        renderDeviceLists();
+        restorePositions();
+        updatePositionedCount();
     });
 }
 
@@ -547,7 +551,7 @@ function drawFloorplan() {
             
             const color = isBs ? '#ff8c00' : '#17a2b8';
             const baseSize = isBs ? 20 : 12;
-            const size = baseSize * currentZoom;
+            const size = Math.max(3, baseSize * currentZoom);
             const x = pos.x * currentZoom;
             const y = pos.y * currentZoom;
             

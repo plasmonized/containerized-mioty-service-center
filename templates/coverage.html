@@ -15,12 +15,12 @@
     <div class="col-12">
         <ul class="nav nav-tabs" id="mapTabs" role="tablist">
             <li class="nav-item" role="presentation">
-                <button class="nav-link active" id="osm-tab" data-bs-toggle="tab" data-bs-target="#osm-pane" type="button" role="tab">
+                <button class="nav-link" id="osm-tab" data-bs-toggle="tab" data-bs-target="#osm-pane" type="button" role="tab">
                     OpenStreetMap
                 </button>
             </li>
             <li class="nav-item" role="presentation">
-                <button class="nav-link" id="floorplan-tab" data-bs-toggle="tab" data-bs-target="#floorplan-pane" type="button" role="tab">
+                <button class="nav-link active" id="floorplan-tab" data-bs-toggle="tab" data-bs-target="#floorplan-pane" type="button" role="tab">
                     Floor Plan
                 </button>
             </li>
@@ -31,14 +31,14 @@
 <div class="row">
     <div class="col-md-9">
         <div class="tab-content">
-            <div class="tab-pane fade show active" id="osm-pane" role="tabpanel">
+            <div class="tab-pane fade" id="osm-pane" role="tabpanel">
                 <div class="card">
                     <div class="card-body p-0">
                         <div id="osmMap" style="height: 600px; width: 100%;"></div>
                     </div>
                 </div>
             </div>
-            <div class="tab-pane fade" id="floorplan-pane" role="tabpanel">
+            <div class="tab-pane fade show active" id="floorplan-pane" role="tabpanel">
                 <div class="card">
                     <div class="card-header d-flex justify-content-between align-items-center">
                         <div>
@@ -201,10 +201,25 @@ let originalImageWidth = 0;
 let originalImageHeight = 0;
 let topologyData = { sensors: {}, base_stations: [] };
 
-// Load saved positions
+// Load saved positions and zoom
 try {
     const saved = localStorage.getItem('bssci_coverage_positions');
-    if (saved) devicePositions = JSON.parse(saved);
+    if (saved) {
+        const data = JSON.parse(saved);
+        // Handle both old format (just positions) and new format (positions + zoom)
+        if (data.positions) {
+            devicePositions = data.positions;
+            if (data.floorplanZoom) {
+                currentZoom = data.floorplanZoom;
+            }
+        } else {
+            devicePositions = data;
+        }
+    }
+    const savedZoom = localStorage.getItem('bssci_floorplan_zoom');
+    if (savedZoom) {
+        currentZoom = parseFloat(savedZoom);
+    }
 } catch (e) { console.error('Failed to load positions', e); }
 
 document.addEventListener('DOMContentLoaded', function() {
@@ -295,7 +310,12 @@ function initFloorplan() {
             canvas.style.display = 'block';
             document.getElementById('floorplanPlaceholder').style.display = 'none';
             document.getElementById('zoomControls').style.display = 'flex';
-            fitFloorplan();
+            // Use saved zoom if available, otherwise fit to view
+            if (currentZoom > 0.1) {
+                applyZoom();
+            } else {
+                fitFloorplan();
+            }
         };
         floorplanImage.src = savedFloorplan;
     }
@@ -747,14 +767,22 @@ function updateDisplay() {
 }
 
 function savePositions() {
-    localStorage.setItem('bssci_coverage_positions', JSON.stringify(devicePositions));
+    // Save positions and zoom level together
+    const saveData = {
+        positions: devicePositions,
+        floorplanZoom: currentZoom
+    };
+    localStorage.setItem('bssci_coverage_positions', JSON.stringify(saveData));
+    localStorage.setItem('bssci_floorplan_zoom', currentZoom.toString());
     
     // Also save to server
     fetch('/api/coverage/positions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(devicePositions)
+        body: JSON.stringify(saveData)
     }).catch(e => console.error('Failed to save to server', e));
+    
+    showAlert('success', 'Positions and zoom level saved');
 }
 
 function clearPositions() {

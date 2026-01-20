@@ -294,7 +294,6 @@ mosquitto_pub -h broker -t "mioty/ep/FCA84A0300001234/cmd" -m "status"
 - ✅ Legacy `/bssci/ep/eui/register` topic is **fully supported** for backward compatibility
 - ✅ Unified `/bssci/ep/eui/cmd` topic for all sensor commands
 - ✅ All commands receive responses on `{BASE_TOPIC}/ep/{EUI}/response` topic
-- ❌ **Removed**: Dual command patterns - only one unified command structure
 
 ### Sensor Status Indicators
 
@@ -407,7 +406,6 @@ The system uses a simplified, unified MQTT topic structure under `{BASE_TOPIC}/e
 **Key Simplifications:**
 - ✅ **Single command pattern**: Only `{BASE_TOPIC}/ep/{EUI}/cmd`
 - ✅ **Legacy support**: `/register` topic fully supported
-- ❌ **Removed**: Duplicate `EP/+/cmd/` patterns (eliminated confusion)
 - ✅ **Unified**: All sensor operations under `/bssci/ep/eui/` namespace
 
 ### Unified Command System
@@ -452,15 +450,10 @@ mosquitto_pub -h broker -t "mioty/ep/FCA84A0300001234/register" \
 
 #### Simplified Architecture
 
-**Before (Multiple Patterns):**
-- ❌ `{BASE_TOPIC}/ep/{EUI}/cmd` (standard)
-- ❌ `EP/{EUI}/cmd/` (remote)
-- ❌ `/bssci/ep/eui/register` (deprecated)
 
-**Now (Unified Pattern):**
 - ✅ `{BASE_TOPIC}/ep/{EUI}/register` (for registration)
 - ✅ `{BASE_TOPIC}/ep/{EUI}/cmd` (for all commands)
-- ✅ **No confusion** - one clear pattern per operation type
+
 
 #### Command Responses
 

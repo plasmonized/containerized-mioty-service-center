@@ -505,48 +505,82 @@ function drawFloorplan() {
 }
 
 function drawFloorplanHeatmap() {
-    // Get sensor positions with signal data (scaled)
-    const sensorPoints = [];
+    // Get base station positions as signal sources (best signal near them)
+    const baseStationPoints = [];
+    devices.baseStations.forEach(bs => {
+        const key = `bs_${bs.eui || bs.EUI}`;
+        const pos = devicePositions[key];
+        if (pos && pos.type === 'floorplan') {
+            baseStationPoints.push({ x: pos.x * currentZoom, y: pos.y * currentZoom });
+        }
+    });
+    
+    // Also get sensor positions with their actual measured values
+    const sensorMeasurements = [];
     devices.sensors.forEach(sensor => {
         const key = `sensor_${sensor.eui || sensor.EUI}`;
         const pos = devicePositions[key];
         if (pos && pos.type === 'floorplan') {
             const metric = document.getElementById('metricSelect').value;
-            const value = metric === 'snr' ? (sensor.avg_snr || sensor.snr || 0) : (sensor.avg_rssi || sensor.rssi || -100);
-            sensorPoints.push({ x: pos.x * currentZoom, y: pos.y * currentZoom, value: value, metric: metric });
+            const value = metric === 'snr' ? (sensor.avg_snr || sensor.snr || null) : (sensor.avg_rssi || sensor.rssi || null);
+            if (value !== null && value !== 0) {
+                sensorMeasurements.push({ x: pos.x * currentZoom, y: pos.y * currentZoom, value: value });
+            }
         }
     });
     
-    if (sensorPoints.length < 2) return;
+    if (baseStationPoints.length === 0) {
+        showAlert('warning', 'Place at least one Base Station on the floor plan to generate coverage heatmap');
+        return;
+    }
     
-    // Simple interpolated heatmap
     const canvas = document.getElementById('floorplanCanvas');
     const imageData = floorplanCtx.getImageData(0, 0, canvas.width, canvas.height);
     const data = imageData.data;
-    const step = Math.max(5, Math.round(10 * currentZoom));
+    const step = Math.max(4, Math.round(8 * currentZoom));
+    const metric = document.getElementById('metricSelect').value;
+    
+    // Calculate max distance for normalization (diagonal of canvas)
+    const maxDist = Math.sqrt(canvas.width * canvas.width + canvas.height * canvas.height) * 0.4;
     
     for (let y = 0; y < canvas.height; y += step) {
         for (let x = 0; x < canvas.width; x += step) {
-            let totalWeight = 0;
-            let weightedValue = 0;
-            
-            sensorPoints.forEach(point => {
-                const dist = Math.sqrt(Math.pow(x - point.x, 2) + Math.pow(y - point.y, 2));
-                const weight = 1 / Math.max(dist, 1);
-                totalWeight += weight;
-                weightedValue += point.value * weight;
+            // Find minimum distance to any base station
+            let minDist = Infinity;
+            baseStationPoints.forEach(bs => {
+                const dist = Math.sqrt(Math.pow(x - bs.x, 2) + Math.pow(y - bs.y, 2));
+                if (dist < minDist) minDist = dist;
             });
             
-            const avgValue = weightedValue / totalWeight;
-            const color = getHeatmapColor(avgValue, sensorPoints[0].metric);
+            // Convert distance to signal quality (closer = better)
+            // Using a realistic signal propagation model
+            let signalQuality;
+            if (metric === 'snr') {
+                // SNR: 20 dB at base station, decreasing with distance
+                signalQuality = 20 - (minDist / maxDist) * 30;
+            } else {
+                // RSSI: -40 dBm at base station, decreasing with distance
+                signalQuality = -40 - (minDist / maxDist) * 60;
+            }
+            
+            // If we have actual sensor measurements nearby, blend with them
+            sensorMeasurements.forEach(sensor => {
+                const sensorDist = Math.sqrt(Math.pow(x - sensor.x, 2) + Math.pow(y - sensor.y, 2));
+                if (sensorDist < 50 * currentZoom) {
+                    const weight = 1 - (sensorDist / (50 * currentZoom));
+                    signalQuality = signalQuality * (1 - weight) + sensor.value * weight;
+                }
+            });
+            
+            const color = getHeatmapColor(signalQuality, metric);
             
             // Draw semi-transparent overlay
             for (let dy = 0; dy < step && y + dy < canvas.height; dy++) {
                 for (let dx = 0; dx < step && x + dx < canvas.width; dx++) {
                     const idx = ((y + dy) * canvas.width + (x + dx)) * 4;
-                    data[idx] = Math.round(data[idx] * 0.7 + color.r * 0.3);
-                    data[idx + 1] = Math.round(data[idx + 1] * 0.7 + color.g * 0.3);
-                    data[idx + 2] = Math.round(data[idx + 2] * 0.7 + color.b * 0.3);
+                    data[idx] = Math.round(data[idx] * 0.6 + color.r * 0.4);
+                    data[idx + 1] = Math.round(data[idx + 1] * 0.6 + color.g * 0.4);
+                    data[idx + 2] = Math.round(data[idx + 2] * 0.6 + color.b * 0.4);
                 }
             }
         }
@@ -584,30 +618,43 @@ function getHeatmapColor(value, metric) {
 function generateHeatmap() {
     const metric = document.getElementById('metricSelect').value;
     
-    // For OSM map
+    // For OSM map - use base stations as signal sources
     if (heatLayer) {
         osmMap.removeLayer(heatLayer);
     }
     
     const heatPoints = [];
+    
+    // Add base stations as high-intensity points (good signal)
+    devices.baseStations.forEach(bs => {
+        const key = `bs_${bs.eui || bs.EUI}`;
+        const pos = devicePositions[key];
+        if (pos && pos.type === 'osm') {
+            // Base stations emit strong signal
+            heatPoints.push([pos.lat, pos.lng, 1.0]);
+        }
+    });
+    
+    // Add sensors with their measured values
     devices.sensors.forEach(sensor => {
         const key = `sensor_${sensor.eui || sensor.EUI}`;
         const pos = devicePositions[key];
         if (pos && pos.type === 'osm') {
-            const value = metric === 'snr' ? (sensor.avg_snr || sensor.snr || 0) : (sensor.avg_rssi || sensor.rssi || -100);
-            // Normalize for heatmap intensity
+            const value = metric === 'snr' ? (sensor.avg_snr || sensor.snr || 5) : (sensor.avg_rssi || sensor.rssi || -80);
             const intensity = metric === 'snr' ? (value + 10) / 30 : (value + 120) / 80;
-            heatPoints.push([pos.lat, pos.lng, Math.max(0.1, intensity)]);
+            heatPoints.push([pos.lat, pos.lng, Math.max(0.2, Math.min(1.0, intensity))]);
         }
     });
     
     if (heatPoints.length > 0) {
         heatLayer = L.heatLayer(heatPoints, {
-            radius: 50,
-            blur: 30,
+            radius: 80,
+            blur: 40,
             maxZoom: 17,
-            gradient: {0.0: 'red', 0.3: 'orange', 0.5: 'yellow', 0.7: 'lime', 1.0: 'green'}
+            gradient: {0.0: 'red', 0.25: 'orange', 0.5: 'yellow', 0.75: 'lime', 1.0: 'green'}
         }).addTo(osmMap);
+    } else {
+        showAlert('warning', 'Place devices on the map first to generate a heatmap');
     }
     
     // For floorplan

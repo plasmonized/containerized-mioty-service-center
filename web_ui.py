@@ -1063,6 +1063,32 @@ def base_stations():
 def network():
     return render_template('network.html')
 
+@app.route('/coverage')
+def coverage():
+    return render_template('coverage.html')
+
+@app.route('/api/coverage/positions', methods=['GET', 'POST'])
+def api_coverage_positions():
+    """Get or save coverage map device positions"""
+    positions_file = 'coverage_positions.json'
+    
+    if request.method == 'POST':
+        try:
+            positions = request.get_json()
+            with open(positions_file, 'w') as f:
+                json.dump(positions, f, indent=2)
+            return jsonify({'success': True})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+    else:
+        try:
+            if os.path.exists(positions_file):
+                with open(positions_file, 'r') as f:
+                    return jsonify(json.load(f))
+            return jsonify({})
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
 @app.route('/api/network')
 def api_network():
     """Get network topology data for visualization"""

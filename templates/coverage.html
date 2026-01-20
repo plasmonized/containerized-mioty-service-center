@@ -532,11 +532,21 @@ function drawFloorplan() {
         drawFloorplanHeatmap();
     }
     
-    // Draw devices with zoom scaling
+    // Draw devices with zoom scaling (respecting filters)
+    const showBs = document.getElementById('showBaseStations').checked;
+    const showSensors = document.getElementById('showSensors').checked;
+    
     Object.entries(devicePositions).forEach(([key, pos]) => {
         if (pos.type === 'floorplan') {
-            const color = pos.deviceType === 'bs' ? '#ff8c00' : '#17a2b8';
-            const baseSize = pos.deviceType === 'bs' ? 20 : 12;
+            const isBs = pos.deviceType === 'bs';
+            
+            // Check filter
+            if ((isBs && !showBs) || (!isBs && !showSensors)) {
+                return;
+            }
+            
+            const color = isBs ? '#ff8c00' : '#17a2b8';
+            const baseSize = isBs ? 20 : 12;
             const size = baseSize * currentZoom;
             const x = pos.x * currentZoom;
             const y = pos.y * currentZoom;

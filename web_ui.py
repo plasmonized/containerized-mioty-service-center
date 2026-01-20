@@ -1130,6 +1130,29 @@ def api_coverage_positions():
         except Exception as e:
             return jsonify({'error': str(e)}), 500
 
+@app.route('/api/coverage/floorplan', methods=['GET', 'POST'])
+def api_coverage_floorplan():
+    """Get or save floorplan image (base64 encoded)"""
+    floorplan_file = 'coverage_floorplan.txt'
+    
+    if request.method == 'POST':
+        try:
+            data = request.get_json()
+            image_data = data.get('image', '')
+            with open(floorplan_file, 'w') as f:
+                f.write(image_data)
+            return jsonify({'success': True})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+    else:
+        try:
+            if os.path.exists(floorplan_file):
+                with open(floorplan_file, 'r') as f:
+                    return jsonify({'image': f.read()})
+            return jsonify({'image': None})
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
 @app.route('/api/network')
 def api_network():
     """Get network topology data for visualization"""

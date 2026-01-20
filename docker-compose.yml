@@ -18,6 +18,8 @@ services:
       - ./.env:/app/.env:rw
       - ./base_stations.json:/app/data/base_stations.json:rw
       - ./logs:/app/logs
+      - ./coverage_positions.json:/app/coverage_positions.json:rw
+      - ./coverage_floorplan.txt:/app/coverage_floorplan.txt:rw
     restart: unless-stopped
     environment:
       - PYTHONUNBUFFERED=1

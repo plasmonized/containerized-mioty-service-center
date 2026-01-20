@@ -201,28 +201,28 @@ let originalImageWidth = 0;
 let originalImageHeight = 0;
 let topologyData = { sensors: {}, base_stations: [] };
 
-// Load saved positions and zoom
-try {
-    const saved = localStorage.getItem('bssci_coverage_positions');
-    if (saved) {
-        const data = JSON.parse(saved);
-        // Handle both old format (just positions) and new format (positions + zoom)
-        if (data.positions) {
-            devicePositions = data.positions;
-            if (data.floorplanZoom) {
-                currentZoom = data.floorplanZoom;
+// Load saved positions and zoom from server (persistent across devices)
+async function loadPositionsFromServer() {
+    try {
+        const response = await fetch('/api/coverage/positions');
+        if (response.ok) {
+            const data = await response.json();
+            if (data.positions) {
+                devicePositions = data.positions;
+                if (data.floorplanZoom) {
+                    currentZoom = data.floorplanZoom;
+                }
+            } else if (Object.keys(data).length > 0 && !data.error) {
+                devicePositions = data;
             }
-        } else {
-            devicePositions = data;
         }
+    } catch (e) {
+        console.error('Failed to load positions from server', e);
     }
-    const savedZoom = localStorage.getItem('bssci_floorplan_zoom');
-    if (savedZoom) {
-        currentZoom = parseFloat(savedZoom);
-    }
-} catch (e) { console.error('Failed to load positions', e); }
+}
 
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', async function() {
+    await loadPositionsFromServer();
     initOSMMap();
     initFloorplan();
     loadDevices();
@@ -276,18 +276,52 @@ function initFloorplan() {
                     fitFloorplan();
                 };
                 floorplanImage.src = event.target.result;
-                localStorage.setItem('bssci_floorplan', event.target.result);
+                // Save to server for persistent storage across devices
+                fetch('/api/coverage/floorplan', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({image: event.target.result})
+                }).catch(e => console.error('Failed to save floorplan to server', e));
             };
             reader.readAsDataURL(file);
         }
     });
     
+    // Load floorplan from server on init
+    fetch('/api/coverage/floorplan')
+        .then(r => r.json())
+        .then(data => {
+            if (data.image) {
+                floorplanImage = new Image();
+                floorplanImage.onload = function() {
+                    originalImageWidth = floorplanImage.width;
+                    originalImageHeight = floorplanImage.height;
+                    canvas.style.display = 'block';
+                    document.getElementById('floorplanPlaceholder').style.display = 'none';
+                    document.getElementById('zoomControls').style.display = 'flex';
+                    fitFloorplan();
+                };
+                floorplanImage.src = data.image;
+            }
+        })
+        .catch(e => console.error('Failed to load floorplan from server', e));
+    
     canvas.addEventListener('click', function(e) {
+        const rect = canvas.getBoundingClientRect();
+        const x = (e.clientX - rect.left) / currentZoom;
+        const y = (e.clientY - rect.top) / currentZoom;
+        
         if (selectedDevice && floorplanImage) {
-            const rect = canvas.getBoundingClientRect();
-            const x = (e.clientX - rect.left) / currentZoom;
-            const y = (e.clientY - rect.top) / currentZoom;
             placeDeviceOnFloorplan(selectedDevice, x, y);
+        } else if (floorplanImage) {
+            // Check if clicked on a device
+            const clickedDevice = findDeviceAtPosition(x, y);
+            if (clickedDevice) {
+                showDeviceDetails(clickedDevice);
+            } else {
+                // Show calculated signal value at this position
+                showSignalAtPosition(x, y);
+            }
         }
     });
     
@@ -353,9 +387,9 @@ function applyZoom() {
 
 function loadDevices() {
     Promise.all([
-        fetch('/api/base_stations').then(r => r.json()),
-        fetch('/api/sensors').then(r => r.json()),
-        fetch('/api/coverage/topology').then(r => r.json())
+        fetch('/api/base_stations').then(r => r.ok ? r.json() : { base_stations: [] }),
+        fetch('/api/sensors').then(r => r.ok ? r.json() : {}),
+        fetch('/api/coverage/topology').then(r => r.ok ? r.json() : { sensors: {}, base_stations: [] })
     ]).then(([bsData, sensorData, topoData]) => {
         devices.baseStations = bsData.base_stations || [];
         topologyData = topoData || { sensors: {}, base_stations: [] };
@@ -363,7 +397,7 @@ function loadDevices() {
         // Sensors API returns a dict, convert to array
         if (Array.isArray(sensorData.sensors)) {
             devices.sensors = sensorData.sensors;
-        } else if (typeof sensorData === 'object' && !Array.isArray(sensorData)) {
+        } else if (sensorData && typeof sensorData === 'object' && !Array.isArray(sensorData)) {
             devices.sensors = Object.entries(sensorData).map(([eui, data]) => ({
                 eui: eui,
                 EUI: eui,
@@ -376,7 +410,7 @@ function loadDevices() {
         // Enrich sensors with topology data
         devices.sensors.forEach(sensor => {
             const eui = (sensor.eui || sensor.EUI || '').toUpperCase();
-            if (topologyData.sensors[eui]) {
+            if (topologyData.sensors && topologyData.sensors[eui]) {
                 sensor.topology = topologyData.sensors[eui];
             }
         });
@@ -389,6 +423,10 @@ function loadDevices() {
         updatePositionedCount();
     }).catch(err => {
         console.error('Error loading devices:', err);
+        // Still try to render with empty data
+        renderDeviceLists();
+        restorePositions();
+        updatePositionedCount();
     });
 }
 
@@ -522,12 +560,23 @@ function drawFloorplan() {
         drawFloorplanHeatmap();
     }
     
-    // Draw devices with zoom scaling
+    // Draw devices with zoom scaling (respecting filters)
+    const showBs = document.getElementById('showBaseStations').checked;
+    const showSensors = document.getElementById('showSensors').checked;
+    
     Object.entries(devicePositions).forEach(([key, pos]) => {
         if (pos.type === 'floorplan') {
-            const color = pos.deviceType === 'bs' ? '#ff8c00' : '#17a2b8';
-            const baseSize = pos.deviceType === 'bs' ? 20 : 12;
-            const size = baseSize * currentZoom;
+            // Determine device type from key or deviceType property
+            const isBs = key.startsWith('bs_') || pos.deviceType === 'bs';
+            const isSensor = key.startsWith('sensor_') || pos.deviceType === 'sensor';
+            
+            // Check filter
+            if (isBs && !showBs) return;
+            if (isSensor && !showSensors) return;
+            
+            const color = isBs ? '#ff8c00' : '#17a2b8';
+            const baseSize = isBs ? 20 : 12;
+            const size = Math.max(3, baseSize * currentZoom);
             const x = pos.x * currentZoom;
             const y = pos.y * currentZoom;
             
@@ -827,6 +876,210 @@ function createAlertContainer() {
     container.style.cssText = 'position: fixed; top: 70px; right: 20px; z-index: 9999; max-width: 400px;';
     document.body.appendChild(container);
     return container;
+}
+
+function findDeviceAtPosition(x, y) {
+    const clickRadius = 25;
+    
+    // Check sensors first
+    for (const sensor of devices.sensors) {
+        const key = `sensor_${sensor.eui || sensor.EUI}`;
+        const pos = devicePositions[key];
+        if (pos && pos.type === 'floorplan') {
+            const dist = Math.sqrt(Math.pow(x - pos.x, 2) + Math.pow(y - pos.y, 2));
+            if (dist < clickRadius) {
+                return { type: 'sensor', data: sensor, pos: pos };
+            }
+        }
+    }
+    
+    // Check base stations
+    for (const bs of devices.baseStations) {
+        const key = `bs_${bs.eui || bs.EUI}`;
+        const pos = devicePositions[key];
+        if (pos && pos.type === 'floorplan') {
+            const dist = Math.sqrt(Math.pow(x - pos.x, 2) + Math.pow(y - pos.y, 2));
+            if (dist < clickRadius) {
+                return { type: 'bs', data: bs, pos: pos };
+            }
+        }
+    }
+    
+    return null;
+}
+
+function showDeviceDetails(device) {
+    const card = document.getElementById('detailsCard');
+    const title = document.getElementById('detailsTitle');
+    const body = document.getElementById('detailsBody');
+    
+    card.style.display = 'block';
+    
+    if (device.type === 'sensor') {
+        const sensor = device.data;
+        const eui = sensor.eui || sensor.EUI;
+        title.innerHTML = `<span style="color: #17a2b8;">&#9679;</span> Sensor ${eui.substring(0, 8)}...`;
+        
+        let html = `<div class="small"><strong>EUI:</strong> ${eui}</div>`;
+        
+        if (sensor.topology && sensor.topology.base_stations) {
+            html += '<hr class="my-2"><div class="small"><strong>Base Station Connections:</strong></div>';
+            html += '<table class="table table-sm table-bordered mt-1 mb-0" style="font-size: 0.75rem;">';
+            html += '<thead><tr><th>Base Station</th><th>SNR</th><th>RSSI</th></tr></thead><tbody>';
+            
+            Object.entries(sensor.topology.base_stations).forEach(([bsEui, bsData]) => {
+                const snrClass = bsData.snr >= 10 ? 'text-success' : (bsData.snr >= 0 ? 'text-warning' : 'text-danger');
+                const rssiClass = bsData.rssi >= -70 ? 'text-success' : (bsData.rssi >= -90 ? 'text-warning' : 'text-danger');
+                html += `<tr>
+                    <td>${bsEui.substring(0, 8)}...</td>
+                    <td class="${snrClass}">${bsData.snr.toFixed(1)} dB</td>
+                    <td class="${rssiClass}">${bsData.rssi.toFixed(0)} dBm</td>
+                </tr>`;
+            });
+            
+            html += '</tbody></table>';
+        } else {
+            html += '<div class="text-muted small mt-2"><i>No telegram data yet</i></div>';
+        }
+        
+        body.innerHTML = html;
+    } else if (device.type === 'bs') {
+        const bs = device.data;
+        const eui = bs.eui || bs.EUI;
+        title.innerHTML = `<span style="color: #ff8c00;">&#9679;</span> Base Station ${bs.name || eui.substring(0, 8)}`;
+        
+        let html = `<div class="small"><strong>EUI:</strong> ${eui}</div>`;
+        html += `<div class="small"><strong>Status:</strong> ${bs.connected ? '<span class="text-success">Connected</span>' : '<span class="text-muted">Offline</span>'}</div>`;
+        
+        // Count sensors connected to this BS
+        let connectedSensors = 0;
+        devices.sensors.forEach(sensor => {
+            if (sensor.topology && sensor.topology.base_stations) {
+                if (sensor.topology.base_stations[eui] || sensor.topology.base_stations[eui.toLowerCase()]) {
+                    connectedSensors++;
+                }
+            }
+        });
+        html += `<div class="small"><strong>Receiving Sensors:</strong> ${connectedSensors}</div>`;
+        
+        body.innerHTML = html;
+    }
+}
+
+function showSignalAtPosition(x, y) {
+    const metric = document.getElementById('metricSelect').value;
+    const signalValue = calculateSignalAtPosition(x * currentZoom, y * currentZoom, metric);
+    
+    const card = document.getElementById('detailsCard');
+    const title = document.getElementById('detailsTitle');
+    const body = document.getElementById('detailsBody');
+    
+    card.style.display = 'block';
+    title.innerHTML = `Signal at Position`;
+    
+    const quality = getSignalQuality(signalValue, metric);
+    
+    body.innerHTML = `
+        <div class="text-center">
+            <div class="display-6 ${quality.colorClass}">${signalValue.toFixed(1)} ${metric === 'snr' ? 'dB' : 'dBm'}</div>
+            <div class="small text-muted">${metric === 'snr' ? 'SNR' : 'RSSI'}</div>
+            <div class="mt-2"><span class="badge ${quality.badgeClass}">${quality.label}</span></div>
+        </div>
+    `;
+}
+
+function calculateSignalAtPosition(x, y, metric) {
+    // Collect base station positions
+    const baseStationPositions = {};
+    devices.baseStations.forEach(bs => {
+        const eui = (bs.eui || bs.EUI || '').toUpperCase();
+        const key = `bs_${bs.eui || bs.EUI}`;
+        const pos = devicePositions[key];
+        if (pos && pos.type === 'floorplan') {
+            baseStationPositions[eui] = { x: pos.x * currentZoom, y: pos.y * currentZoom };
+        }
+    });
+    
+    // Collect sensor measurements
+    const sensorMeasurements = [];
+    devices.sensors.forEach(sensor => {
+        const key = `sensor_${sensor.eui || sensor.EUI}`;
+        const pos = devicePositions[key];
+        if (pos && pos.type === 'floorplan' && sensor.topology && sensor.topology.base_stations) {
+            Object.entries(sensor.topology.base_stations).forEach(([bsEui, bsData]) => {
+                const bsPos = baseStationPositions[bsEui.toUpperCase()];
+                if (bsPos) {
+                    const value = metric === 'snr' ? bsData.snr : bsData.rssi;
+                    sensorMeasurements.push({
+                        sensorX: pos.x * currentZoom,
+                        sensorY: pos.y * currentZoom,
+                        bsX: bsPos.x,
+                        bsY: bsPos.y,
+                        value: value
+                    });
+                }
+            });
+        }
+    });
+    
+    const canvas = document.getElementById('floorplanCanvas');
+    const maxDist = Math.sqrt(canvas.width * canvas.width + canvas.height * canvas.height) * 0.5;
+    
+    if (sensorMeasurements.length > 0) {
+        let totalWeight = 0;
+        let weightedValue = 0;
+        
+        sensorMeasurements.forEach(m => {
+            const sensorToBsDist = Math.sqrt(Math.pow(m.sensorX - m.bsX, 2) + Math.pow(m.sensorY - m.bsY, 2));
+            const pointToBsDist = Math.sqrt(Math.pow(x - m.bsX, 2) + Math.pow(y - m.bsY, 2));
+            const pointToSensorDist = Math.sqrt(Math.pow(x - m.sensorX, 2) + Math.pow(y - m.sensorY, 2));
+            
+            const distRatio = sensorToBsDist > 0 ? pointToBsDist / sensorToBsDist : 1;
+            const proximityWeight = 1 / Math.max(pointToSensorDist + 1, 1);
+            
+            let adjustedValue = m.value;
+            if (distRatio > 1) {
+                const degradation = (distRatio - 1) * (metric === 'snr' ? 5 : 10);
+                adjustedValue = m.value - degradation;
+            } else if (distRatio < 1) {
+                const improvement = (1 - distRatio) * (metric === 'snr' ? 3 : 5);
+                adjustedValue = m.value + improvement;
+            }
+            
+            totalWeight += proximityWeight;
+            weightedValue += adjustedValue * proximityWeight;
+        });
+        
+        return weightedValue / totalWeight;
+    } else {
+        let minDist = Infinity;
+        Object.values(baseStationPositions).forEach(bs => {
+            const dist = Math.sqrt(Math.pow(x - bs.x, 2) + Math.pow(y - bs.y, 2));
+            if (dist < minDist) minDist = dist;
+        });
+        
+        if (metric === 'snr') {
+            return 20 - (minDist / maxDist) * 30;
+        } else {
+            return -40 - (minDist / maxDist) * 60;
+        }
+    }
+}
+
+function getSignalQuality(value, metric) {
+    if (metric === 'snr') {
+        if (value >= 10) return { label: 'Excellent', colorClass: 'text-success', badgeClass: 'bg-success' };
+        if (value >= 5) return { label: 'Good', colorClass: 'text-success', badgeClass: 'bg-success' };
+        if (value >= 0) return { label: 'Fair', colorClass: 'text-warning', badgeClass: 'bg-warning' };
+        if (value >= -5) return { label: 'Poor', colorClass: 'text-warning', badgeClass: 'bg-warning' };
+        return { label: 'Critical', colorClass: 'text-danger', badgeClass: 'bg-danger' };
+    } else {
+        if (value >= -60) return { label: 'Excellent', colorClass: 'text-success', badgeClass: 'bg-success' };
+        if (value >= -70) return { label: 'Good', colorClass: 'text-success', badgeClass: 'bg-success' };
+        if (value >= -80) return { label: 'Fair', colorClass: 'text-warning', badgeClass: 'bg-warning' };
+        if (value >= -90) return { label: 'Poor', colorClass: 'text-warning', badgeClass: 'bg-warning' };
+        return { label: 'Critical', colorClass: 'text-danger', badgeClass: 'bg-danger' };
+    }
 }
 </script>
 {% endblock %}

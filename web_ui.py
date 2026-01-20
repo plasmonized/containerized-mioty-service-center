@@ -2007,6 +2007,43 @@ def bssci_status():
         }
         return jsonify(error_response), 500
 
+@app.route('/api/base_stations')
+def api_base_stations():
+    """Get all base stations for coverage map"""
+    try:
+        global tls_server_instance
+        base_stations = []
+        bs_config = load_base_station_config().get("base_stations", {})
+        
+        # Get connected base stations
+        connected_euis = set()
+        if tls_server_instance and hasattr(tls_server_instance, 'connected_base_stations'):
+            for writer, bs_eui in tls_server_instance.connected_base_stations.items():
+                connected_euis.add(bs_eui.upper())
+        
+        # Add configured base stations
+        for eui, config in bs_config.items():
+            base_stations.append({
+                'eui': eui.upper(),
+                'EUI': eui.upper(),
+                'name': config.get('name', eui[:8]),
+                'connected': eui.upper() in connected_euis
+            })
+        
+        # Add connected but not configured
+        for eui in connected_euis:
+            if eui.lower() not in bs_config:
+                base_stations.append({
+                    'eui': eui,
+                    'EUI': eui,
+                    'name': eui[:8],
+                    'connected': True
+                })
+        
+        return jsonify({'base_stations': base_stations})
+    except Exception as e:
+        return jsonify({'base_stations': [], 'error': str(e)})
+
 @app.route('/api/base_stations/status')
 def get_base_stations_status():
     """Get status of connected base stations - thread-safe version (legacy endpoint)"""

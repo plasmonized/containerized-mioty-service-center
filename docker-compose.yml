@@ -20,6 +20,7 @@ services:
       - ./logs:/app/logs
       - ./coverage_positions.json:/app/coverage_positions.json:rw
       - ./coverage_floorplan.txt:/app/coverage_floorplan.txt:rw
+      - ./users.json:/app/users.json:rw
     restart: unless-stopped
     environment:
       - PYTHONUNBUFFERED=1

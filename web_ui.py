@@ -212,11 +212,99 @@ if not any(isinstance(h, WebUILogHandler) for h in logging.getLogger().handlers)
     logging.getLogger('TLSServer').setLevel(logging.DEBUG)
     logging.getLogger('mqtt_interface').setLevel(logging.DEBUG)
 
+@app.context_processor
+def inject_user():
+    """Inject user info into all templates"""
+    user = get_current_user()
+    return {
+        'current_user': user,
+        'user_permissions': user.get('permissions', {}) if user else {},
+        'visible_tabs': user.get('permissions', {}).get('visible_tabs', []) if user else []
+    }
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    error = None
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
+        users_data = load_users()
+        user = users_data.get('users', {}).get(username)
+        if user and user.get('password') == password:
+            session['username'] = username
+            logger.info(f"User '{username}' logged in")
+            return redirect(url_for('index'))
+        error = 'Ungültiger Benutzername oder Passwort'
+    return render_template('login.html', error=error)
+
+@app.route('/logout')
+def logout():
+    username = session.get('username', 'Unknown')
+    session.clear()
+    logger.info(f"User '{username}' logged out")
+    return redirect(url_for('login'))
+
+@app.route('/api/users', methods=['GET', 'POST', 'PUT', 'DELETE'])
+@login_required
+@role_required('admin')
+def api_users():
+    """Manage users (admin only)"""
+    users_data = load_users()
+    
+    if request.method == 'GET':
+        users_list = []
+        for username, data in users_data.get('users', {}).items():
+            users_list.append({
+                'username': username,
+                'name': data.get('name', ''),
+                'role': data.get('role', 'viewer')
+            })
+        return jsonify({'users': users_list, 'roles': list(users_data.get('role_permissions', {}).keys())})
+    
+    elif request.method == 'POST':
+        data = request.get_json()
+        username = data.get('username', '').strip()
+        if not username or username in users_data.get('users', {}):
+            return jsonify({'success': False, 'error': 'Benutzername ungültig oder bereits vorhanden'}), 400
+        users_data['users'][username] = {
+            'password': data.get('password', 'password123'),
+            'role': data.get('role', 'viewer'),
+            'name': data.get('name', username)
+        }
+        save_users(users_data)
+        return jsonify({'success': True})
+    
+    elif request.method == 'PUT':
+        data = request.get_json()
+        username = data.get('username')
+        if username not in users_data.get('users', {}):
+            return jsonify({'success': False, 'error': 'Benutzer nicht gefunden'}), 404
+        if 'password' in data and data['password']:
+            users_data['users'][username]['password'] = data['password']
+        if 'role' in data:
+            users_data['users'][username]['role'] = data['role']
+        if 'name' in data:
+            users_data['users'][username]['name'] = data['name']
+        save_users(users_data)
+        return jsonify({'success': True})
+    
+    elif request.method == 'DELETE':
+        data = request.get_json()
+        username = data.get('username')
+        if username == session.get('username'):
+            return jsonify({'success': False, 'error': 'Eigenen Benutzer kann nicht gelöscht werden'}), 400
+        if username in users_data.get('users', {}):
+            del users_data['users'][username]
+            save_users(users_data)
+        return jsonify({'success': True})
+
 @app.route('/')
+@login_required
 def index():
     return render_template('index.html')
 
 @app.route('/sensors')
+@login_required
 def sensors():
     try:
         with open(bssci_config.SENSOR_CONFIG_FILE, 'r') as f:
@@ -860,6 +948,8 @@ def import_sensors():
         return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/config')
+@login_required
+@permission_required('can_edit_config')
 def config():
     try:
         # Force reload the config module to get latest values
@@ -1000,18 +1090,23 @@ SECRET_KEY=your-secret-key-here"""
         return jsonify({'success': False, 'message': f'Configuration update failed: {str(e)}'})
 
 @app.route('/certificates')
+@login_required
+@permission_required('can_manage_certificates')
 def certificates():
     return render_template('certificates.html')
 
 @app.route('/logs')
+@login_required
 def logs():
     return render_template('logs.html')
 
 @app.route('/traffic')
+@login_required
 def traffic():
     return render_template('traffic.html')
 
 @app.route('/health')
+@login_required
 def health():
     return render_template('health.html')
 
@@ -1141,14 +1236,17 @@ def get_health_stats():
         return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route('/base-stations')
+@login_required
 def base_stations():
     return render_template('base_stations.html')
 
 @app.route('/network')
+@login_required
 def network():
     return render_template('network.html')
 
 @app.route('/coverage')
+@login_required
 def coverage():
     return render_template('coverage.html')
 

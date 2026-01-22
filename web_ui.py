@@ -8,7 +8,8 @@ import shutil
 import threading
 import time
 from datetime import datetime, timezone, timedelta
-from flask import Flask, render_template, request, jsonify, redirect, url_for, Response
+from flask import Flask, render_template, request, jsonify, redirect, url_for, Response, session
+from functools import wraps
 from typing import List, Dict, Any
 import bssci_config
 
@@ -16,10 +17,94 @@ import bssci_config
 tls_server_instance = None
 
 app = Flask(__name__)
-app.secret_key = 'your-secret-key-here'
+app.secret_key = os.environ.get('SECRET_KEY', 'bssci-service-secret-key-change-me')
 
 # Configure logger for this module
 logger = logging.getLogger(__name__)
+
+# User management functions
+def load_users():
+    """Load users from users.json file"""
+    try:
+        with open('users.json', 'r') as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error(f"Failed to load users: {e}")
+        return {"users": {}, "role_permissions": {}}
+
+def save_users(users_data):
+    """Save users to users.json file"""
+    try:
+        with open('users.json', 'w') as f:
+            json.dump(users_data, f, indent=2)
+        return True
+    except Exception as e:
+        logger.error(f"Failed to save users: {e}")
+        return False
+
+def get_current_user():
+    """Get current logged in user info"""
+    if 'username' not in session:
+        return None
+    users_data = load_users()
+    username = session.get('username')
+    if username in users_data.get('users', {}):
+        user = users_data['users'][username].copy()
+        user['username'] = username
+        role = user.get('role', 'viewer')
+        user['permissions'] = users_data.get('role_permissions', {}).get(role, {})
+        return user
+    return None
+
+def get_user_permissions():
+    """Get permissions for current user"""
+    user = get_current_user()
+    if user:
+        return user.get('permissions', {})
+    return {}
+
+def login_required(f):
+    """Decorator to require login"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'username' not in session:
+            if request.path.startswith('/api/'):
+                return jsonify({'error': 'Login required'}), 401
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+def role_required(*roles):
+    """Decorator to require specific role(s)"""
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            user = get_current_user()
+            if not user:
+                if request.path.startswith('/api/'):
+                    return jsonify({'error': 'Login required'}), 401
+                return redirect(url_for('login'))
+            if user.get('role') not in roles:
+                if request.path.startswith('/api/'):
+                    return jsonify({'error': 'Insufficient permissions'}), 403
+                return redirect(url_for('index'))
+            return f(*args, **kwargs)
+        return decorated_function
+    return decorator
+
+def permission_required(permission):
+    """Decorator to require specific permission"""
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            perms = get_user_permissions()
+            if not perms.get(permission, False):
+                if request.path.startswith('/api/'):
+                    return jsonify({'error': 'Insufficient permissions'}), 403
+                return redirect(url_for('index'))
+            return f(*args, **kwargs)
+        return decorated_function
+    return decorator
 
 @app.errorhandler(500)
 def internal_error(error):

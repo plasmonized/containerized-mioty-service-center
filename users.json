@@ -23,7 +23,7 @@
       "can_edit_config": true,
       "can_manage_certificates": true,
       "can_update_system": true,
-      "visible_tabs": ["dashboard", "sensors", "base_stations", "health", "network", "coverage", "traffic", "logs", "config", "certificates", "update"]
+      "visible_tabs": ["dashboard", "sensors", "base_stations", "health", "network", "coverage", "traffic", "logs", "config", "certificates"]
     },
     "user": {
       "can_view_all": true,

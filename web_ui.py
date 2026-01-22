@@ -314,6 +314,7 @@ def sensors():
     return render_template('sensors.html', sensors=sensors)
 
 @app.route('/api/sensors', methods=['GET'])
+@login_required
 def get_sensors():
     try:
         global tls_server_instance
@@ -415,6 +416,8 @@ def get_sensors():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/sensors', methods=['POST'])
+@login_required
+@permission_required('can_edit_sensors')
 def add_sensor():
     data = request.json
     
@@ -484,6 +487,8 @@ def add_sensor():
         return jsonify({'success': False, 'message': f'Error: {str(e)}'})
 
 @app.route('/api/sensors/<eui>', methods=['DELETE'])
+@login_required
+@permission_required('can_edit_sensors')
 def delete_sensor(eui):
     try:
         with open(bssci_config.SENSOR_CONFIG_FILE, 'r') as f:
@@ -501,6 +506,8 @@ def delete_sensor(eui):
         return jsonify({'success': False, 'message': str(e)})
 
 @app.route('/api/sensors/<eui>/attach', methods=['POST'])
+@login_required
+@permission_required('can_edit_sensors')
 def attach_sensor(eui):
     """Attach a specific sensor to all base stations"""
     try:
@@ -532,6 +539,8 @@ def attach_sensor(eui):
         return jsonify({'success': False, 'message': str(e)})
 
 @app.route('/api/sensors/<eui>/detach', methods=['POST'])
+@login_required
+@permission_required('can_edit_sensors')
 def detach_sensor(eui):
     """Detach a specific sensor from all base stations"""
     try:
@@ -546,6 +555,7 @@ def detach_sensor(eui):
         return jsonify({'success': False, 'message': str(e)})
 
 @app.route('/api/sensors/<eui>/details', methods=['GET'])
+@login_required
 def get_sensor_details(eui):
     """Get detailed statistics for a specific sensor"""
     try:
@@ -680,6 +690,8 @@ def get_sensor_details(eui):
         return jsonify({'success': False, 'message': str(e)})
 
 @app.route('/api/sensors/attach-all', methods=['POST'])
+@login_required
+@permission_required('can_edit_sensors')
 def attach_all_sensors():
     """Attach all configured sensors to base stations"""
     try:
@@ -717,6 +729,8 @@ def attach_all_sensors():
         return jsonify({'success': False, 'message': str(e)})
 
 @app.route('/api/sensors/detach-all', methods=['POST'])
+@login_required
+@permission_required('can_edit_sensors')
 def detach_all_sensors():
     """Detach all sensors from base stations"""
     try:
@@ -736,6 +750,8 @@ def detach_all_sensors():
         return jsonify({'success': False, 'message': str(e)})
 
 @app.route('/api/sensors/clear', methods=['POST'])
+@login_required
+@permission_required('can_edit_sensors')
 def clear_all_sensors():
     """Clear all sensor configurations and detach all sensors"""
     try:
@@ -761,6 +777,8 @@ def clear_all_sensors():
         return jsonify({'success': False, 'message': str(e)})
 
 @app.route('/api/sensors/reload', methods=['POST'])
+@login_required
+@permission_required('can_edit_sensors')
 def reload_sensors():
     """Force reload sensor configuration in TLS server"""
     try:
@@ -775,6 +793,7 @@ def reload_sensors():
         return jsonify({'success': False, 'message': str(e)})
 
 @app.route('/api/sensors/export', methods=['GET'])
+@login_required
 def export_sensors():
     """Export all sensors as CSV file"""
     try:
@@ -815,6 +834,8 @@ def export_sensors():
         return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/api/sensors/import', methods=['POST'])
+@login_required
+@permission_required('can_edit_sensors')
 def import_sensors():
     """Import sensors from CSV/TXT file"""
     try:
@@ -999,6 +1020,8 @@ def config():
         return render_template('config.html', config=default_config)
 
 @app.route('/api/config', methods=['POST'])
+@login_required
+@permission_required('can_edit_config')
 def update_config():
     try:
         data = request.json
@@ -1111,6 +1134,7 @@ def health():
     return render_template('health.html')
 
 @app.route('/api/health', methods=['GET'])
+@login_required
 def get_health_stats():
     """Get comprehensive health statistics for the system"""
     try:
@@ -1251,6 +1275,7 @@ def coverage():
     return render_template('coverage.html')
 
 @app.route('/api/coverage/topology')
+@login_required
 def api_coverage_topology():
     """Get sensor topology with SNR/RSSI per base station for coverage heatmap"""
     try:
@@ -1292,11 +1317,15 @@ def api_coverage_topology():
         return jsonify({'sensors': {}, 'base_stations': [], 'error': str(e)})
 
 @app.route('/api/coverage/positions', methods=['GET', 'POST'])
+@login_required
 def api_coverage_positions():
     """Get or save coverage map device positions"""
     positions_file = 'coverage_positions.json'
     
     if request.method == 'POST':
+        perms = get_user_permissions()
+        if not perms.get('can_edit_sensors', False):
+            return jsonify({'success': False, 'error': 'Insufficient permissions'}), 403
         try:
             positions = request.get_json()
             with open(positions_file, 'w') as f:
@@ -1314,11 +1343,15 @@ def api_coverage_positions():
             return jsonify({'error': str(e)}), 500
 
 @app.route('/api/coverage/floorplan', methods=['GET', 'POST'])
+@login_required
 def api_coverage_floorplan():
     """Get or save floorplan image (base64 encoded)"""
     floorplan_file = 'coverage_floorplan.txt'
     
     if request.method == 'POST':
+        perms = get_user_permissions()
+        if not perms.get('can_edit_sensors', False):
+            return jsonify({'success': False, 'error': 'Insufficient permissions'}), 403
         try:
             data = request.get_json()
             image_data = data.get('image', '')
@@ -1337,6 +1370,7 @@ def api_coverage_floorplan():
             return jsonify({'error': str(e)}), 500
 
 @app.route('/api/network')
+@login_required
 def api_network():
     """Get network topology data for visualization"""
     try:
@@ -1440,6 +1474,7 @@ def save_base_station_config(config):
         json.dump(config, f, indent=2)
 
 @app.route('/api/base-stations', methods=['GET'])
+@login_required
 def get_base_stations():
     """Get all base stations with status and health data"""
     try:
@@ -1503,6 +1538,7 @@ def get_base_stations():
         return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route('/api/base-stations/<eui>', methods=['GET'])
+@login_required
 def get_base_station(eui):
     """Get single base station details"""
     try:
@@ -1513,6 +1549,8 @@ def get_base_station(eui):
         return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route('/api/base-stations', methods=['POST'])
+@login_required
+@permission_required('can_edit_sensors')
 def add_base_station():
     """Add new base station"""
     try:
@@ -1538,6 +1576,8 @@ def add_base_station():
         return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route('/api/base-stations/<eui>', methods=['PUT'])
+@login_required
+@permission_required('can_edit_sensors')
 def update_base_station(eui):
     """Update base station"""
     try:
@@ -1560,6 +1600,8 @@ def update_base_station(eui):
         return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route('/api/base-stations/<eui>', methods=['DELETE'])
+@login_required
+@permission_required('can_edit_sensors')
 def delete_base_station(eui):
     """Delete base station from config"""
     try:
@@ -1575,6 +1617,7 @@ def delete_base_station(eui):
         return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route('/api/traffic/metrics')
+@login_required
 def get_traffic_metrics():
     """Get traffic metrics for visualization"""
     try:
@@ -1604,6 +1647,8 @@ def get_traffic_metrics():
         return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/api/traffic/reset', methods=['POST'])
+@login_required
+@role_required('admin')
 def reset_traffic_metrics():
     """Reset traffic metrics"""
     try:
@@ -1616,6 +1661,7 @@ def reset_traffic_metrics():
         return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/api/logs')
+@login_required
 def get_logs():
     global log_entries
 
@@ -2084,6 +2130,8 @@ def api_check_updates():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/system/update', methods=['POST'])
+@login_required
+@role_required('admin')
 def api_perform_update():
     """Perform system update"""
     try:
@@ -2093,6 +2141,8 @@ def api_perform_update():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/system/restart', methods=['POST'])
+@login_required
+@role_required('admin')
 def api_restart_system():
     """Restart the service after update"""
     try:
@@ -2228,6 +2278,8 @@ def get_bssci_service_status():
         }
 
 @app.route('/api/logs/clear', methods=['POST'])
+@login_required
+@role_required('admin')
 def clear_logs():
     global log_entries
     log_entries = []
@@ -2235,6 +2287,7 @@ def clear_logs():
 
 @app.route('/api/bssci/status')
 @app.route('/api/service/status')  # Support both endpoints for compatibility
+@login_required
 def bssci_status():
     try:
         status = get_bssci_service_status()
@@ -2360,6 +2413,7 @@ def get_base_stations_status():
 # ==================== Variable MAC (VM) Sub-Channel API ====================
 
 @app.route('/api/vm/status')
+@login_required
 def get_vm_status():
     """Get VM sub-channel status for all sensors"""
     try:
@@ -2372,6 +2426,8 @@ def get_vm_status():
         return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/api/vm/activate/<eui>', methods=['POST'])
+@login_required
+@permission_required('can_edit_sensors')
 def vm_activate_sensor(eui):
     """Activate VM sub-channel for a sensor"""
     try:
@@ -2397,6 +2453,8 @@ def vm_activate_sensor(eui):
         return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/api/vm/deactivate/<eui>', methods=['POST'])
+@login_required
+@permission_required('can_edit_sensors')
 def vm_deactivate_sensor(eui):
     """Deactivate VM sub-channel for a sensor"""
     try:
@@ -2419,6 +2477,8 @@ def vm_deactivate_sensor(eui):
         return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/api/vm/query/<eui>', methods=['POST'])
+@login_required
+@permission_required('can_edit_sensors')
 def vm_query_sensor(eui):
     """Query VM sub-channel status for a sensor"""
     try:
@@ -2441,6 +2501,8 @@ def vm_query_sensor(eui):
         return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/api/vm/send/<eui>', methods=['POST'])
+@login_required
+@permission_required('can_edit_sensors')
 def vm_send_data_to_sensor(eui):
     """Send data to sensor via VM sub-channel (downlink)"""
     try:
@@ -2470,6 +2532,8 @@ def vm_send_data_to_sensor(eui):
         return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/api/certificates/status')
+@login_required
+@permission_required('can_manage_certificates')
 def get_certificate_status():
     """Get status of SSL certificates"""
     import os
@@ -2509,6 +2573,8 @@ def get_certificate_status():
         return jsonify({'success': False, 'message': str(e)})
 
 @app.route('/api/certificates/download/<filename>')
+@login_required
+@permission_required('can_manage_certificates')
 def download_certificate(filename):
     """Download a certificate file"""
     import os
@@ -2526,6 +2592,8 @@ def download_certificate(filename):
     return send_file(file_path, as_attachment=True, download_name=filename)
 
 @app.route('/api/certificates/upload/<cert_type>', methods=['POST'])
+@login_required
+@permission_required('can_manage_certificates')
 def upload_certificate(cert_type):
     """Upload a new certificate"""
     import os
@@ -2566,6 +2634,8 @@ def upload_certificate(cert_type):
         return jsonify({'success': False, 'message': str(e)})
 
 @app.route('/api/certificates/generate', methods=['POST'])
+@login_required
+@permission_required('can_manage_certificates')
 def generate_certificates():
     """Generate new SSL certificates"""
     import os
@@ -2621,6 +2691,8 @@ def generate_certificates():
         return jsonify({'success': False, 'message': str(e)})
 
 @app.route('/api/certificates/backup')
+@login_required
+@permission_required('can_manage_certificates')
 def backup_certificates():
     """Download all certificates as ZIP"""
     import os
@@ -2644,6 +2716,8 @@ def backup_certificates():
         return jsonify({'success': False, 'message': str(e)})
 
 @app.route('/api/certificates/restore', methods=['POST'])
+@login_required
+@permission_required('can_manage_certificates')
 def restore_certificates():
     """Restore certificates from ZIP backup"""
     import os
@@ -2686,6 +2760,8 @@ def restore_certificates():
         return jsonify({'success': False, 'message': str(e)})
 
 @app.route('/api/container/restart', methods=['POST'])
+@login_required
+@role_required('admin')
 def restart_container():
     """Force restart the entire container"""
     import subprocess
@@ -2722,6 +2798,8 @@ def restart_container():
         return jsonify({'success': False, 'message': str(e)})
 
 @app.route('/api/service/restart', methods=['POST'])
+@login_required
+@role_required('admin')
 def restart_service():
     """Restart the BSSCI service with full environment reload"""
     import subprocess

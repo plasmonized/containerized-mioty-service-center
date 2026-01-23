@@ -554,6 +554,24 @@ def detach_sensor(eui):
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)})
 
+def _convert_topology_timestamps(receiving_bases):
+    """Convert asyncio event loop timestamps to Unix timestamps for frontend display"""
+    import asyncio
+    if not receiving_bases:
+        return {}
+    try:
+        loop_time = asyncio.get_event_loop().time()
+        real_time = time.time()
+        result = {}
+        for bs_eui, data in receiving_bases.items():
+            result[bs_eui] = data.copy()
+            if 'last_seen' in data:
+                elapsed = loop_time - data['last_seen']
+                result[bs_eui]['last_seen'] = real_time - elapsed
+        return result
+    except:
+        return receiving_bases
+
 @app.route('/api/sensors/<eui>/details', methods=['GET'])
 @login_required
 def get_sensor_details(eui):
@@ -668,7 +686,7 @@ def get_sensor_details(eui):
             'gateway_count': gateway_count,
             'primary_gateway': topology.get('primary_bs', ''),
             'receiving_gateways': list(topology.get('receiving_bases', {}).keys()) if topology else [],
-            'receiving_bases_details': topology.get('receiving_bases', {}) if topology else {},
+            'receiving_bases_details': _convert_topology_timestamps(topology.get('receiving_bases', {})) if topology else {},
             'signal_score': round(signal_score, 1),
             'energy_score': round(energy_score, 1),
             'spreading_factor': stats.get('spreading_factor', 7),

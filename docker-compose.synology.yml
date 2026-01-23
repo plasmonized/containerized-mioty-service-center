@@ -16,6 +16,9 @@ services:
       # Copy config files to container-writable locations
       - ./endpoints.json:/tmp/host_endpoints.json:ro
       - ./bssci_config.py:/tmp/host_bssci_config.py:ro
+      - ./coverage_positions.json:/app/coverage_positions.json:rw
+      - ./coverage_floorplan.txt:/app/coverage_floorplan.txt:rw
+      - ./users.json:/app/users.json:rw
     restart: unless-stopped
     environment:
       - PYTHONUNBUFFERED=1

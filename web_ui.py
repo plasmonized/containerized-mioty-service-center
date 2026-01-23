@@ -2467,38 +2467,44 @@ def get_vm_status():
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
-@app.route('/api/vm/activate/<eui>', methods=['POST'])
+@app.route('/api/vm/activate', methods=['POST'])
 @login_required
 @permission_required('can_edit_sensors')
-def vm_activate_sensor(eui):
-    """Activate VM sub-channel for a sensor"""
+def vm_activate():
+    """Activate VM sub-channel reception on all base stations
+    
+    Per BSSCI VM specification, this sends vm.activate with macType parameter.
+    """
     try:
         global tls_server_instance
         if not tls_server_instance:
             return jsonify({'success': False, 'message': 'TLS server not available'}), 503
         
         data = request.json or {}
-        vm_channel = data.get('vm_channel', 0)
+        mac_type = data.get('macType', 0)
         
         import asyncio
         loop = asyncio.new_event_loop()
         try:
-            success = loop.run_until_complete(tls_server_instance.vm_activate(eui, vm_channel))
+            success = loop.run_until_complete(tls_server_instance.vm_activate(mac_type))
         finally:
             loop.close()
         
         if success:
-            return jsonify({'success': True, 'message': f'VM activate request sent for sensor {eui}'})
+            return jsonify({'success': True, 'message': f'VM activate request sent (macType={mac_type})'})
         else:
             return jsonify({'success': False, 'message': 'No base stations connected'})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
-@app.route('/api/vm/deactivate/<eui>', methods=['POST'])
+@app.route('/api/vm/deactivate', methods=['POST'])
 @login_required
 @permission_required('can_edit_sensors')
-def vm_deactivate_sensor(eui):
-    """Deactivate VM sub-channel for a sensor"""
+def vm_deactivate():
+    """Deactivate VM sub-channel reception on all base stations
+    
+    Per BSSCI VM specification, this sends vm.deactivate.
+    """
     try:
         global tls_server_instance
         if not tls_server_instance:
@@ -2507,12 +2513,12 @@ def vm_deactivate_sensor(eui):
         import asyncio
         loop = asyncio.new_event_loop()
         try:
-            success = loop.run_until_complete(tls_server_instance.vm_deactivate(eui))
+            success = loop.run_until_complete(tls_server_instance.vm_deactivate())
         finally:
             loop.close()
         
         if success:
-            return jsonify({'success': True, 'message': f'VM deactivate request sent for sensor {eui}'})
+            return jsonify({'success': True, 'message': 'VM deactivate request sent'})
         else:
             return jsonify({'success': False, 'message': 'No base stations connected'})
     except Exception as e:

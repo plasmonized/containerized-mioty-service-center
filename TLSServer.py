@@ -724,11 +724,27 @@ class TLSServer:
                             writer.write(full_message)
                             await writer.drain()
                             self.opID += 1
+                            
+                            await asyncio.sleep(0.1)
+                            
+                            logger.info(f"   📊 Sending VM status request to {bs_eui}")
+                            op_id = self.opID
+                            self.opID += 1
+                            
+                            self.pending_vm_operations[op_id] = {
+                                "type": "vm_status",
+                                "bs_eui": bs_eui,
+                                "timestamp": asyncio.get_event_loop().time()
+                            }
+                            
+                            vm_status_msg = encode_message(messages.build_vm_status_request(op_id))
+                            writer.write(IDENTIFIER + len(vm_status_msg).to_bytes(4, byteorder="little") + vm_status_msg)
+                            await writer.drain()
 
                         except Exception as e:
                             logger.error(f"   ❌ Failed to send status to {bs_eui}: {e}")
 
-                    logger.info(f"📊 STATUS REQUEST CYCLE COMPLETED")
+                    logger.info(f"📊 STATUS REQUEST CYCLE COMPLETED (incl. VM status)")
                 else:
                     logger.debug(f"📊 No base stations connected - skipping status requests")
 

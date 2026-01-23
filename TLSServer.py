@@ -851,9 +851,6 @@ class TLSServer:
 
                             # Start attachment process
                             await self.attach_file(writer)
-                            
-                            # Enable VM reception for OMS meters
-                            await self.enable_vm_reception(writer, bs_eui)
 
                             # Always ensure status request task is running
                             if not hasattr(self, '_status_task_running') or not self._status_task_running:
@@ -1437,39 +1434,39 @@ class TLSServer:
                                     })
                                 })
                     
-                    elif msg_type == "vmStatusRsp":
+                    elif msg_type == "vm.statusRsp":
                         op_id = message.get("opId", "unknown")
-                        active = message.get("active", False)
-                        vm_channel = message.get("vmChan", 0)
+                        mac_types = message.get("macTypes", [])
                         
                         if op_id in self.pending_vm_operations:
                             pending = self.pending_vm_operations.pop(op_id)
-                            eui = pending.get("eui", "unknown")
-                            bs_eui = self.connected_base_stations.get(writer, "unknown")
+                            bs_eui = pending.get("bs_eui", self.connected_base_stations.get(writer, "unknown"))
                             
-                            logger.info(f"📊 VM STATUS for sensor {eui}: active={active}, channel={vm_channel}")
-                            
-                            if active:
-                                self.vm_active_sensors[eui.upper()] = {
-                                    "active": True,
-                                    "vm_channel": vm_channel,
-                                    "activated_at": asyncio.get_event_loop().time(),
-                                    "bs_eui": bs_eui
-                                }
-                            elif eui.upper() in self.vm_active_sensors:
-                                del self.vm_active_sensors[eui.upper()]
+                            logger.info(f"═══════════════════════════════════════════════════════════")
+                            logger.info(f"📊 VM STATUS RESPONSE from base station {bs_eui}")
+                            logger.info(f"   Operation ID: {op_id}")
+                            if mac_types:
+                                logger.info(f"   Active MAC Types: {mac_types}")
+                                for mac_type in mac_types:
+                                    logger.info(f"      - MAC Type {mac_type}")
+                            else:
+                                logger.info(f"   No MAC Types active (VM reception not enabled)")
+                            logger.info(f"═══════════════════════════════════════════════════════════")
                             
                             if self.mqtt_out_queue:
                                 await self.mqtt_out_queue.put({
-                                    "topic": f"ep/{eui.upper()}/vm/status",
+                                    "topic": f"bs/{bs_eui}/vm/status",
                                     "payload": json.dumps({
                                         "action": "vm_status_response",
-                                        "eui": eui,
-                                        "active": active,
-                                        "vm_channel": vm_channel,
+                                        "bs_eui": bs_eui,
+                                        "mac_types": mac_types,
                                         "timestamp": asyncio.get_event_loop().time()
                                     })
                                 })
+                    
+                    elif msg_type == "vm.statusCmp":
+                        op_id = message.get("opId", "unknown")
+                        logger.info(f"📊 VM STATUS COMPLETE - Operation {op_id}")
                     
                     elif msg_type == "vmUlData":
                         eui = int(message["epEui"]).to_bytes(8, byteorder="big").hex()
@@ -1892,10 +1889,15 @@ class TLSServer:
 
     # ==================== Variable MAC (VM) Sub-Channel Methods ====================
     
-    async def vm_activate(self, sensor_eui: str, vm_channel: int = 0) -> bool:
-        """Activate VM sub-channel for a sensor"""
-        sensor_eui = sensor_eui.upper()
-        logger.info(f"📡 VM ACTIVATE request for sensor {sensor_eui}, channel {vm_channel}")
+    async def vm_activate(self, mac_type: int = 0) -> bool:
+        """Activate VM sub-channel reception
+        
+        Per BSSCI VM specification:
+        - command: "vm.activate"
+        - opId: Numeric ID of the operation
+        - macType: Numeric MAC-Type of the intended Variable MAC
+        """
+        logger.info(f"📡 VM ACTIVATE request, macType {mac_type}")
         
         if not self.connected_base_stations:
             logger.warning("   No base stations connected")
@@ -1908,13 +1910,12 @@ class TLSServer:
                 op_id = self.opID
                 
                 self.pending_vm_operations[op_id] = {
-                    "eui": sensor_eui,
                     "operation": "activate",
-                    "vm_channel": vm_channel,
+                    "mac_type": mac_type,
                     "timestamp": asyncio.get_event_loop().time()
                 }
                 
-                msg_pack = encode_message(messages.build_vm_activate_request(sensor_eui, op_id, vm_channel))
+                msg_pack = encode_message(messages.build_vm_activate_request(op_id, mac_type))
                 writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
                 await writer.drain()
                 
@@ -1925,10 +1926,14 @@ class TLSServer:
         
         return success
     
-    async def vm_deactivate(self, sensor_eui: str) -> bool:
-        """Deactivate VM sub-channel for a sensor"""
-        sensor_eui = sensor_eui.upper()
-        logger.info(f"📡 VM DEACTIVATE request for sensor {sensor_eui}")
+    async def vm_deactivate(self) -> bool:
+        """Deactivate VM sub-channel reception
+        
+        Per BSSCI VM specification:
+        - command: "vm.deactivate"
+        - opId: Numeric ID of the operation
+        """
+        logger.info(f"📡 VM DEACTIVATE request")
         
         if not self.connected_base_stations:
             logger.warning("   No base stations connected")
@@ -1941,12 +1946,11 @@ class TLSServer:
                 op_id = self.opID
                 
                 self.pending_vm_operations[op_id] = {
-                    "eui": sensor_eui,
                     "operation": "deactivate",
                     "timestamp": asyncio.get_event_loop().time()
                 }
                 
-                msg_pack = encode_message(messages.build_vm_deactivate_request(sensor_eui, op_id))
+                msg_pack = encode_message(messages.build_vm_deactivate_request(op_id))
                 writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
                 await writer.drain()
                 
@@ -1957,10 +1961,16 @@ class TLSServer:
         
         return success
     
-    async def vm_status(self, sensor_eui: str) -> bool:
-        """Query VM sub-channel status for a sensor"""
-        sensor_eui = sensor_eui.upper()
-        logger.info(f"📊 VM STATUS request for sensor {sensor_eui}")
+    async def vm_status(self) -> bool:
+        """Query VM sub-channel status - returns list of activated macTypes
+        
+        Per BSSCI VM specification:
+        - command: "vm.status"
+        - opId: Numeric ID of the operation
+        
+        Response will contain macTypes: Numeric[] - List of activated macTypes
+        """
+        logger.info(f"📊 VM STATUS request - querying active MAC types")
         
         if not self.connected_base_stations:
             logger.warning("   No base stations connected")
@@ -1973,12 +1983,12 @@ class TLSServer:
                 op_id = self.opID
                 
                 self.pending_vm_operations[op_id] = {
-                    "eui": sensor_eui,
                     "operation": "status",
+                    "bs_eui": bs_eui,
                     "timestamp": asyncio.get_event_loop().time()
                 }
                 
-                msg_pack = encode_message(messages.build_vm_status_request(sensor_eui, op_id))
+                msg_pack = encode_message(messages.build_vm_status_request(op_id))
                 writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
                 await writer.drain()
                 
@@ -2223,37 +2233,6 @@ class TLSServer:
             'total_messages': total_messages
         }
 
-    async def enable_vm_reception(self, writer: asyncio.streams.StreamWriter, bs_eui: str) -> None:
-        """Enable VM (Variable MAC) reception on a base station for OMS meter data.
-        
-        This sends a VM activation command to enable reception of VM sub-channel
-        messages from OMS/WMBUS meters.
-        """
-        try:
-            logger.info(f"📡 ENABLING VM RECEPTION for base station {bs_eui}")
-            
-            # Send vmEnableRx command to enable VM reception on all channels
-            # Per BSSCI spec, this enables the base station to receive VM uplink data
-            vm_enable_message = {
-                "command": "vmEnableRx",
-                "opId": self.opID,
-                "enable": True,
-                "vmChan": 0  # Channel 0 for broadcast/all
-            }
-            
-            msg_pack = encode_message(vm_enable_message)
-            full_message = IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack
-            
-            writer.write(full_message)
-            await writer.drain()
-            
-            logger.info(f"✅ VM RECEPTION ENABLED for base station {bs_eui}")
-            logger.info(f"   Operation ID: {self.opID}")
-            
-            self.opID -= 1
-            
-        except Exception as e:
-            logger.error(f"❌ Failed to enable VM reception for {bs_eui}: {e}")
 
     def get_sensor_registration_status(self) -> Dict[str, Dict[str, Any]]:
         """Get registration status of all sensors"""

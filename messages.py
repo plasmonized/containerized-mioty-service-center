@@ -62,59 +62,87 @@ def build_ul_response(opID: int) -> dict[str, object]:
 # Variable MAC (VM) Sub-Channel Messages
 # Per ETSI TS 103357 - VM mode for metering devices with longer messages and acknowledgement
 
-def build_vm_activate_request(sensor_eui: str, opID: int, vm_channel: int = 0) -> dict[str, object]:
-    """Build VM sub-channel activate request"""
+def build_vm_activate_request(opID: int, mac_type: int = 0) -> dict[str, object]:
+    """Build VM sub-channel activate request
+    
+    Per BSSCI VM specification:
+    - command: "vm.activate"
+    - opId: Numeric ID of the operation
+    - macType: Numeric MAC-Type of the intended Variable MAC
+    """
     return {
-        "command": "vmActivate",
+        "command": "vm.activate",
         "opId": opID,
-        "epEui": int.from_bytes(bytes.fromhex(sensor_eui), "big"),
-        "vmChan": vm_channel,  # VM channel number (0-3 typically)
+        "macType": mac_type,
     }
 
 
-def build_vm_activate_response(opID: int, code: int = 0) -> dict[str, object]:
-    """Build VM sub-channel activate response"""
+def build_vm_activate_response(opID: int) -> dict[str, object]:
+    """Build VM sub-channel activate response
+    
+    Per BSSCI VM specification:
+    - command: "vm.activateRsp"
+    - opId: Numeric ID of the operation
+    """
     return {
-        "command": "vmActRsp",
+        "command": "vm.activateRsp",
         "opId": opID,
-        "code": code,  # 0 = success
     }
 
 
-def build_vm_deactivate_request(sensor_eui: str, opID: int) -> dict[str, object]:
-    """Build VM sub-channel deactivate request"""
+def build_vm_deactivate_request(opID: int) -> dict[str, object]:
+    """Build VM sub-channel deactivate request
+    
+    Per BSSCI VM specification:
+    - command: "vm.deactivate"
+    - opId: Numeric ID of the operation
+    """
     return {
-        "command": "vmDeactivate",
+        "command": "vm.deactivate",
         "opId": opID,
-        "epEui": int.from_bytes(bytes.fromhex(sensor_eui), "big"),
     }
 
 
-def build_vm_deactivate_response(opID: int, code: int = 0) -> dict[str, object]:
-    """Build VM sub-channel deactivate response"""
+def build_vm_deactivate_response(opID: int) -> dict[str, object]:
+    """Build VM sub-channel deactivate response
+    
+    Per BSSCI VM specification:
+    - command: "vm.deactivateRsp"
+    - opId: Numeric ID of the operation
+    """
     return {
-        "command": "vmDeactRsp",
+        "command": "vm.deactivateRsp",
         "opId": opID,
-        "code": code,
     }
 
 
-def build_vm_status_request(sensor_eui: str, opID: int) -> dict[str, object]:
-    """Build VM sub-channel status request"""
+def build_vm_status_request(opID: int) -> dict[str, object]:
+    """Build VM sub-channel status request
+    
+    Per BSSCI VM specification:
+    - command: "vm.status"
+    - opId: Numeric ID of the operation
+    
+    Response will contain macTypes: Numeric[] - List of activated macTypes
+    """
     return {
-        "command": "vmStatus",
+        "command": "vm.status",
         "opId": opID,
-        "epEui": int.from_bytes(bytes.fromhex(sensor_eui), "big"),
     }
 
 
-def build_vm_status_response(opID: int, active: bool = False, vm_channel: int = 0) -> dict[str, object]:
-    """Build VM sub-channel status response"""
+def build_vm_status_response(opID: int, mac_types: list = None) -> dict[str, object]:
+    """Build VM sub-channel status response
+    
+    Per BSSCI VM specification:
+    - command: "vm.statusRsp"
+    - opId: Numeric ID of the operation
+    - macTypes: Numeric[] - List of activated macTypes
+    """
     return {
-        "command": "vmStatusRsp",
+        "command": "vm.statusRsp",
         "opId": opID,
-        "active": active,
-        "vmChan": vm_channel,
+        "macTypes": mac_types or [],
     }
 
 

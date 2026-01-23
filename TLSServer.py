@@ -1434,39 +1434,39 @@ class TLSServer:
                                     })
                                 })
                     
-                    elif msg_type == "vmStatusRsp":
+                    elif msg_type == "vm.statusRsp":
                         op_id = message.get("opId", "unknown")
-                        active = message.get("active", False)
-                        vm_channel = message.get("vmChan", 0)
+                        mac_types = message.get("macTypes", [])
                         
                         if op_id in self.pending_vm_operations:
                             pending = self.pending_vm_operations.pop(op_id)
-                            eui = pending.get("eui", "unknown")
-                            bs_eui = self.connected_base_stations.get(writer, "unknown")
+                            bs_eui = pending.get("bs_eui", self.connected_base_stations.get(writer, "unknown"))
                             
-                            logger.info(f"📊 VM STATUS for sensor {eui}: active={active}, channel={vm_channel}")
-                            
-                            if active:
-                                self.vm_active_sensors[eui.upper()] = {
-                                    "active": True,
-                                    "vm_channel": vm_channel,
-                                    "activated_at": asyncio.get_event_loop().time(),
-                                    "bs_eui": bs_eui
-                                }
-                            elif eui.upper() in self.vm_active_sensors:
-                                del self.vm_active_sensors[eui.upper()]
+                            logger.info(f"═══════════════════════════════════════════════════════════")
+                            logger.info(f"📊 VM STATUS RESPONSE from base station {bs_eui}")
+                            logger.info(f"   Operation ID: {op_id}")
+                            if mac_types:
+                                logger.info(f"   Active MAC Types: {mac_types}")
+                                for mac_type in mac_types:
+                                    logger.info(f"      - MAC Type {mac_type}")
+                            else:
+                                logger.info(f"   No MAC Types active (VM reception not enabled)")
+                            logger.info(f"═══════════════════════════════════════════════════════════")
                             
                             if self.mqtt_out_queue:
                                 await self.mqtt_out_queue.put({
-                                    "topic": f"ep/{eui.upper()}/vm/status",
+                                    "topic": f"bs/{bs_eui}/vm/status",
                                     "payload": json.dumps({
                                         "action": "vm_status_response",
-                                        "eui": eui,
-                                        "active": active,
-                                        "vm_channel": vm_channel,
+                                        "bs_eui": bs_eui,
+                                        "mac_types": mac_types,
                                         "timestamp": asyncio.get_event_loop().time()
                                     })
                                 })
+                    
+                    elif msg_type == "vm.statusCmp":
+                        op_id = message.get("opId", "unknown")
+                        logger.info(f"📊 VM STATUS COMPLETE - Operation {op_id}")
                     
                     elif msg_type == "vmUlData":
                         eui = int(message["epEui"]).to_bytes(8, byteorder="big").hex()
@@ -1961,10 +1961,16 @@ class TLSServer:
         
         return success
     
-    async def vm_status(self, sensor_eui: str) -> bool:
-        """Query VM sub-channel status for a sensor"""
-        sensor_eui = sensor_eui.upper()
-        logger.info(f"📊 VM STATUS request for sensor {sensor_eui}")
+    async def vm_status(self) -> bool:
+        """Query VM sub-channel status - returns list of activated macTypes
+        
+        Per BSSCI VM specification:
+        - command: "vm.status"
+        - opId: Numeric ID of the operation
+        
+        Response will contain macTypes: Numeric[] - List of activated macTypes
+        """
+        logger.info(f"📊 VM STATUS request - querying active MAC types")
         
         if not self.connected_base_stations:
             logger.warning("   No base stations connected")
@@ -1977,12 +1983,12 @@ class TLSServer:
                 op_id = self.opID
                 
                 self.pending_vm_operations[op_id] = {
-                    "eui": sensor_eui,
                     "operation": "status",
+                    "bs_eui": bs_eui,
                     "timestamp": asyncio.get_event_loop().time()
                 }
                 
-                msg_pack = encode_message(messages.build_vm_status_request(sensor_eui, op_id))
+                msg_pack = encode_message(messages.build_vm_status_request(op_id))
                 writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
                 await writer.drain()
                 

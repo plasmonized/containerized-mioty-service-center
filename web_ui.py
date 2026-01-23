@@ -2524,11 +2524,15 @@ def vm_deactivate():
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
-@app.route('/api/vm/query/<eui>', methods=['POST'])
+@app.route('/api/vm/status', methods=['POST'])
 @login_required
 @permission_required('can_edit_sensors')
-def vm_query_sensor(eui):
-    """Query VM sub-channel status for a sensor"""
+def vm_query_status():
+    """Query VM sub-channel status - returns list of activated macTypes
+    
+    Per BSSCI VM specification, this sends vm.status to all connected base stations.
+    Response with macTypes will be logged.
+    """
     try:
         global tls_server_instance
         if not tls_server_instance:
@@ -2537,12 +2541,12 @@ def vm_query_sensor(eui):
         import asyncio
         loop = asyncio.new_event_loop()
         try:
-            success = loop.run_until_complete(tls_server_instance.vm_status(eui))
+            success = loop.run_until_complete(tls_server_instance.vm_status())
         finally:
             loop.close()
         
         if success:
-            return jsonify({'success': True, 'message': f'VM status query sent for sensor {eui}'})
+            return jsonify({'success': True, 'message': 'VM status query sent - check logs for response'})
         else:
             return jsonify({'success': False, 'message': 'No base stations connected'})
     except Exception as e:

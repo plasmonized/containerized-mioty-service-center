@@ -1941,9 +1941,14 @@ def parse_version(version_str):
     except:
         return (0,)
 
+def get_update_branch():
+    """Get configured update branch (main for stable, development for beta)"""
+    return os.getenv('UPDATE_BRANCH', 'main')
+
 def check_for_updates():
     """Check if updates are available using GitHub API"""
     GITHUB_REPO = "plasmonized/containerized-mioty-Service-Center"
+    update_branch = get_update_branch()
     
     try:
         current = get_current_version()
@@ -1973,14 +1978,14 @@ def check_for_updates():
             updates_available = True
             status_message = 'Update available'
         
-        # Get recent commits via GitHub API
+        # Get recent commits via GitHub API from configured branch
         recent_commits = []
         try:
             import urllib.request
             import ssl
             ctx = ssl.create_default_context()
             
-            api_url = f"https://api.github.com/repos/{GITHUB_REPO}/commits?per_page=5"
+            api_url = f"https://api.github.com/repos/{GITHUB_REPO}/commits?sha={update_branch}&per_page=5"
             req = urllib.request.Request(api_url, headers={'User-Agent': 'BSSCI-Service-Center'})
             
             with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
@@ -2007,6 +2012,8 @@ def check_for_updates():
             'remote_version': remote,
             'updates_available': updates_available,
             'recent_commits': recent_commits,
+            'update_branch': update_branch,
+            'is_beta': update_branch != 'main',
             'status': 'success'
         }
         
@@ -2050,6 +2057,7 @@ def create_backup():
 def perform_update():
     """Perform update by downloading from GitHub"""
     GITHUB_REPO = "plasmonized/containerized-mioty-Service-Center"
+    update_branch = get_update_branch()
     
     try:
         # Create backup first
@@ -2061,14 +2069,16 @@ def perform_update():
         if os.path.exists('.git'):
             try:
                 subprocess.run(['git', 'reset', '--hard', 'HEAD'], capture_output=True, timeout=30)
-                result = subprocess.run(['git', 'pull', 'origin', 'main'], 
+                subprocess.run(['git', 'fetch', 'origin'], capture_output=True, timeout=30)
+                result = subprocess.run(['git', 'pull', 'origin', update_branch], 
                                       capture_output=True, text=True, timeout=60)
                 if result.returncode == 0:
                     return {
                         'success': True, 
-                        'message': 'Update completed successfully via git',
+                        'message': f'Update completed successfully via git ({update_branch} branch)',
                         'backup_dir': backup_result['backup_dir'],
-                        'git_output': result.stdout
+                        'git_output': result.stdout,
+                        'branch': update_branch
                     }
             except Exception as e:
                 logger.error(f"Git pull failed, trying ZIP download: {e}")
@@ -2081,8 +2091,11 @@ def perform_update():
         
         ctx = ssl.create_default_context()
         
-        # Try main branch first, then master
-        for branch in ['main', 'master']:
+        # Try configured branch first, then main, then master
+        branches_to_try = [update_branch] if update_branch != 'main' else []
+        branches_to_try.extend(['main', 'master'])
+        
+        for branch in branches_to_try:
             zip_url = f"https://github.com/{GITHUB_REPO}/archive/refs/heads/{branch}.zip"
             
             try:
@@ -2179,6 +2192,60 @@ def api_perform_update():
     try:
         result = perform_update()
         return jsonify(result)
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/system/update-branch', methods=['GET', 'POST'])
+@login_required
+@role_required('admin')
+def api_update_branch():
+    """Get or set the update branch (main=stable, development=beta)"""
+    if request.method == 'GET':
+        return jsonify({
+            'branch': get_update_branch(),
+            'is_beta': get_update_branch() != 'main',
+            'available_branches': ['main', 'development']
+        })
+    
+    try:
+        data = request.json or {}
+        new_branch = data.get('branch', 'main')
+        
+        if new_branch not in ['main', 'development', 'experimental']:
+            return jsonify({'success': False, 'error': 'Invalid branch. Use: main, development, or experimental'}), 400
+        
+        env_path = '.env'
+        env_lines = []
+        branch_found = False
+        
+        if os.path.exists(env_path):
+            with open(env_path, 'r') as f:
+                env_lines = f.readlines()
+        
+        new_lines = []
+        for line in env_lines:
+            if line.startswith('UPDATE_BRANCH='):
+                new_lines.append(f'UPDATE_BRANCH={new_branch}\n')
+                branch_found = True
+            else:
+                new_lines.append(line)
+        
+        if not branch_found:
+            new_lines.append(f'UPDATE_BRANCH={new_branch}\n')
+        
+        with open(env_path, 'w') as f:
+            f.writelines(new_lines)
+        
+        os.environ['UPDATE_BRANCH'] = new_branch
+        
+        logger.info(f"Update branch changed to: {new_branch}")
+        
+        return jsonify({
+            'success': True,
+            'branch': new_branch,
+            'is_beta': new_branch != 'main',
+            'message': f'Update branch set to {new_branch}. Next update check will use this branch.'
+        })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 

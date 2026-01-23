@@ -1,0 +1,45 @@
+{
+  "users": {
+    "admin": {
+      "password": "admin123",
+      "role": "admin",
+      "name": "Administrator"
+    },
+    "user": {
+      "password": "user123",
+      "role": "user",
+      "name": "Benutzer"
+    },
+    "viewer": {
+      "password": "viewer123",
+      "role": "viewer",
+      "name": "Betrachter"
+    }
+  },
+  "role_permissions": {
+    "admin": {
+      "can_view_all": true,
+      "can_edit_sensors": true,
+      "can_edit_config": true,
+      "can_manage_certificates": true,
+      "can_update_system": true,
+      "visible_tabs": ["dashboard", "sensors", "base_stations", "health", "network", "coverage", "traffic", "logs", "config", "certificates"]
+    },
+    "user": {
+      "can_view_all": true,
+      "can_edit_sensors": true,
+      "can_edit_config": false,
+      "can_manage_certificates": false,
+      "can_update_system": false,
+      "visible_tabs": ["dashboard", "sensors", "base_stations", "health", "network", "coverage", "traffic", "logs"]
+    },
+    "viewer": {
+      "can_view_all": false,
+      "can_edit_sensors": false,
+      "can_edit_config": false,
+      "can_manage_certificates": false,
+      "can_update_system": false,
+      "visible_tabs": ["dashboard", "health", "network", "coverage", "traffic"]
+    }
+  }
+}

@@ -54,6 +54,7 @@ JSON-based sensor configuration with support for:
 
 ## Recent Changes
 
+- **User Authentication & Role-Based Access Control**: Three user roles implemented - Admin (full access), User (can manage sensors/base stations), Viewer (read-only dashboards). Login required for all pages, API endpoints protected with permission decorators. Users managed via users.json file.
 - **Persistent Coverage Map Storage**: Floorplan images, device positions, and zoom levels are now stored server-side for access from any device. Files: coverage_positions.json and coverage_floorplan.txt (mounted as Docker volumes for persistence).
 - **Sensor Detail Dashboard**: Click on any sensor EUI to view detailed statistics including Device Health (energy efficiency, signal strength), Transmission Details (data rate, spreading factor, frequency, frame counter, airtime, duty cycle), SNR/RSSI statistics (min/avg/max), and gateway coverage. Tracks first seen, last seen timestamps, and detects missed frames.
 - **GitHub API-based Update System**: Update checking and installation now works in Docker containers without requiring a mounted .git directory. Uses GitHub API to fetch latest commits and downloads updates as ZIP archives.

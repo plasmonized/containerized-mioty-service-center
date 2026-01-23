@@ -1118,7 +1118,7 @@ class TLSServer:
                         # Update network topology (track ALL receiving base stations, before dedup)
                         eui_upper = eui.upper()
                         rssi = message.get('rssi', 0)
-                        current_time = asyncio.get_event_loop().time()
+                        current_time = time.time()
                         
                         if eui_upper not in self.sensor_topology:
                             self.sensor_topology[eui_upper] = {

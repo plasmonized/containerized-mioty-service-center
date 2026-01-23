@@ -1139,6 +1139,11 @@ def logs():
 def traffic():
     return render_template('traffic.html')
 
+@app.route('/oms')
+@login_required
+def oms():
+    return render_template('oms.html')
+
 @app.route('/health')
 @login_required
 def health():
@@ -1668,6 +1673,32 @@ def reset_traffic_metrics():
             tls_server_instance.reset_traffic_metrics()
             return jsonify({'success': True, 'message': 'Traffic metrics reset successfully'})
         return jsonify({'success': False, 'message': 'TLS server not available'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/oms/meters')
+@login_required
+def get_oms_meters():
+    """Get all tracked OMS meters"""
+    try:
+        global tls_server_instance
+        if tls_server_instance and hasattr(tls_server_instance, 'get_oms_meters'):
+            meters = tls_server_instance.get_oms_meters()
+            return jsonify({'success': True, 'meters': list(meters.values())})
+        return jsonify({'success': True, 'meters': []})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/oms/stats')
+@login_required
+def get_oms_stats():
+    """Get OMS statistics"""
+    try:
+        global tls_server_instance
+        if tls_server_instance and hasattr(tls_server_instance, 'get_oms_stats'):
+            stats = tls_server_instance.get_oms_stats()
+            return jsonify({'success': True, **stats})
+        return jsonify({'success': True, 'total_meters': 0, 'total_messages': 0})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 

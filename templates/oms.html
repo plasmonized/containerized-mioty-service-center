@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block title %}OMS Meters{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>OMS Meter Monitoring</h1>
+    <div>
+        <button class="btn btn-primary" onclick="refreshData()" style="background-color: #ff8c00; border-color: #ff8c00;">
+            Refresh Now
+        </button>
+    </div>
+</div>
+
+<div id="alert-container"></div>
+
+<div class="row mb-4">
+    <div class="col-md-6">
+        <div class="card h-100">
+            <div class="card-body text-center">
+                <h6 class="text-muted">Total OMS Meters</h6>
+                <h2 id="total-meters" style="color: #ff8c00;">0</h2>
+                <small class="text-muted">Unique meters detected</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card h-100">
+            <div class="card-body text-center">
+                <h6 class="text-muted">Total Messages</h6>
+                <h2 id="total-messages" style="color: #ff8c00;">0</h2>
+                <small class="text-muted">VM uplink messages received</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header" style="background-color: #ff8c00; color: white;">
+        <h5 class="mb-0">Detected OMS Meters (WMBUS)</h5>
+    </div>
+    <div class="card-body">
+        <div id="no-meters-message" class="text-center p-4" style="display: none;">
+            <p class="text-muted mb-0">No OMS meters detected yet. Meters will appear here when VM uplink data is received.</p>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-striped" id="meters-table-container">
+                <thead>
+                    <tr>
+                        <th>Meter ID</th>
+                        <th>EUI</th>
+                        <th>SNR</th>
+                        <th>RSSI</th>
+                        <th>Last Data (hex)</th>
+                        <th>Last Seen</th>
+                        <th>Base Station</th>
+                        <th>Messages</th>
+                    </tr>
+                </thead>
+                <tbody id="meters-table">
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div class="mt-3 text-muted small">
+    <p><strong>Note:</strong> OMS meters are WMBUS/wireless M-Bus devices (water, gas, electricity meters). The meter ID is extracted from the WMBUS payload header (manufacturer + address fields).</p>
+    <p>Auto-refresh: Every 30 seconds</p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let refreshInterval;
+
+function formatTimestamp(timestamp) {
+    if (!timestamp) return 'Never';
+    const date = new Date(timestamp * 1000);
+    return date.toLocaleString();
+}
+
+function formatTimeSince(timestamp) {
+    if (!timestamp) return 'N/A';
+    const now = Date.now() / 1000;
+    const diff = now - timestamp;
+    
+    if (diff < 60) return Math.floor(diff) + 's ago';
+    if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+    if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+    return Math.floor(diff / 86400) + 'd ago';
+}
+
+function truncateData(data, maxLen) {
+    if (!data) return '';
+    if (data.length <= maxLen) return data;
+    return data.substring(0, maxLen) + '...';
+}
+
+function refreshData() {
+    fetch('/api/oms/stats')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                document.getElementById('total-meters').textContent = data.total_meters.toLocaleString();
+                document.getElementById('total-messages').textContent = data.total_messages.toLocaleString();
+            }
+        })
+        .catch(error => console.error('Error fetching OMS stats:', error));
+
+    fetch('/api/oms/meters')
+        .then(response => response.json())
+        .then(data => {
+            const tbody = document.getElementById('meters-table');
+            const tableContainer = document.getElementById('meters-table-container');
+            const noMetersMsg = document.getElementById('no-meters-message');
+            
+            if (data.success && data.meters && data.meters.length > 0) {
+                tableContainer.style.display = 'table';
+                noMetersMsg.style.display = 'none';
+                
+                const meters = data.meters.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+                
+                tbody.innerHTML = meters.map(meter => `
+                    <tr>
+                        <td><code>${meter.meter_id || 'Unknown'}</code></td>
+                        <td><code>${meter.eui || 'N/A'}</code></td>
+                        <td>${meter.snr || 0} dB</td>
+                        <td>${meter.rssi || 0} dBm</td>
+                        <td><code title="${meter.last_data || ''}">${truncateData(meter.last_data, 40)}</code></td>
+                        <td title="${formatTimestamp(meter.timestamp)}">${formatTimeSince(meter.timestamp)}</td>
+                        <td><code>${meter.bs_eui || 'Unknown'}</code></td>
+                        <td><span class="badge" style="background-color: #ff8c00;">${meter.message_count || 0}</span></td>
+                    </tr>
+                `).join('');
+            } else {
+                tableContainer.style.display = 'none';
+                noMetersMsg.style.display = 'block';
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching OMS meters:', error);
+        });
+}
+
+refreshData();
+refreshInterval = setInterval(refreshData, 30000);
+</script>
+{% endblock %}

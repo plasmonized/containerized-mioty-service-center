@@ -97,6 +97,10 @@ class TLSServer:
         self.vm_active_sensors: Dict[str, Dict[str, Any]] = {}
         # Pending VM operations: opID -> {eui, operation, timestamp}
         self.pending_vm_operations: Dict[int, Dict[str, Any]] = {}
+        
+        # OMS Meter tracking for VM uplink data (WMBUS/wireless M-Bus meters)
+        # meter_id -> {eui, snr, rssi, data, timestamp, bs_eui, message_count}
+        self.oms_meters: Dict[str, Dict[str, Any]] = {}
 
         # Start the deduplication task
         asyncio.create_task(self.process_deduplication_buffer())
@@ -847,6 +851,9 @@ class TLSServer:
 
                             # Start attachment process
                             await self.attach_file(writer)
+                            
+                            # Enable VM reception for OMS meters
+                            await self.enable_vm_reception(writer, bs_eui)
 
                             # Always ensure status request task is running
                             if not hasattr(self, '_status_task_running') or not self._status_task_running:
@@ -1470,10 +1477,41 @@ class TLSServer:
                         op_id = message.get("opId", 0)
                         port = message.get("port", 1)
                         data = message.get("data", [])
+                        snr = message.get("snr", 0)
+                        rssi = message.get("rssi", 0)
                         
                         logger.info(f"📨 VM UPLINK DATA received from sensor {eui}")
                         logger.info(f"   Port: {port}, Data length: {len(data)} bytes")
                         logger.info(f"   Via base station: {bs_eui}")
+                        logger.info(f"   SNR: {snr}, RSSI: {rssi}")
+                        
+                        # Parse OMS meter ID from WMBUS payload (if applicable)
+                        data_hex = bytes(data).hex() if isinstance(data, list) else data
+                        meter_id = self._extract_oms_meter_id(data if isinstance(data, list) else bytes.fromhex(data))
+                        
+                        if meter_id:
+                            logger.info(f"   OMS Meter ID: {meter_id}")
+                            current_time = asyncio.get_event_loop().time()
+                            
+                            # Track OMS meter
+                            if meter_id in self.oms_meters:
+                                self.oms_meters[meter_id]['message_count'] += 1
+                                self.oms_meters[meter_id]['last_data'] = data_hex
+                                self.oms_meters[meter_id]['timestamp'] = current_time
+                                self.oms_meters[meter_id]['snr'] = snr
+                                self.oms_meters[meter_id]['rssi'] = rssi
+                                self.oms_meters[meter_id]['bs_eui'] = bs_eui
+                            else:
+                                self.oms_meters[meter_id] = {
+                                    'meter_id': meter_id,
+                                    'eui': eui.upper(),
+                                    'snr': snr,
+                                    'rssi': rssi,
+                                    'last_data': data_hex,
+                                    'timestamp': current_time,
+                                    'bs_eui': bs_eui,
+                                    'message_count': 1
+                                }
                         
                         # Send acknowledgment
                         msg_pack = encode_message(messages.build_vm_ul_data_response(op_id))
@@ -1483,6 +1521,9 @@ class TLSServer:
                         # Update last seen
                         self.sensor_last_seen[eui.upper()] = asyncio.get_event_loop().time()
                         
+                        # Increment VM message counter
+                        self.traffic_metrics['vm_messages'] += 1
+                        
                         # Publish to MQTT
                         if self.mqtt_out_queue:
                             await self.mqtt_out_queue.put({
@@ -1490,7 +1531,10 @@ class TLSServer:
                                 "payload": json.dumps({
                                     "bs_eui": bs_eui,
                                     "port": port,
-                                    "data": bytes(data).hex() if isinstance(data, list) else data,
+                                    "data": data_hex,
+                                    "meter_id": meter_id,
+                                    "snr": snr,
+                                    "rssi": rssi,
                                     "timestamp": asyncio.get_event_loop().time()
                                 })
                             })
@@ -2131,6 +2175,85 @@ class TLSServer:
 
         except Exception as e:
             logger.error(f"Failed to reload sensor configuration: {e}")
+
+    def _extract_oms_meter_id(self, data: list) -> str | None:
+        """Extract OMS meter ID from WMBUS payload data.
+        
+        WMBUS format typically:
+        - Byte 0: Length
+        - Byte 1: C-field (control)
+        - Bytes 2-3: M-field (manufacturer)
+        - Bytes 4-7: A-field (meter ID, 4 bytes, little-endian)
+        - Byte 8: Version
+        - Byte 9: Type (device type)
+        
+        Returns the meter ID as a hex string, or None if data is too short.
+        """
+        try:
+            if len(data) < 10:
+                return None
+            
+            # Extract manufacturer (bytes 2-3, little-endian)
+            manufacturer = bytes(data[2:4]).hex().upper()
+            
+            # Extract meter ID (bytes 4-7, little-endian, so reverse for display)
+            meter_id_bytes = data[4:8]
+            meter_id = bytes(meter_id_bytes[::-1]).hex().upper()
+            
+            # Extract version and type
+            version = data[8] if len(data) > 8 else 0
+            device_type = data[9] if len(data) > 9 else 0
+            
+            # Return combined identifier: manufacturer + meter_id
+            return f"{manufacturer}{meter_id}"
+        except Exception as e:
+            logger.debug(f"Failed to extract OMS meter ID: {e}")
+            return None
+
+    def get_oms_meters(self) -> Dict[str, Dict[str, Any]]:
+        """Return all tracked OMS meters."""
+        return self.oms_meters.copy()
+
+    def get_oms_stats(self) -> Dict[str, Any]:
+        """Return OMS statistics."""
+        total_meters = len(self.oms_meters)
+        total_messages = sum(m.get('message_count', 0) for m in self.oms_meters.values())
+        return {
+            'total_meters': total_meters,
+            'total_messages': total_messages
+        }
+
+    async def enable_vm_reception(self, writer: asyncio.streams.StreamWriter, bs_eui: str) -> None:
+        """Enable VM (Variable MAC) reception on a base station for OMS meter data.
+        
+        This sends a VM activation command to enable reception of VM sub-channel
+        messages from OMS/WMBUS meters.
+        """
+        try:
+            logger.info(f"📡 ENABLING VM RECEPTION for base station {bs_eui}")
+            
+            # Send vmEnableRx command to enable VM reception on all channels
+            # Per BSSCI spec, this enables the base station to receive VM uplink data
+            vm_enable_message = {
+                "command": "vmEnableRx",
+                "opId": self.opID,
+                "enable": True,
+                "vmChan": 0  # Channel 0 for broadcast/all
+            }
+            
+            msg_pack = encode_message(vm_enable_message)
+            full_message = IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack
+            
+            writer.write(full_message)
+            await writer.drain()
+            
+            logger.info(f"✅ VM RECEPTION ENABLED for base station {bs_eui}")
+            logger.info(f"   Operation ID: {self.opID}")
+            
+            self.opID -= 1
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to enable VM reception for {bs_eui}: {e}")
 
     def get_sensor_registration_status(self) -> Dict[str, Dict[str, Any]]:
         """Get registration status of all sensors"""

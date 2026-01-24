@@ -927,10 +927,18 @@ class TLSServer:
                             "uptime": message["uptime"],
                         }
                         
+                        cpu_load = message["cpuLoad"]
+                        mem_load = message["memLoad"]
+                        duty_cycle = message["dutyCycle"]
+                        
+                        cpu_pct = cpu_load if cpu_load > 1 else cpu_load * 100
+                        mem_pct = mem_load if mem_load > 1 else mem_load * 100
+                        duty_pct = duty_cycle if duty_cycle > 1 else duty_cycle * 100
+                        
                         self.base_station_health[bs_eui.lower()] = {
-                            "cpu": message["cpuLoad"] * 100,
-                            "memory": message["memLoad"] * 100,
-                            "duty_cycle": message["dutyCycle"] * 100,
+                            "cpu": cpu_pct,
+                            "memory": mem_pct,
+                            "duty_cycle": duty_pct,
                             "uptime": message["uptime"],
                             "last_update": datetime.now(timezone.utc).isoformat()
                         }

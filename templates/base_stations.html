@@ -62,6 +62,7 @@
                         <th>IP Address</th>
                         <th>CPU</th>
                         <th>Memory</th>
+                        <th>Duty Cycle</th>
                         <th>Temp</th>
                         <th>Connected Sensors</th>
                         <th>Actions</th>
@@ -142,6 +143,9 @@ function loadBaseStations() {
                 const memDisplay = bs.health?.memory !== undefined 
                     ? `${bs.health.memory.toFixed(1)}%` 
                     : '-';
+                const dutyDisplay = bs.health?.duty_cycle !== undefined 
+                    ? `${bs.health.duty_cycle.toFixed(1)}%` 
+                    : '-';
                 const tempDisplay = bs.health?.temperature !== undefined 
                     ? `${bs.health.temperature.toFixed(1)}°C` 
                     : 'N/A';
@@ -159,6 +163,7 @@ function loadBaseStations() {
                         <td>${ipDisplay}</td>
                         <td>${cpuDisplay}</td>
                         <td>${memDisplay}</td>
+                        <td>${dutyDisplay}</td>
                         <td>${tempDisplay}</td>
                         <td>${bs.connected_sensors || 0}</td>
                         <td>

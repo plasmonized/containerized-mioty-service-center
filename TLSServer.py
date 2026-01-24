@@ -934,7 +934,7 @@ class TLSServer:
                         
                         cpu_pct = cpu_load if cpu_load > 1 else cpu_load * 100
                         mem_pct = mem_load if mem_load > 1 else mem_load * 100
-                        duty_pct = duty_cycle if duty_cycle > 1 else duty_cycle * 100
+                        duty_pct = duty_cycle * 100
                         
                         health_data = {
                             "cpu": cpu_pct,

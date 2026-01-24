@@ -101,6 +101,10 @@ class TLSServer:
         # OMS Meter tracking for VM uplink data (WMBUS/wireless M-Bus meters)
         # meter_id -> {eui, snr, rssi, data, timestamp, bs_eui, message_count}
         self.oms_meters: Dict[str, Dict[str, Any]] = {}
+        
+        # VM Log for OMS page - stores last 100 VM-related log entries
+        self.vm_log: List[Dict[str, Any]] = []
+        self.vm_log_max_size = 100
 
         # Start the deduplication task
         asyncio.create_task(self.process_deduplication_buffer())
@@ -724,11 +728,27 @@ class TLSServer:
                             writer.write(full_message)
                             await writer.drain()
                             self.opID += 1
+                            
+                            await asyncio.sleep(0.1)
+                            
+                            logger.info(f"   📊 Sending VM status request to {bs_eui}")
+                            op_id = self.opID
+                            self.opID += 1
+                            
+                            self.pending_vm_operations[op_id] = {
+                                "type": "vm_status",
+                                "bs_eui": bs_eui,
+                                "timestamp": asyncio.get_event_loop().time()
+                            }
+                            
+                            vm_status_msg = encode_message(messages.build_vm_status_request(op_id))
+                            writer.write(IDENTIFIER + len(vm_status_msg).to_bytes(4, byteorder="little") + vm_status_msg)
+                            await writer.drain()
 
                         except Exception as e:
                             logger.error(f"   ❌ Failed to send status to {bs_eui}: {e}")
 
-                    logger.info(f"📊 STATUS REQUEST CYCLE COMPLETED")
+                    logger.info(f"📊 STATUS REQUEST CYCLE COMPLETED (incl. VM status)")
                 else:
                     logger.debug(f"📊 No base stations connected - skipping status requests")
 
@@ -911,13 +931,28 @@ class TLSServer:
                             "uptime": message["uptime"],
                         }
                         
-                        self.base_station_health[bs_eui.lower()] = {
-                            "cpu": message["cpuLoad"] * 100,
-                            "memory": message["memLoad"] * 100,
-                            "duty_cycle": message["dutyCycle"] * 100,
+                        cpu_load = message["cpuLoad"]
+                        mem_load = message["memLoad"]
+                        duty_cycle = message["dutyCycle"]
+                        temp = message.get("temp")
+                        
+                        cpu_pct = cpu_load if cpu_load > 1 else cpu_load * 100
+                        mem_pct = mem_load if mem_load > 1 else mem_load * 100
+                        duty_pct = duty_cycle * 100
+                        
+                        health_data = {
+                            "cpu": cpu_pct,
+                            "memory": mem_pct,
+                            "duty_cycle": duty_pct,
                             "uptime": message["uptime"],
                             "last_update": datetime.now(timezone.utc).isoformat()
                         }
+                        
+                        if temp is not None:
+                            health_data["temperature"] = temp
+                            logger.info(f"   Temperature: {temp:.1f}°C")
+                        
+                        self.base_station_health[bs_eui.lower()] = health_data
 
                         mqtt_topic = f"bs/{bs_eui.upper()}"
                         payload = json.dumps(data_dict)
@@ -1447,10 +1482,13 @@ class TLSServer:
                             logger.info(f"   Operation ID: {op_id}")
                             if mac_types:
                                 logger.info(f"   Active MAC Types: {mac_types}")
+                                mac_str = ", ".join([str(m) for m in mac_types])
+                                self.add_vm_log(f"BS {bs_eui}: Active MAC types: [{mac_str}]", "response")
                                 for mac_type in mac_types:
                                     logger.info(f"      - MAC Type {mac_type}")
                             else:
                                 logger.info(f"   No MAC Types active (VM reception not enabled)")
+                                self.add_vm_log(f"BS {bs_eui}: No MAC types active", "response")
                             logger.info(f"═══════════════════════════════════════════════════════════")
                             
                             if self.mqtt_out_queue:
@@ -1920,9 +1958,11 @@ class TLSServer:
                 await writer.drain()
                 
                 logger.info(f"   Sent VM activate to base station {bs_eui}")
+                self.add_vm_log(f"Sent vm.activate (macType={mac_type}) to BS {bs_eui}", "command")
                 success = True
             except Exception as e:
                 logger.error(f"   Failed to send VM activate to {bs_eui}: {e}")
+                self.add_vm_log(f"Failed vm.activate to BS {bs_eui}: {e}", "error")
         
         return success
     
@@ -1955,9 +1995,11 @@ class TLSServer:
                 await writer.drain()
                 
                 logger.info(f"   Sent VM deactivate to base station {bs_eui}")
+                self.add_vm_log(f"Sent vm.deactivate to BS {bs_eui}", "command")
                 success = True
             except Exception as e:
                 logger.error(f"   Failed to send VM deactivate to {bs_eui}: {e}")
+                self.add_vm_log(f"Failed vm.deactivate to BS {bs_eui}: {e}", "error")
         
         return success
     
@@ -1993,9 +2035,11 @@ class TLSServer:
                 await writer.drain()
                 
                 logger.info(f"   Sent VM status request to base station {bs_eui}")
+                self.add_vm_log(f"Sent vm.status to BS {bs_eui}", "command")
                 success = True
             except Exception as e:
                 logger.error(f"   Failed to send VM status to {bs_eui}: {e}")
+                self.add_vm_log(f"Failed vm.status to BS {bs_eui}: {e}", "error")
         
         return success
     
@@ -2048,6 +2092,22 @@ class TLSServer:
         except Exception as e:
             logger.error(f"   Failed to send VM downlink data: {e}")
             return False
+    
+    def add_vm_log(self, message: str, log_type: str = "info") -> None:
+        """Add entry to VM log for OMS page"""
+        import time
+        entry = {
+            "timestamp": time.time(),
+            "message": message,
+            "type": log_type
+        }
+        self.vm_log.append(entry)
+        if len(self.vm_log) > self.vm_log_max_size:
+            self.vm_log = self.vm_log[-self.vm_log_max_size:]
+    
+    def get_vm_log(self) -> list:
+        """Get VM log entries"""
+        return list(self.vm_log)
     
     def get_vm_status(self) -> dict:
         """Get VM sub-channel status for all sensors"""

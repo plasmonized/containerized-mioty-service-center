@@ -168,6 +168,7 @@
                                 <th>CPU</th>
                                 <th>Memory</th>
                                 <th>Duty Cycle</th>
+                                <th>Temp</th>
                                 <th>Uptime</th>
                             </tr>
                         </thead>
@@ -405,6 +406,7 @@ function updateBsTable(baseStations) {
             <td>${bs.cpu.toFixed(1)}%</td>
             <td>${bs.memory.toFixed(1)}%</td>
             <td>${bs.duty_cycle.toFixed(1)}%</td>
+            <td>${bs.temperature !== undefined ? bs.temperature.toFixed(1) + '°C' : 'N/A'}</td>
             <td>${formatUptime(bs.uptime)}</td>
         </tr>
     `).join('');

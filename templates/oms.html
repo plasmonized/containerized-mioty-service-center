@@ -34,6 +34,48 @@
     </div>
 </div>
 
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header" style="background-color: #ff8c00; color: white;">
+                <h5 class="mb-0">VM Sub-Channel Control</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6>Commands</h6>
+                        <div class="btn-group-vertical w-100" role="group">
+                            <button class="btn btn-outline-primary mb-2" onclick="sendVmStatus()">
+                                <i class="fas fa-info-circle"></i> Query VM Status
+                            </button>
+                            <button class="btn btn-outline-success mb-2" onclick="sendVmActivate(3)">
+                                <i class="fas fa-play"></i> Activate VM (macType 3 - OMS)
+                            </button>
+                            <button class="btn btn-outline-danger" onclick="sendVmDeactivate()">
+                                <i class="fas fa-stop"></i> Deactivate VM
+                            </button>
+                        </div>
+                        <div class="mt-3">
+                            <label class="form-label">Custom macType:</label>
+                            <div class="input-group">
+                                <input type="number" class="form-control" id="customMacType" value="3" min="0" max="255">
+                                <button class="btn btn-success" onclick="sendVmActivate(document.getElementById('customMacType').value)">Activate</button>
+                            </div>
+                            <small class="text-muted">macType 3 = OMS/WMBUS, 0 = Standard TS, 1 = Extended TS</small>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <h6>VM Log <button class="btn btn-sm btn-outline-secondary" onclick="refreshVmLog()"><i class="fas fa-sync-alt"></i></button></h6>
+                        <div id="vm-log" class="bg-dark text-light p-2 rounded" style="height: 200px; overflow-y: auto; font-family: monospace; font-size: 12px;">
+                            <span class="text-muted">Loading VM log...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="card">
     <div class="card-header" style="background-color: #ff8c00; color: white;">
         <h5 class="mb-0">Detected OMS Meters (WMBUS)</h5>
@@ -143,6 +185,100 @@ function refreshData() {
 }
 
 refreshData();
+refreshVmLog();
 refreshInterval = setInterval(refreshData, 30000);
+setInterval(refreshVmLog, 10000);
+
+function refreshVmLog() {
+    fetch('/api/vm/log')
+        .then(response => response.json())
+        .then(data => {
+            const logDiv = document.getElementById('vm-log');
+            if (data.success && data.entries && data.entries.length > 0) {
+                logDiv.innerHTML = data.entries.map(e => {
+                    const timeStr = new Date(e.timestamp * 1000).toLocaleTimeString();
+                    const typeClass = e.type === 'error' ? 'text-danger' : 
+                                     e.type === 'response' ? 'text-success' : 
+                                     e.type === 'command' ? 'text-info' : 'text-light';
+                    return `<div class="${typeClass}">[${timeStr}] ${e.message}</div>`;
+                }).join('');
+                logDiv.scrollTop = logDiv.scrollHeight;
+            } else {
+                logDiv.innerHTML = '<span class="text-muted">No VM log entries yet. Send a command to see activity.</span>';
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching VM log:', error);
+        });
+}
+
+function sendVmStatus() {
+    addVmLogEntry('Sending vm.status request...', 'command');
+    fetch('/api/vm/status', { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                addVmLogEntry('vm.status sent to ' + (data.base_stations_count || 0) + ' base station(s)', 'response');
+            } else {
+                addVmLogEntry('Error: ' + (data.error || 'Unknown error'), 'error');
+            }
+            setTimeout(refreshVmLog, 1000);
+        })
+        .catch(error => {
+            addVmLogEntry('Error: ' + error.message, 'error');
+        });
+}
+
+function sendVmActivate(macType) {
+    macType = parseInt(macType);
+    addVmLogEntry('Sending vm.activate (macType=' + macType + ')...', 'command');
+    fetch('/api/vm/activate', { 
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ macType: macType })
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                addVmLogEntry('vm.activate sent successfully', 'response');
+            } else {
+                addVmLogEntry('Error: ' + (data.error || 'Unknown error'), 'error');
+            }
+            setTimeout(refreshVmLog, 1000);
+        })
+        .catch(error => {
+            addVmLogEntry('Error: ' + error.message, 'error');
+        });
+}
+
+function sendVmDeactivate() {
+    addVmLogEntry('Sending vm.deactivate...', 'command');
+    fetch('/api/vm/deactivate', { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                addVmLogEntry('vm.deactivate sent successfully', 'response');
+            } else {
+                addVmLogEntry('Error: ' + (data.error || 'Unknown error'), 'error');
+            }
+            setTimeout(refreshVmLog, 1000);
+        })
+        .catch(error => {
+            addVmLogEntry('Error: ' + error.message, 'error');
+        });
+}
+
+function addVmLogEntry(message, type) {
+    const logDiv = document.getElementById('vm-log');
+    const timeStr = new Date().toLocaleTimeString();
+    const typeClass = type === 'error' ? 'text-danger' : 
+                     type === 'response' ? 'text-success' : 
+                     type === 'command' ? 'text-info' : 'text-light';
+    const newEntry = document.createElement('div');
+    newEntry.className = typeClass;
+    newEntry.textContent = '[' + timeStr + '] ' + message;
+    logDiv.appendChild(newEntry);
+    logDiv.scrollTop = logDiv.scrollHeight;
+}
 </script>
 {% endblock %}

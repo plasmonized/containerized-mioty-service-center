@@ -930,18 +930,25 @@ class TLSServer:
                         cpu_load = message["cpuLoad"]
                         mem_load = message["memLoad"]
                         duty_cycle = message["dutyCycle"]
+                        temp = message.get("temp")
                         
                         cpu_pct = cpu_load if cpu_load > 1 else cpu_load * 100
                         mem_pct = mem_load if mem_load > 1 else mem_load * 100
                         duty_pct = duty_cycle if duty_cycle > 1 else duty_cycle * 100
                         
-                        self.base_station_health[bs_eui.lower()] = {
+                        health_data = {
                             "cpu": cpu_pct,
                             "memory": mem_pct,
                             "duty_cycle": duty_pct,
                             "uptime": message["uptime"],
                             "last_update": datetime.now(timezone.utc).isoformat()
                         }
+                        
+                        if temp is not None:
+                            health_data["temperature"] = temp
+                            logger.info(f"   Temperature: {temp:.1f}°C")
+                        
+                        self.base_station_health[bs_eui.lower()] = health_data
 
                         mqtt_topic = f"bs/{bs_eui.upper()}"
                         payload = json.dumps(data_dict)

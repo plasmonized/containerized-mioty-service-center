@@ -1399,7 +1399,7 @@ class TLSServer:
                             await self.mqtt_out_queue.put(detach_response_notification)
 
                     # Variable MAC (VM) Sub-Channel Message Handlers
-                    elif msg_type == "vmActRsp":
+                    elif msg_type in ("vm.activateRsp", "vmActRsp"):
                         op_id = message.get("opId", "unknown")
                         code = message.get("code", -1)
                         bs_eui = self.connected_base_stations.get(writer, "unknown")
@@ -1441,13 +1441,13 @@ class TLSServer:
                                     })
                                 })
                     
-                    elif msg_type == "vmActCmp":
+                    elif msg_type in ("vm.activateCmp", "vmActCmp"):
                         op_id = message.get("opId", "unknown")
                         bs_eui = self.connected_base_stations.get(writer, "unknown")
                         logger.info(f"📡 VM ACTIVATE COMPLETE - Operation {op_id}")
                         self._add_vm_log("vm.activateCmp received", f"Operation {op_id} complete", bs_eui)
                     
-                    elif msg_type == "vmDeactRsp":
+                    elif msg_type in ("vm.deactivateRsp", "vmDeactRsp"):
                         op_id = message.get("opId", "unknown")
                         code = message.get("code", -1)
                         
@@ -1512,25 +1512,61 @@ class TLSServer:
                                     })
                                 })
                     
-                    elif msg_type == "vm.statusCmp":
+                    elif msg_type in ("vm.statusCmp", "vmStatusCmp"):
                         op_id = message.get("opId", "unknown")
                         bs_eui = self.connected_base_stations.get(writer, "unknown")
                         logger.info(f"📊 VM STATUS COMPLETE - Operation {op_id}")
                         self._add_vm_log("vm.statusCmp received", f"Operation {op_id} complete", bs_eui)
                     
-                    elif msg_type == "vmUlData":
-                        eui = int(message["epEui"]).to_bytes(8, byteorder="big").hex()
+                    elif msg_type in ("vm.deactivateCmp", "vmDeactCmp"):
+                        op_id = message.get("opId", "unknown")
+                        bs_eui = self.connected_base_stations.get(writer, "unknown")
+                        logger.info(f"📡 VM DEACTIVATE COMPLETE - Operation {op_id}")
+                        self._add_vm_log("vm.deactivateCmp received", f"Operation {op_id} complete", bs_eui)
+                    
+                    elif msg_type in ("vm.dlDataCmp", "vmDlDataCmp"):
+                        op_id = message.get("opId", "unknown")
+                        bs_eui = self.connected_base_stations.get(writer, "unknown")
+                        logger.info(f"📤 VM DOWNLINK DATA COMPLETE - Operation {op_id}")
+                        self._add_vm_log("vm.dlDataCmp received", f"Operation {op_id} complete", bs_eui)
+                    
+                    elif msg_type in ("vm.ulDataCmp", "vmUlDataCmp"):
+                        op_id = message.get("opId", "unknown")
+                        bs_eui = self.connected_base_stations.get(writer, "unknown")
+                        logger.info(f"📨 VM UPLINK DATA COMPLETE - Operation {op_id}")
+                        self._add_vm_log("vm.ulDataCmp received", f"Operation {op_id} complete", bs_eui)
+                    
+                    elif msg_type in ("vm.ulData", "vmUlData"):
                         bs_eui = self.connected_base_stations.get(writer, "unknown")
                         op_id = message.get("opId", 0)
-                        port = message.get("port", 1)
-                        data = message.get("data", [])
+                        mac_type = message.get("macType", 0)
+                        # Per BSSCI spec: userData is the U-MPDU starting after MAC-Type
+                        data = message.get("userData", message.get("data", []))
                         snr = message.get("snr", 0)
                         rssi = message.get("rssi", 0)
+                        trx_time = message.get("trxTime", 0)
+                        sys_time = message.get("sysTime", 0)
+                        freq_off = message.get("freqOff", 0)
+                        eq_snr = message.get("eqSnr", None)
+                        carr_space = message.get("carrSpace", 1)
+                        patt_grp = message.get("pattGrp", 0)
+                        patt_num = message.get("pattNum", 0)
+                        # Legacy support for epEui (some implementations may use it)
+                        eui = ""
+                        if "epEui" in message:
+                            eui = int(message["epEui"]).to_bytes(8, byteorder="big").hex()
+                        port = message.get("port", 1)
                         
-                        logger.info(f"📨 VM UPLINK DATA received from sensor {eui}")
-                        logger.info(f"   Port: {port}, Data length: {len(data)} bytes")
+                        logger.info(f"📨 VM UPLINK DATA received (macType={mac_type})")
+                        logger.info(f"   Operation ID: {op_id}")
+                        if eui:
+                            logger.info(f"   Sensor EUI: {eui}")
+                        logger.info(f"   Data length: {len(data)} bytes")
                         logger.info(f"   Via base station: {bs_eui}")
-                        logger.info(f"   SNR: {snr}, RSSI: {rssi}")
+                        logger.info(f"   SNR: {snr} dB, RSSI: {rssi} dBm")
+                        if eq_snr is not None:
+                            logger.info(f"   Equivalent SNR: {eq_snr} dB")
+                        logger.info(f"   Carrier spacing: {carr_space} (0=narrow, 1=standard, 2=wide)")
                         
                         # Parse OMS meter ID from WMBUS payload (if applicable)
                         data_hex = bytes(data).hex() if isinstance(data, list) else data
@@ -1560,33 +1596,46 @@ class TLSServer:
                                     'message_count': 1
                                 }
                         
-                        # Send acknowledgment
+                        # Send acknowledgment (vm.ulDataRsp)
                         msg_pack = encode_message(messages.build_vm_ul_data_response(op_id))
                         writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
                         await writer.drain()
                         
-                        # Update last seen
-                        self.sensor_last_seen[eui.upper()] = asyncio.get_event_loop().time()
+                        # Update last seen (use meter_id if no EUI available)
+                        identifier = eui.upper() if eui else (meter_id or f"vm_{op_id}")
+                        if eui:
+                            self.sensor_last_seen[eui.upper()] = asyncio.get_event_loop().time()
                         
                         # Increment VM message counter
                         self.traffic_metrics['vm_messages'] += 1
                         
+                        # Log VM uplink data
+                        self._add_vm_log("vm.ulData received", 
+                                        f"macType={mac_type}, meter={meter_id or 'N/A'}, {len(data)} bytes", 
+                                        bs_eui)
+                        
                         # Publish to MQTT
                         if self.mqtt_out_queue:
+                            # Use meter_id for topic if available, else EUI, else generic vm topic
+                            topic_id = meter_id or eui.upper() or "unknown"
                             await self.mqtt_out_queue.put({
-                                "topic": f"ep/{eui.upper()}/vm/ul",
+                                "topic": f"vm/{topic_id}/ul",
                                 "payload": json.dumps({
                                     "bs_eui": bs_eui,
-                                    "port": port,
+                                    "mac_type": mac_type,
+                                    "eui": eui.upper() if eui else None,
                                     "data": data_hex,
                                     "meter_id": meter_id,
                                     "snr": snr,
                                     "rssi": rssi,
+                                    "eq_snr": eq_snr,
+                                    "freq_off": freq_off,
+                                    "carr_space": carr_space,
                                     "timestamp": asyncio.get_event_loop().time()
                                 })
                             })
                     
-                    elif msg_type == "vmDlDataRsp":
+                    elif msg_type in ("vm.dlDataRsp", "vmDlDataRsp"):
                         op_id = message.get("opId", "unknown")
                         code = message.get("code", -1)
                         
@@ -2006,17 +2055,19 @@ class TLSServer:
         
         return success
     
-    async def vm_deactivate(self, only_vm_capable: bool = False) -> bool:
+    async def vm_deactivate(self, mac_type: int = 0, only_vm_capable: bool = False) -> bool:
         """Deactivate VM sub-channel reception
         
         Per BSSCI VM specification:
         - command: "vm.deactivate"
         - opId: Numeric ID of the operation
+        - macType: Numeric - MAC-Type of the intended Variable MAC
         
         Args:
+            mac_type: MAC-Type to deactivate (0=OMS metering)
             only_vm_capable: If True, only send to base stations known to support VM
         """
-        logger.info(f"📡 VM DEACTIVATE request, only_vm_capable={only_vm_capable}")
+        logger.info(f"📡 VM DEACTIVATE request, macType={mac_type}, only_vm_capable={only_vm_capable}")
         
         if not self.connected_base_stations:
             logger.warning("   No base stations connected")
@@ -2039,15 +2090,16 @@ class TLSServer:
                 
                 self.pending_vm_operations[op_id] = {
                     "operation": "deactivate",
+                    "mac_type": mac_type,
                     "timestamp": asyncio.get_event_loop().time()
                 }
                 
-                msg_pack = encode_message(messages.build_vm_deactivate_request(op_id))
+                msg_pack = encode_message(messages.build_vm_deactivate_request(op_id, mac_type))
                 writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
                 await writer.drain()
                 
-                logger.info(f"   Sent VM deactivate to base station {bs_eui}")
-                self._add_vm_log("vm.deactivate sent", "Deactivate request", bs_eui)
+                logger.info(f"   Sent VM deactivate (macType={mac_type}) to base station {bs_eui}")
+                self._add_vm_log("vm.deactivate sent", f"macType={mac_type}", bs_eui)
                 success = True
             except Exception as e:
                 logger.error(f"   Failed to send VM deactivate to {bs_eui}: {e}")

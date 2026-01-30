@@ -2504,7 +2504,7 @@ def vm_activate():
 def vm_deactivate():
     """Deactivate VM sub-channel reception on VM-capable base stations only
     
-    Per BSSCI VM specification, this sends vm.deactivate.
+    Per BSSCI VM specification, this sends vm.deactivate with macType parameter.
     Only sends to base stations that have been confirmed as VM-capable.
     """
     try:
@@ -2512,15 +2512,18 @@ def vm_deactivate():
         if not tls_server_instance:
             return jsonify({'success': False, 'message': 'TLS server not available'}), 503
         
+        data = request.json or {}
+        mac_type = data.get('macType', 0)
+        
         import asyncio
         loop = asyncio.new_event_loop()
         try:
-            success = loop.run_until_complete(tls_server_instance.vm_deactivate(only_vm_capable=True))
+            success = loop.run_until_complete(tls_server_instance.vm_deactivate(mac_type, only_vm_capable=True))
         finally:
             loop.close()
         
         if success:
-            return jsonify({'success': True, 'message': 'VM deactivate sent to VM-capable base stations'})
+            return jsonify({'success': True, 'message': f'VM deactivate sent to VM-capable base stations (macType={mac_type})'})
         else:
             return jsonify({'success': False, 'message': 'No VM-capable base stations found'})
     except Exception as e:

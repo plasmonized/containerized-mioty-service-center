@@ -220,7 +220,16 @@ a.card-link {
         <div class="col-6 col-md-3">
             <a href="/base-stations" class="card-link">
                 <div class="status-card primary" id="bs-card">
-                    <div class="status-icon"><img src="/static/images/base_station_icon.png" alt="Base Station"></div>
+                    <div class="status-icon">
+                        <svg width="50" height="50" viewBox="0 0 24 24" fill="currentColor">
+                            <polygon points="12,2 8,22 10,22 12,12 14,22 16,22"/>
+                            <line x1="6" y1="18" x2="18" y2="18" stroke="currentColor" stroke-width="1.5"/>
+                            <line x1="7" y1="14" x2="17" y2="14" stroke="currentColor" stroke-width="1.5"/>
+                            <path d="M6 6c0 0 2-2 6-2s6 2 6 2" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.7"/>
+                            <path d="M8 8c0 0 1.5-1.5 4-1.5s4 1.5 4 1.5" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.5"/>
+                            <circle cx="12" cy="5" r="1.5"/>
+                        </svg>
+                    </div>
                     <div class="status-value" id="bs-count">0</div>
                     <div class="status-label">Base Stations</div>
                     <div class="eui-list" id="bs-euis"></div>

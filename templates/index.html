@@ -14,6 +14,20 @@
 .status-card:hover {
     transform: translateY(-2px);
     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    cursor: pointer;
+}
+a.card-link {
+    text-decoration: none;
+    color: inherit;
+    display: block;
+    height: 100%;
+}
+.health-card.clickable:hover {
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    cursor: pointer;
+}
+.health-header.clickable:hover {
+    opacity: 0.9;
 }
 .status-card.success {
     background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
@@ -174,46 +188,54 @@
     <!-- Status Cards Row -->
     <div class="row g-3 mb-4">
         <div class="col-6 col-md-3">
-            <div class="status-card" id="tls-card">
-                <div class="status-icon">&#128274;</div>
-                <div class="status-value" id="tls-status">--</div>
-                <div class="status-label">TLS Server</div>
-                <div class="status-detail" id="tls-detail">Port --</div>
-            </div>
+            <a href="/config" class="card-link">
+                <div class="status-card" id="tls-card">
+                    <div class="status-icon">&#128274;</div>
+                    <div class="status-value" id="tls-status">--</div>
+                    <div class="status-label">TLS Server</div>
+                    <div class="status-detail" id="tls-detail">Port --</div>
+                </div>
+            </a>
         </div>
         <div class="col-6 col-md-3">
-            <div class="status-card" id="mqtt-card">
-                <div class="status-icon">&#128225;</div>
-                <div class="status-value" id="mqtt-status">--</div>
-                <div class="status-label">MQTT Broker</div>
-                <div class="status-detail" id="mqtt-detail">--</div>
-            </div>
+            <a href="/config" class="card-link">
+                <div class="status-card" id="mqtt-card">
+                    <div class="status-icon">&#128225;</div>
+                    <div class="status-value" id="mqtt-status">--</div>
+                    <div class="status-label">MQTT Broker</div>
+                    <div class="status-detail" id="mqtt-detail">--</div>
+                </div>
+            </a>
         </div>
         <div class="col-6 col-md-3">
-            <div class="status-card primary" id="bs-card">
-                <div class="status-icon">&#128752;</div>
-                <div class="status-value" id="bs-count">0</div>
-                <div class="status-label">Base Stations</div>
-                <div class="eui-list" id="bs-euis"></div>
-            </div>
+            <a href="/base_stations" class="card-link">
+                <div class="status-card primary" id="bs-card">
+                    <div class="status-icon">&#128752;</div>
+                    <div class="status-value" id="bs-count">0</div>
+                    <div class="status-label">Base Stations</div>
+                    <div class="eui-list" id="bs-euis"></div>
+                </div>
+            </a>
         </div>
         <div class="col-6 col-md-3">
-            <div class="status-card info" id="sensor-card">
-                <div class="status-icon">&#128225;</div>
-                <div class="status-value" id="sensor-count">0</div>
-                <div class="status-label">Sensoren aktiv</div>
-                <div class="status-detail" id="sensor-detail">0 konfiguriert</div>
-            </div>
+            <a href="/sensors" class="card-link">
+                <div class="status-card info" id="sensor-card">
+                    <div class="status-icon">&#128225;</div>
+                    <div class="status-value" id="sensor-count">0</div>
+                    <div class="status-label">Sensoren aktiv</div>
+                    <div class="status-detail" id="sensor-detail">0 konfiguriert</div>
+                </div>
+            </a>
         </div>
     </div>
 
     <!-- Network Topology and System Health Row -->
     <div class="row g-3 mb-4">
         <div class="col-md-8">
-            <div class="health-card h-100">
-                <div class="health-header d-flex justify-content-between align-items-center">
+            <div class="health-card h-100 clickable" onclick="window.location='/network'">
+                <div class="health-header d-flex justify-content-between align-items-center clickable">
                     <h5 class="mb-0">&#128752; Netzwerk Topologie</h5>
-                    <small class="opacity-75">Nur Ansicht</small>
+                    <small class="opacity-75">Klicken zum Bearbeiten</small>
                 </div>
                 <div class="card-body p-2">
                     <div id="cy-mini" class="network-container"></div>
@@ -259,8 +281,8 @@
     <!-- Sensor Health and Network Stats Row -->
     <div class="row g-3">
         <div class="col-md-6">
-            <div class="health-card">
-                <div class="health-header">
+            <div class="health-card clickable" onclick="window.location='/health'">
+                <div class="health-header clickable">
                     <h5 class="mb-0">&#128202; Sensor Signalqualität</h5>
                 </div>
                 <div class="health-body">
@@ -318,8 +340,8 @@
             </div>
         </div>
         <div class="col-md-6">
-            <div class="health-card">
-                <div class="health-header">
+            <div class="health-card clickable" onclick="window.location='/traffic'">
+                <div class="health-header clickable">
                     <h5 class="mb-0">&#128202; Netzwerk Statistik</h5>
                 </div>
                 <div class="health-body">

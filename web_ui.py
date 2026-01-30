@@ -2081,30 +2081,11 @@ def perform_update():
         
         ctx = ssl.create_default_context()
         
-        # First: Try to download from latest release (tag)
-        download_sources = []
-        
-        try:
-            releases_url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
-            req = urllib.request.Request(releases_url, headers={'User-Agent': 'BSSCI-Service-Center'})
-            with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
-                data = json.loads(response.read().decode())
-                tag_name = data.get('tag_name', '')
-                if tag_name:
-                    # Add release tag as first priority
-                    download_sources.append(('tag', tag_name, f"https://github.com/{GITHUB_REPO}/archive/refs/tags/{tag_name}.zip"))
-                    logger.info(f"Found release tag: {tag_name}")
-        except Exception as e:
-            logger.warning(f"Could not fetch latest release: {e}")
-        
-        # Fallback: Add branch sources
+        # Try main branch first, then master
         for branch in ['main', 'master']:
-            download_sources.append(('branch', branch, f"https://github.com/{GITHUB_REPO}/archive/refs/heads/{branch}.zip"))
-        
-        # Try each source in order
-        for source_type, source_name, zip_url in download_sources:
+            zip_url = f"https://github.com/{GITHUB_REPO}/archive/refs/heads/{branch}.zip"
+            
             try:
-                logger.info(f"Trying to download from {source_type}: {source_name}")
                 with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp_file:
                     tmp_path = tmp_file.name
                     req = urllib.request.Request(zip_url, headers={'User-Agent': 'BSSCI-Service-Center'})
@@ -2145,17 +2126,17 @@ def perform_update():
                 
                 return {
                     'success': True, 
-                    'message': f'Update completed via GitHub ({source_type}: {source_name})',
+                    'message': f'Update completed via GitHub ({branch} branch)',
                     'backup_dir': backup_result['backup_dir'],
                     'updated_files': updated_files
                 }
             except urllib.error.HTTPError as e:
                 if e.code == 404:
-                    logger.warning(f"Source {source_type} {source_name} not found, trying next...")
+                    logger.warning(f"Branch {branch} not found, trying next...")
                     continue
                 raise
         
-        return {'success': False, 'error': 'Could not download from GitHub (no valid release or branch found)'}
+        return {'success': False, 'error': 'Could not download from GitHub (no valid branch found)'}
         
     except PermissionError as e:
         logger.error(f"Update failed - permission denied: {e}")

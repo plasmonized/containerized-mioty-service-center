@@ -1711,6 +1711,65 @@ class TLSServer:
                                     })
                                 })
 
+                    elif msg_type == "error":
+                        # Error response from base station - must acknowledge to prevent timeout
+                        # Per BSSCI spec: Error can be sent instead of normal response
+                        op_id = message.get("opId", 0)
+                        code = message.get("code", -1)
+                        error_msg = message.get("message", "Unknown error")
+                        bs_eui = self.connected_base_stations.get(writer, "unknown")
+                        
+                        logger.warning(f"⚠️  ERROR RESPONSE from base station {bs_eui}")
+                        logger.warning(f"   Operation ID: {op_id}")
+                        logger.warning(f"   Error Code: {code}")
+                        logger.warning(f"   Error Message: {error_msg}")
+                        
+                        # Determine what operation this error is for and send appropriate complete
+                        # Negative opIds are from our requests (Service Center initiated)
+                        if op_id < 0:
+                            # This was our request - check pending operations
+                            if op_id in self.pending_vm_operations:
+                                pending = self.pending_vm_operations.pop(op_id)
+                                op_type = pending.get("operation", "unknown")
+                                logger.warning(f"   VM operation '{op_type}' failed")
+                                self.add_vm_log(f"BS {bs_eui}: Error - {error_msg} (code {code})", "error")
+                                
+                                # Send appropriate complete message based on operation type
+                                if op_type == "status":
+                                    msg_pack = encode_message({"command": "vm.statusCmp", "opId": op_id})
+                                elif op_type == "activate":
+                                    msg_pack = encode_message({"command": "vm.activateCmp", "opId": op_id})
+                                elif op_type == "deactivate":
+                                    msg_pack = encode_message({"command": "vm.deactivateCmp", "opId": op_id})
+                                else:
+                                    # Generic error acknowledgment - try statusCmp as fallback
+                                    msg_pack = encode_message({"command": "vm.statusCmp", "opId": op_id})
+                                
+                                writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
+                                await writer.drain()
+                                logger.info(f"✅ Error acknowledged with complete message for opId {op_id}")
+                            elif op_id in self.pending_attach_requests:
+                                # Attach request failed
+                                pending = self.pending_attach_requests.pop(op_id)
+                                sensor_eui = pending.get("sensor_eui", "unknown")
+                                logger.warning(f"   Attach request for sensor {sensor_eui} failed")
+                                
+                                msg_pack = encode_message({"command": "attPrpCmp", "opId": op_id})
+                                writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
+                                await writer.drain()
+                                logger.info(f"✅ Attach error acknowledged with complete message for opId {op_id}")
+                            else:
+                                # Unknown pending operation - still need to acknowledge somehow
+                                # Try to send a generic statusCmp to prevent timeout
+                                logger.warning(f"   Unknown pending operation for opId {op_id}, sending statusCmp")
+                                msg_pack = encode_message({"command": "statusCmp", "opId": op_id})
+                                writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
+                                await writer.drain()
+                                logger.info(f"✅ Error acknowledged with statusCmp for opId {op_id}")
+                        else:
+                            # Positive opId - base station initiated, we should respond
+                            logger.warning(f"   Base station error for its own operation {op_id}")
+
                     else:
                         logger.warning(f"[WARN] Unknown message type: {msg_type} - Message: {message}")
 

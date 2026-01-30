@@ -1956,27 +1956,31 @@ def check_for_updates():
             updates_available = False
             status_message = 'Cannot connect to GitHub to check for updates'
         elif current.startswith('v') and remote.startswith('v'):
+            # Both are version numbers - compare them
             current_ver = parse_version(current)
             remote_ver = parse_version(remote)
             if remote_ver > current_ver:
                 updates_available = True
                 status_message = f'Update available: {current} → {remote}'
         elif "commit-" in current and "commit-" in remote:
+            # Both are commit hashes
             current_hash = current.split("commit-")[1].split()[0][:7]
             remote_hash = remote.split("commit-")[1].split()[0][:7]
             if current_hash != remote_hash:
                 updates_available = True
         elif current.startswith("local-") or current.startswith("v"):
+            # Local installation or version, but remote is commit-based
             updates_available = True
             status_message = 'Update available'
         
+        # Get recent commits via GitHub API
         recent_commits = []
         try:
             import urllib.request
             import ssl
             ctx = ssl.create_default_context()
             
-            api_url = f"https://api.github.com/repos/{GITHUB_REPO}/commits?sha=main&per_page=5"
+            api_url = f"https://api.github.com/repos/{GITHUB_REPO}/commits?per_page=5"
             req = urllib.request.Request(api_url, headers={'User-Agent': 'BSSCI-Service-Center'})
             
             with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
@@ -1987,6 +1991,7 @@ def check_for_updates():
                         'message': commit['commit']['message'].split('\n')[0][:60]
                     })
                 
+                # If we got commits but remote was unavailable, use first commit as remote version
                 if commits_data and remote in ['remote-unavailable', 'remote-check-unavailable']:
                     first_commit = commits_data[0]
                     remote_hash = first_commit['sha'][:7]
@@ -2056,7 +2061,6 @@ def perform_update():
         if os.path.exists('.git'):
             try:
                 subprocess.run(['git', 'reset', '--hard', 'HEAD'], capture_output=True, timeout=30)
-                subprocess.run(['git', 'fetch', 'origin'], capture_output=True, timeout=30)
                 result = subprocess.run(['git', 'pull', 'origin', 'main'], 
                                       capture_output=True, text=True, timeout=60)
                 if result.returncode == 0:
@@ -2077,9 +2081,8 @@ def perform_update():
         
         ctx = ssl.create_default_context()
         
-        branches_to_try = ['main', 'master']
-        
-        for branch in branches_to_try:
+        # Try main branch first, then master
+        for branch in ['main', 'master']:
             zip_url = f"https://github.com/{GITHUB_REPO}/archive/refs/heads/{branch}.zip"
             
             try:
@@ -2548,23 +2551,6 @@ def vm_query_status():
             return jsonify({'success': False, 'message': 'No base stations connected'})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
-
-@app.route('/api/vm/log')
-@login_required
-def get_vm_log():
-    """Get VM log entries for OMS page"""
-    try:
-        global tls_server_instance
-        if not tls_server_instance:
-            return jsonify({'success': False, 'entries': []})
-        
-        if hasattr(tls_server_instance, 'get_vm_log'):
-            entries = tls_server_instance.get_vm_log()
-            return jsonify({'success': True, 'entries': entries})
-        else:
-            return jsonify({'success': True, 'entries': []})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/vm/send/<eui>', methods=['POST'])
 @login_required

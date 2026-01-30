@@ -101,10 +101,6 @@ class TLSServer:
         # OMS Meter tracking for VM uplink data (WMBUS/wireless M-Bus meters)
         # meter_id -> {eui, snr, rssi, data, timestamp, bs_eui, message_count}
         self.oms_meters: Dict[str, Dict[str, Any]] = {}
-        
-        # VM Log for OMS page - stores last 100 VM-related log entries
-        self.vm_log: List[Dict[str, Any]] = []
-        self.vm_log_max_size = 100
 
         # Start the deduplication task
         asyncio.create_task(self.process_deduplication_buffer())
@@ -727,28 +723,12 @@ class TLSServer:
 
                             writer.write(full_message)
                             await writer.drain()
-                            self.opID -= 1
-                            
-                            await asyncio.sleep(0.1)
-                            
-                            logger.info(f"   📊 Sending VM status request to {bs_eui}")
-                            op_id = self.opID
-                            self.opID -= 1
-                            
-                            self.pending_vm_operations[op_id] = {
-                                "type": "vm_status",
-                                "bs_eui": bs_eui,
-                                "timestamp": asyncio.get_event_loop().time()
-                            }
-                            
-                            vm_status_msg = encode_message(messages.build_vm_status_request(op_id))
-                            writer.write(IDENTIFIER + len(vm_status_msg).to_bytes(4, byteorder="little") + vm_status_msg)
-                            await writer.drain()
+                            self.opID += 1
 
                         except Exception as e:
                             logger.error(f"   ❌ Failed to send status to {bs_eui}: {e}")
 
-                    logger.info(f"📊 STATUS REQUEST CYCLE COMPLETED (incl. VM status)")
+                    logger.info(f"📊 STATUS REQUEST CYCLE COMPLETED")
                 else:
                     logger.debug(f"📊 No base stations connected - skipping status requests")
 
@@ -931,28 +911,13 @@ class TLSServer:
                             "uptime": message["uptime"],
                         }
                         
-                        cpu_load = message["cpuLoad"]
-                        mem_load = message["memLoad"]
-                        duty_cycle = message["dutyCycle"]
-                        temp = message.get("temp")
-                        
-                        cpu_pct = cpu_load if cpu_load > 1 else cpu_load * 100
-                        mem_pct = mem_load if mem_load > 1 else mem_load * 100
-                        duty_pct = duty_cycle * 100
-                        
-                        health_data = {
-                            "cpu": cpu_pct,
-                            "memory": mem_pct,
-                            "duty_cycle": duty_pct,
+                        self.base_station_health[bs_eui.lower()] = {
+                            "cpu": message["cpuLoad"] * 100,
+                            "memory": message["memLoad"] * 100,
+                            "duty_cycle": message["dutyCycle"] * 100,
                             "uptime": message["uptime"],
                             "last_update": datetime.now(timezone.utc).isoformat()
                         }
-                        
-                        if temp is not None:
-                            health_data["temperature"] = temp
-                            logger.info(f"   Temperature: {temp:.1f}°C")
-                        
-                        self.base_station_health[bs_eui.lower()] = health_data
 
                         mqtt_topic = f"bs/{bs_eui.upper()}"
                         payload = json.dumps(data_dict)
@@ -1136,119 +1101,6 @@ class TLSServer:
                         logger.info(f"📤 BSSCI DETACH COMPLETE sent for opID {op_id}")
                         logger.info(f"✅ Detach operation completed successfully")
                         logger.info("   =====================================")
-
-                    elif msg_type == "att":
-                        # Over-the-air attach initiated by base station
-                        # Per BSSCI spec 5.6: Base station sends att when sensor attaches OTA
-                        op_id = message.get("opId", 0)
-                        ep_eui = int(message["epEui"]).to_bytes(8, byteorder="big").hex().upper()
-                        bs_eui = self.connected_base_stations.get(writer, "unknown")
-                        
-                        logger.info(f"📡 OTA ATTACH REQUEST from base station {bs_eui}")
-                        logger.info(f"   Sensor EUI: {ep_eui}")
-                        logger.info(f"   Operation ID: {op_id}")
-                        logger.info(f"   Attach Counter: {message.get('attachCnt', 'N/A')}")
-                        logger.info(f"   SNR: {message.get('snr', 'N/A')} dB")
-                        logger.info(f"   RSSI: {message.get('rssi', 'N/A')} dBm")
-                        
-                        # Look up sensor config to get network key
-                        sensor_config = None
-                        for sensor in self.sensor_config:
-                            if sensor['eui'].upper() == ep_eui:
-                                sensor_config = sensor
-                                break
-                        
-                        if sensor_config:
-                            # Send attach response with network key
-                            nwk_key = list(bytes.fromhex(sensor_config['nwKey']))
-                            sh_addr = int.from_bytes(bytes.fromhex(sensor_config['shortAddr']), "big") if sensor_config.get('shortAddr') else None
-                            
-                            msg_pack = encode_message(messages.build_attach_response(op_id, nwk_key, sh_addr))
-                            writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
-                            await writer.drain()
-                            logger.info(f"✅ OTA ATTACH RESPONSE sent for sensor {ep_eui}")
-                        else:
-                            # Unknown sensor - still need to respond
-                            logger.warning(f"⚠️  Unknown sensor {ep_eui} trying to attach OTA")
-                            # Send empty response to prevent timeout
-                            msg_pack = encode_message(messages.build_attach_response(op_id, [0]*16, 0))
-                            writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
-                            await writer.drain()
-                    
-                    elif msg_type == "attCmp":
-                        # Attach complete from base station
-                        op_id = message.get("opId", 0)
-                        logger.info(f"✅ OTA ATTACH COMPLETE received, opId: {op_id}")
-                    
-                    elif msg_type == "det":
-                        # Over-the-air detach initiated by base station
-                        # Per BSSCI spec 5.7: Base station sends det when sensor detaches OTA
-                        op_id = message.get("opId", 0)
-                        ep_eui = int(message["epEui"]).to_bytes(8, byteorder="big").hex().upper()
-                        bs_eui = self.connected_base_stations.get(writer, "unknown")
-                        
-                        logger.info(f"📡 OTA DETACH REQUEST from base station {bs_eui}")
-                        logger.info(f"   Sensor EUI: {ep_eui}")
-                        logger.info(f"   Operation ID: {op_id}")
-                        
-                        # Send detach response
-                        msg_pack = encode_message(messages.build_detach_response(op_id))
-                        writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
-                        await writer.drain()
-                        logger.info(f"✅ OTA DETACH RESPONSE sent for sensor {ep_eui}")
-                    
-                    elif msg_type == "detCmp":
-                        # Detach complete from base station
-                        op_id = message.get("opId", 0)
-                        logger.info(f"✅ OTA DETACH COMPLETE received, opId: {op_id}")
-                    
-                    elif msg_type == "dlDataRes":
-                        # DL data result from base station - queued DL data was sent or discarded
-                        # Per BSSCI spec 5.14
-                        op_id = message.get("opId", 0)
-                        ep_eui = int(message["epEui"]).to_bytes(8, byteorder="big").hex().upper()
-                        result = message.get("result", "unknown")
-                        que_id = message.get("queId", 0)
-                        bs_eui = self.connected_base_stations.get(writer, "unknown")
-                        
-                        logger.info(f"📡 DL DATA RESULT from base station {bs_eui}")
-                        logger.info(f"   Sensor EUI: {ep_eui}")
-                        logger.info(f"   Queue ID: {que_id}")
-                        logger.info(f"   Result: {result}")
-                        
-                        # Send DL data result response
-                        msg_pack = encode_message(messages.build_dl_data_result_response(op_id))
-                        writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
-                        await writer.drain()
-                        logger.info(f"✅ DL DATA RESULT RESPONSE sent")
-                    
-                    elif msg_type == "dlDataResCmp":
-                        op_id = message.get("opId", 0)
-                        logger.info(f"✅ DL DATA RESULT COMPLETE received, opId: {op_id}")
-                    
-                    elif msg_type == "dlRxStat":
-                        # DL RX status from base station - received after DL RX status from endpoint
-                        # Per BSSCI spec 5.15
-                        op_id = message.get("opId", 0)
-                        ep_eui = int(message["epEui"]).to_bytes(8, byteorder="big").hex().upper()
-                        dl_rx_snr = message.get("dlRxSnr", 0)
-                        dl_rx_rssi = message.get("dlRxRssi", 0)
-                        bs_eui = self.connected_base_stations.get(writer, "unknown")
-                        
-                        logger.info(f"📡 DL RX STATUS from base station {bs_eui}")
-                        logger.info(f"   Sensor EUI: {ep_eui}")
-                        logger.info(f"   DL RX SNR: {dl_rx_snr} dB")
-                        logger.info(f"   DL RX RSSI: {dl_rx_rssi} dBm")
-                        
-                        # Send DL RX status response
-                        msg_pack = encode_message(messages.build_dl_rx_status_response(op_id))
-                        writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
-                        await writer.drain()
-                        logger.info(f"✅ DL RX STATUS RESPONSE sent")
-                    
-                    elif msg_type == "dlRxStatCmp":
-                        op_id = message.get("opId", 0)
-                        logger.info(f"✅ DL RX STATUS COMPLETE received, opId: {op_id}")
 
                     elif msg_type == "ulData":
                         eui = int(message["epEui"]).to_bytes(8, byteorder="big").hex()
@@ -1595,13 +1447,10 @@ class TLSServer:
                             logger.info(f"   Operation ID: {op_id}")
                             if mac_types:
                                 logger.info(f"   Active MAC Types: {mac_types}")
-                                mac_str = ", ".join([str(m) for m in mac_types])
-                                self.add_vm_log(f"BS {bs_eui}: Active MAC types: [{mac_str}]", "response")
                                 for mac_type in mac_types:
                                     logger.info(f"      - MAC Type {mac_type}")
                             else:
                                 logger.info(f"   No MAC Types active (VM reception not enabled)")
-                                self.add_vm_log(f"BS {bs_eui}: No MAC types active", "response")
                             logger.info(f"═══════════════════════════════════════════════════════════")
                             
                             if self.mqtt_out_queue:
@@ -1710,65 +1559,6 @@ class TLSServer:
                                         "timestamp": asyncio.get_event_loop().time()
                                     })
                                 })
-
-                    elif msg_type == "error":
-                        # Error response from base station - must acknowledge to prevent timeout
-                        # Per BSSCI spec: Error can be sent instead of normal response
-                        op_id = message.get("opId", 0)
-                        code = message.get("code", -1)
-                        error_msg = message.get("message", "Unknown error")
-                        bs_eui = self.connected_base_stations.get(writer, "unknown")
-                        
-                        logger.warning(f"⚠️  ERROR RESPONSE from base station {bs_eui}")
-                        logger.warning(f"   Operation ID: {op_id}")
-                        logger.warning(f"   Error Code: {code}")
-                        logger.warning(f"   Error Message: {error_msg}")
-                        
-                        # Determine what operation this error is for and send appropriate complete
-                        # Negative opIds are from our requests (Service Center initiated)
-                        if op_id < 0:
-                            # This was our request - check pending operations
-                            if op_id in self.pending_vm_operations:
-                                pending = self.pending_vm_operations.pop(op_id)
-                                op_type = pending.get("operation", "unknown")
-                                logger.warning(f"   VM operation '{op_type}' failed")
-                                self.add_vm_log(f"BS {bs_eui}: Error - {error_msg} (code {code})", "error")
-                                
-                                # Send appropriate complete message based on operation type
-                                if op_type == "status":
-                                    msg_pack = encode_message({"command": "vm.statusCmp", "opId": op_id})
-                                elif op_type == "activate":
-                                    msg_pack = encode_message({"command": "vm.activateCmp", "opId": op_id})
-                                elif op_type == "deactivate":
-                                    msg_pack = encode_message({"command": "vm.deactivateCmp", "opId": op_id})
-                                else:
-                                    # Generic error acknowledgment - try statusCmp as fallback
-                                    msg_pack = encode_message({"command": "vm.statusCmp", "opId": op_id})
-                                
-                                writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
-                                await writer.drain()
-                                logger.info(f"✅ Error acknowledged with complete message for opId {op_id}")
-                            elif op_id in self.pending_attach_requests:
-                                # Attach request failed
-                                pending = self.pending_attach_requests.pop(op_id)
-                                sensor_eui = pending.get("sensor_eui", "unknown")
-                                logger.warning(f"   Attach request for sensor {sensor_eui} failed")
-                                
-                                msg_pack = encode_message({"command": "attPrpCmp", "opId": op_id})
-                                writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
-                                await writer.drain()
-                                logger.info(f"✅ Attach error acknowledged with complete message for opId {op_id}")
-                            else:
-                                # Unknown pending operation - still need to acknowledge somehow
-                                # Try to send a generic statusCmp to prevent timeout
-                                logger.warning(f"   Unknown pending operation for opId {op_id}, sending statusCmp")
-                                msg_pack = encode_message({"command": "statusCmp", "opId": op_id})
-                                writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
-                                await writer.drain()
-                                logger.info(f"✅ Error acknowledged with statusCmp for opId {op_id}")
-                        else:
-                            # Positive opId - base station initiated, we should respond
-                            logger.warning(f"   Base station error for its own operation {op_id}")
 
                     else:
                         logger.warning(f"[WARN] Unknown message type: {msg_type} - Message: {message}")
@@ -2116,8 +1906,8 @@ class TLSServer:
         success = False
         for writer, bs_eui in self.connected_base_stations.items():
             try:
+                self.opID += 1
                 op_id = self.opID
-                self.opID -= 1
                 
                 self.pending_vm_operations[op_id] = {
                     "operation": "activate",
@@ -2130,11 +1920,9 @@ class TLSServer:
                 await writer.drain()
                 
                 logger.info(f"   Sent VM activate to base station {bs_eui}")
-                self.add_vm_log(f"Sent vm.activate (macType={mac_type}) to BS {bs_eui}", "command")
                 success = True
             except Exception as e:
                 logger.error(f"   Failed to send VM activate to {bs_eui}: {e}")
-                self.add_vm_log(f"Failed vm.activate to BS {bs_eui}: {e}", "error")
         
         return success
     
@@ -2154,8 +1942,8 @@ class TLSServer:
         success = False
         for writer, bs_eui in self.connected_base_stations.items():
             try:
+                self.opID += 1
                 op_id = self.opID
-                self.opID -= 1
                 
                 self.pending_vm_operations[op_id] = {
                     "operation": "deactivate",
@@ -2167,11 +1955,9 @@ class TLSServer:
                 await writer.drain()
                 
                 logger.info(f"   Sent VM deactivate to base station {bs_eui}")
-                self.add_vm_log(f"Sent vm.deactivate to BS {bs_eui}", "command")
                 success = True
             except Exception as e:
                 logger.error(f"   Failed to send VM deactivate to {bs_eui}: {e}")
-                self.add_vm_log(f"Failed vm.deactivate to BS {bs_eui}: {e}", "error")
         
         return success
     
@@ -2193,8 +1979,8 @@ class TLSServer:
         success = False
         for writer, bs_eui in self.connected_base_stations.items():
             try:
+                self.opID += 1
                 op_id = self.opID
-                self.opID -= 1
                 
                 self.pending_vm_operations[op_id] = {
                     "operation": "status",
@@ -2207,11 +1993,9 @@ class TLSServer:
                 await writer.drain()
                 
                 logger.info(f"   Sent VM status request to base station {bs_eui}")
-                self.add_vm_log(f"Sent vm.status to BS {bs_eui}", "command")
                 success = True
             except Exception as e:
                 logger.error(f"   Failed to send VM status to {bs_eui}: {e}")
-                self.add_vm_log(f"Failed vm.status to BS {bs_eui}: {e}", "error")
         
         return success
     
@@ -2245,8 +2029,8 @@ class TLSServer:
                 return False
         
         try:
+            self.opID += 1
             op_id = self.opID
-            self.opID -= 1
             
             self.pending_vm_operations[op_id] = {
                 "eui": sensor_eui,
@@ -2264,22 +2048,6 @@ class TLSServer:
         except Exception as e:
             logger.error(f"   Failed to send VM downlink data: {e}")
             return False
-    
-    def add_vm_log(self, message: str, log_type: str = "info") -> None:
-        """Add entry to VM log for OMS page"""
-        import time
-        entry = {
-            "timestamp": time.time(),
-            "message": message,
-            "type": log_type
-        }
-        self.vm_log.append(entry)
-        if len(self.vm_log) > self.vm_log_max_size:
-            self.vm_log = self.vm_log[-self.vm_log_max_size:]
-    
-    def get_vm_log(self) -> list:
-        """Get VM log entries"""
-        return list(self.vm_log)
     
     def get_vm_status(self) -> dict:
         """Get VM sub-channel status for all sensors"""

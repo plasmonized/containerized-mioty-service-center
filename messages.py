@@ -59,59 +59,6 @@ def build_ul_response(opID: int) -> dict[str, object]:
     return {"command": "ulDataRsp", "opId": opID}
 
 
-def build_ul_complete(opID: int) -> dict[str, object]:
-    return {"command": "ulDataCmp", "opId": opID}
-
-
-def build_attach_response(opID: int, nwkSnKey: list, shAddr: int = None) -> dict[str, object]:
-    """Build attach response for over-the-air attach initiated by base station
-    
-    Per BSSCI specification 5.6.2:
-    - command: "attRsp"
-    - opId: ID of the operation
-    - nwkSnKey: 16 Byte End Point network session key
-    - shAddr: End Point short address (only if not assigned by Base Station)
-    """
-    response = {
-        "command": "attRsp",
-        "opId": opID,
-        "nwkSnKey": nwkSnKey,
-    }
-    if shAddr is not None:
-        response["shAddr"] = shAddr
-    return response
-
-
-def build_detach_response(opID: int) -> dict[str, object]:
-    """Build detach response for over-the-air detach initiated by base station
-    
-    Per BSSCI specification 5.7.2:
-    - command: "detRsp"
-    - opId: ID of the operation
-    """
-    return {"command": "detRsp", "opId": opID}
-
-
-def build_dl_data_result_response(opID: int) -> dict[str, object]:
-    """Build DL data result response
-    
-    Per BSSCI specification 5.14.2:
-    - command: "dlDataResRsp"
-    - opId: ID of the operation
-    """
-    return {"command": "dlDataResRsp", "opId": opID}
-
-
-def build_dl_rx_status_response(opID: int) -> dict[str, object]:
-    """Build DL RX status response
-    
-    Per BSSCI specification 5.15.2:
-    - command: "dlRxStatRsp"
-    - opId: ID of the operation
-    """
-    return {"command": "dlRxStatRsp", "opId": opID}
-
-
 # Variable MAC (VM) Sub-Channel Messages
 # Per ETSI TS 103357 - VM mode for metering devices with longer messages and acknowledgement
 

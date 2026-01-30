@@ -1137,6 +1137,119 @@ class TLSServer:
                         logger.info(f"✅ Detach operation completed successfully")
                         logger.info("   =====================================")
 
+                    elif msg_type == "att":
+                        # Over-the-air attach initiated by base station
+                        # Per BSSCI spec 5.6: Base station sends att when sensor attaches OTA
+                        op_id = message.get("opId", 0)
+                        ep_eui = int(message["epEui"]).to_bytes(8, byteorder="big").hex().upper()
+                        bs_eui = self.connected_base_stations.get(writer, "unknown")
+                        
+                        logger.info(f"📡 OTA ATTACH REQUEST from base station {bs_eui}")
+                        logger.info(f"   Sensor EUI: {ep_eui}")
+                        logger.info(f"   Operation ID: {op_id}")
+                        logger.info(f"   Attach Counter: {message.get('attachCnt', 'N/A')}")
+                        logger.info(f"   SNR: {message.get('snr', 'N/A')} dB")
+                        logger.info(f"   RSSI: {message.get('rssi', 'N/A')} dBm")
+                        
+                        # Look up sensor config to get network key
+                        sensor_config = None
+                        for sensor in self.sensor_config:
+                            if sensor['eui'].upper() == ep_eui:
+                                sensor_config = sensor
+                                break
+                        
+                        if sensor_config:
+                            # Send attach response with network key
+                            nwk_key = list(bytes.fromhex(sensor_config['nwKey']))
+                            sh_addr = int.from_bytes(bytes.fromhex(sensor_config['shortAddr']), "big") if sensor_config.get('shortAddr') else None
+                            
+                            msg_pack = encode_message(messages.build_attach_response(op_id, nwk_key, sh_addr))
+                            writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
+                            await writer.drain()
+                            logger.info(f"✅ OTA ATTACH RESPONSE sent for sensor {ep_eui}")
+                        else:
+                            # Unknown sensor - still need to respond
+                            logger.warning(f"⚠️  Unknown sensor {ep_eui} trying to attach OTA")
+                            # Send empty response to prevent timeout
+                            msg_pack = encode_message(messages.build_attach_response(op_id, [0]*16, 0))
+                            writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
+                            await writer.drain()
+                    
+                    elif msg_type == "attCmp":
+                        # Attach complete from base station
+                        op_id = message.get("opId", 0)
+                        logger.info(f"✅ OTA ATTACH COMPLETE received, opId: {op_id}")
+                    
+                    elif msg_type == "det":
+                        # Over-the-air detach initiated by base station
+                        # Per BSSCI spec 5.7: Base station sends det when sensor detaches OTA
+                        op_id = message.get("opId", 0)
+                        ep_eui = int(message["epEui"]).to_bytes(8, byteorder="big").hex().upper()
+                        bs_eui = self.connected_base_stations.get(writer, "unknown")
+                        
+                        logger.info(f"📡 OTA DETACH REQUEST from base station {bs_eui}")
+                        logger.info(f"   Sensor EUI: {ep_eui}")
+                        logger.info(f"   Operation ID: {op_id}")
+                        
+                        # Send detach response
+                        msg_pack = encode_message(messages.build_detach_response(op_id))
+                        writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
+                        await writer.drain()
+                        logger.info(f"✅ OTA DETACH RESPONSE sent for sensor {ep_eui}")
+                    
+                    elif msg_type == "detCmp":
+                        # Detach complete from base station
+                        op_id = message.get("opId", 0)
+                        logger.info(f"✅ OTA DETACH COMPLETE received, opId: {op_id}")
+                    
+                    elif msg_type == "dlDataRes":
+                        # DL data result from base station - queued DL data was sent or discarded
+                        # Per BSSCI spec 5.14
+                        op_id = message.get("opId", 0)
+                        ep_eui = int(message["epEui"]).to_bytes(8, byteorder="big").hex().upper()
+                        result = message.get("result", "unknown")
+                        que_id = message.get("queId", 0)
+                        bs_eui = self.connected_base_stations.get(writer, "unknown")
+                        
+                        logger.info(f"📡 DL DATA RESULT from base station {bs_eui}")
+                        logger.info(f"   Sensor EUI: {ep_eui}")
+                        logger.info(f"   Queue ID: {que_id}")
+                        logger.info(f"   Result: {result}")
+                        
+                        # Send DL data result response
+                        msg_pack = encode_message(messages.build_dl_data_result_response(op_id))
+                        writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
+                        await writer.drain()
+                        logger.info(f"✅ DL DATA RESULT RESPONSE sent")
+                    
+                    elif msg_type == "dlDataResCmp":
+                        op_id = message.get("opId", 0)
+                        logger.info(f"✅ DL DATA RESULT COMPLETE received, opId: {op_id}")
+                    
+                    elif msg_type == "dlRxStat":
+                        # DL RX status from base station - received after DL RX status from endpoint
+                        # Per BSSCI spec 5.15
+                        op_id = message.get("opId", 0)
+                        ep_eui = int(message["epEui"]).to_bytes(8, byteorder="big").hex().upper()
+                        dl_rx_snr = message.get("dlRxSnr", 0)
+                        dl_rx_rssi = message.get("dlRxRssi", 0)
+                        bs_eui = self.connected_base_stations.get(writer, "unknown")
+                        
+                        logger.info(f"📡 DL RX STATUS from base station {bs_eui}")
+                        logger.info(f"   Sensor EUI: {ep_eui}")
+                        logger.info(f"   DL RX SNR: {dl_rx_snr} dB")
+                        logger.info(f"   DL RX RSSI: {dl_rx_rssi} dBm")
+                        
+                        # Send DL RX status response
+                        msg_pack = encode_message(messages.build_dl_rx_status_response(op_id))
+                        writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
+                        await writer.drain()
+                        logger.info(f"✅ DL RX STATUS RESPONSE sent")
+                    
+                    elif msg_type == "dlRxStatCmp":
+                        op_id = message.get("opId", 0)
+                        logger.info(f"✅ DL RX STATUS COMPLETE received, opId: {op_id}")
+
                     elif msg_type == "ulData":
                         eui = int(message["epEui"]).to_bytes(8, byteorder="big").hex()
                         bs_eui = self.connected_base_stations[writer]

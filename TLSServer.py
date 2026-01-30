@@ -727,13 +727,13 @@ class TLSServer:
 
                             writer.write(full_message)
                             await writer.drain()
-                            self.opID += 1
+                            self.opID -= 1
                             
                             await asyncio.sleep(0.1)
                             
                             logger.info(f"   📊 Sending VM status request to {bs_eui}")
                             op_id = self.opID
-                            self.opID += 1
+                            self.opID -= 1
                             
                             self.pending_vm_operations[op_id] = {
                                 "type": "vm_status",
@@ -2116,8 +2116,8 @@ class TLSServer:
         success = False
         for writer, bs_eui in self.connected_base_stations.items():
             try:
-                self.opID += 1
                 op_id = self.opID
+                self.opID -= 1
                 
                 self.pending_vm_operations[op_id] = {
                     "operation": "activate",
@@ -2154,8 +2154,8 @@ class TLSServer:
         success = False
         for writer, bs_eui in self.connected_base_stations.items():
             try:
-                self.opID += 1
                 op_id = self.opID
+                self.opID -= 1
                 
                 self.pending_vm_operations[op_id] = {
                     "operation": "deactivate",
@@ -2193,8 +2193,8 @@ class TLSServer:
         success = False
         for writer, bs_eui in self.connected_base_stations.items():
             try:
-                self.opID += 1
                 op_id = self.opID
+                self.opID -= 1
                 
                 self.pending_vm_operations[op_id] = {
                     "operation": "status",
@@ -2245,8 +2245,8 @@ class TLSServer:
                 return False
         
         try:
-            self.opID += 1
             op_id = self.opID
+            self.opID -= 1
             
             self.pending_vm_operations[op_id] = {
                 "eui": sensor_eui,

@@ -2106,23 +2106,48 @@ class TLSServer:
         return success
     
     async def periodic_vm_status_query(self) -> None:
-        """Background task that periodically queries VM status from VM-capable base stations"""
+        """Background task that periodically queries VM status from VM-capable base stations
+        
+        Logic:
+        1. Wait 30 seconds after start for connections to establish
+        2. Query ALL connected base stations once to discover which support VM
+        3. Mark VM-capable base stations based on responses
+        4. Then only query VM-capable base stations every 60 seconds
+        """
         logger.info("📡 Starting periodic VM status query background task")
         
-        # Wait a bit for initial connections to establish
+        # Wait for initial connections to establish
         await asyncio.sleep(30)
         
+        # Initial discovery: query ALL base stations to find VM-capable ones
+        if self.connected_base_stations:
+            logger.info("📊 INITIAL VM DISCOVERY - querying ALL base stations to detect VM capability")
+            logger.info(f"   Connected base stations: {len(self.connected_base_stations)}")
+            await self.vm_status(only_vm_capable=False)  # Query ALL
+            self._add_vm_log("VM Discovery", "Initial query sent to all base stations", "system")
+            
+            # Wait for responses
+            await asyncio.sleep(5)
+            
+            if self.vm_capable_base_stations:
+                logger.info(f"✅ VM DISCOVERY COMPLETE - Found {len(self.vm_capable_base_stations)} VM-capable base stations:")
+                for bs in self.vm_capable_base_stations:
+                    logger.info(f"      - {bs}")
+            else:
+                logger.info("ℹ️  VM DISCOVERY COMPLETE - No VM-capable base stations found")
+        
+        # Periodic queries: only query VM-capable base stations
         while True:
             try:
+                await asyncio.sleep(self.vm_periodic_status_interval)
+                
                 if self.vm_periodic_status_enabled and self.vm_capable_base_stations:
                     logger.info(f"📊 PERIODIC VM STATUS QUERY - {len(self.vm_capable_base_stations)} VM-capable base stations")
-                    await self.vm_status(only_vm_capable=True)
-                
-                await asyncio.sleep(self.vm_periodic_status_interval)
+                    await self.vm_status(only_vm_capable=True)  # Only VM-capable
                 
             except Exception as e:
                 logger.error(f"❌ Error in periodic VM status query: {e}")
-                await asyncio.sleep(60)  # Wait before retrying on error
+                await asyncio.sleep(60)
     
     async def vm_send_data(self, sensor_eui: str, data: bytes, port: int = 1) -> bool:
         """Send data to sensor via VM sub-channel (downlink)"""

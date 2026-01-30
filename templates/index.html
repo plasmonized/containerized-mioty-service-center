@@ -72,7 +72,7 @@
 .health-indicator {
     display: flex;
     align-items: center;
-    padding: 0.75rem 0;
+    padding: 0.5rem 0;
     border-bottom: 1px solid #eee;
 }
 .health-indicator:last-child {
@@ -98,35 +98,65 @@
     font-weight: bold;
     color: #495057;
 }
-.chart-container {
-    position: relative;
-    height: 200px;
-}
 .gauge-container {
     display: flex;
     justify-content: space-around;
     flex-wrap: wrap;
-    gap: 1rem;
+    gap: 0.5rem;
 }
 .gauge-item {
     text-align: center;
-    min-width: 100px;
+    min-width: 70px;
 }
 .gauge-circle {
-    width: 80px;
-    height: 80px;
+    width: 60px;
+    height: 60px;
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
     margin: 0 auto 0.5rem;
-    font-size: 1.25rem;
+    font-size: 1rem;
     font-weight: bold;
     color: white;
 }
 .gauge-label {
-    font-size: 0.8rem;
+    font-size: 0.7rem;
     color: #6c757d;
+}
+.signal-bar {
+    display: flex;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+.signal-bar-label {
+    width: 70px;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+.signal-bar-track {
+    flex-grow: 1;
+    height: 20px;
+    background: #e9ecef;
+    border-radius: 10px;
+    overflow: hidden;
+    margin: 0 8px;
+}
+.signal-bar-fill {
+    height: 100%;
+    border-radius: 10px;
+    transition: width 0.5s ease;
+}
+.signal-bar-value {
+    width: 35px;
+    font-size: 0.8rem;
+    font-weight: bold;
+    text-align: right;
+}
+.network-container {
+    height: 300px;
+    border-radius: 8px;
+    background: #f8f9fa;
 }
 </style>
 
@@ -172,12 +202,23 @@
         </div>
     </div>
 
-    <!-- Health Overview Row -->
-    <div class="row g-3">
-        <div class="col-md-6">
-            <div class="health-card">
+    <!-- Network Topology and System Health Row -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-8">
+            <div class="health-card h-100">
+                <div class="health-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">&#128752; Netzwerk Topologie</h5>
+                    <small class="opacity-75">Nur Ansicht</small>
+                </div>
+                <div class="card-body p-2">
+                    <div id="cy-mini" class="network-container"></div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="health-card h-100">
                 <div class="health-header">
-                    <h5 class="mb-0">&#128200; System Gesundheit</h5>
+                    <h5 class="mb-0">&#128200; System Status</h5>
                 </div>
                 <div class="health-body">
                     <div class="health-indicator">
@@ -187,7 +228,7 @@
                     </div>
                     <div class="health-indicator">
                         <div class="health-dot" id="health-mqtt"></div>
-                        <span class="health-label">MQTT Verbindung</span>
+                        <span class="health-label">MQTT</span>
                         <span class="health-value" id="health-mqtt-value">--</span>
                     </div>
                     <div class="health-indicator">
@@ -197,7 +238,7 @@
                     </div>
                     <div class="health-indicator">
                         <div class="health-dot" id="health-sensors"></div>
-                        <span class="health-label">Sensor Aktivität</span>
+                        <span class="health-label">Sensoren</span>
                         <span class="health-value" id="health-sensors-value">--</span>
                     </div>
                     <div class="health-indicator">
@@ -208,21 +249,76 @@
                 </div>
             </div>
         </div>
+    </div>
+
+    <!-- Sensor Health and Network Stats Row -->
+    <div class="row g-3">
         <div class="col-md-6">
             <div class="health-card">
                 <div class="health-header">
-                    <h5 class="mb-0">&#128202; Netzwerk Übersicht</h5>
+                    <h5 class="mb-0">&#128202; Sensor Signalqualität</h5>
                 </div>
                 <div class="health-body">
-                    <div class="gauge-container" id="network-gauges">
-                        <div class="gauge-item">
-                            <div class="gauge-circle" id="gauge-signal" style="background: #6c757d;">--</div>
-                            <div class="gauge-label">Ø Signal (dB)</div>
+                    <div class="signal-bar">
+                        <span class="signal-bar-label" style="color: #28a745;">Exzellent</span>
+                        <div class="signal-bar-track">
+                            <div class="signal-bar-fill" id="signal-excellent" style="width: 0%; background: #28a745;"></div>
                         </div>
-                        <div class="gauge-item">
-                            <div class="gauge-circle" id="gauge-snr" style="background: #6c757d;">--</div>
-                            <div class="gauge-label">Ø SNR (dB)</div>
+                        <span class="signal-bar-value" id="signal-excellent-val">0</span>
+                    </div>
+                    <div class="signal-bar">
+                        <span class="signal-bar-label" style="color: #20c997;">Gut</span>
+                        <div class="signal-bar-track">
+                            <div class="signal-bar-fill" id="signal-good" style="width: 0%; background: #20c997;"></div>
                         </div>
+                        <span class="signal-bar-value" id="signal-good-val">0</span>
+                    </div>
+                    <div class="signal-bar">
+                        <span class="signal-bar-label" style="color: #ffc107;">Mittel</span>
+                        <div class="signal-bar-track">
+                            <div class="signal-bar-fill" id="signal-fair" style="width: 0%; background: #ffc107;"></div>
+                        </div>
+                        <span class="signal-bar-value" id="signal-fair-val">0</span>
+                    </div>
+                    <div class="signal-bar">
+                        <span class="signal-bar-label" style="color: #fd7e14;">Schwach</span>
+                        <div class="signal-bar-track">
+                            <div class="signal-bar-fill" id="signal-poor" style="width: 0%; background: #fd7e14;"></div>
+                        </div>
+                        <span class="signal-bar-value" id="signal-poor-val">0</span>
+                    </div>
+                    <div class="signal-bar">
+                        <span class="signal-bar-label" style="color: #dc3545;">Kritisch</span>
+                        <div class="signal-bar-track">
+                            <div class="signal-bar-fill" id="signal-critical" style="width: 0%; background: #dc3545;"></div>
+                        </div>
+                        <span class="signal-bar-value" id="signal-critical-val">0</span>
+                    </div>
+                    <hr>
+                    <div class="row text-center">
+                        <div class="col-4">
+                            <div class="h5 mb-0" id="avg-snr">--</div>
+                            <small class="text-muted">Ø SNR (dB)</small>
+                        </div>
+                        <div class="col-4">
+                            <div class="h5 mb-0" id="avg-rssi">--</div>
+                            <small class="text-muted">Ø RSSI (dBm)</small>
+                        </div>
+                        <div class="col-4">
+                            <div class="h5 mb-0" id="avg-loss">--</div>
+                            <small class="text-muted">Ø Verlust</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="health-card">
+                <div class="health-header">
+                    <h5 class="mb-0">&#128202; Netzwerk Statistik</h5>
+                </div>
+                <div class="health-body">
+                    <div class="gauge-container mb-3">
                         <div class="gauge-item">
                             <div class="gauge-circle" id="gauge-packets" style="background: #6c757d;">0</div>
                             <div class="gauge-label">Pakete/Std</div>
@@ -230,6 +326,10 @@
                         <div class="gauge-item">
                             <div class="gauge-circle" id="gauge-loss" style="background: #28a745;">0%</div>
                             <div class="gauge-label">Paketverlust</div>
+                        </div>
+                        <div class="gauge-item">
+                            <div class="gauge-circle" id="gauge-vm" style="background: #6c757d;">0</div>
+                            <div class="gauge-label">VM-fähig</div>
                         </div>
                     </div>
                     <hr>
@@ -243,8 +343,8 @@
                             <small class="text-muted">Aktive Sensoren</small>
                         </div>
                         <div class="col-4">
-                            <div class="h4 mb-0" id="vm-capable-count">0</div>
-                            <small class="text-muted">VM-fähige BS</small>
+                            <div class="h4 mb-0" id="total-connections">0</div>
+                            <small class="text-muted">Verbindungen</small>
                         </div>
                     </div>
                 </div>
@@ -255,13 +355,115 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="https://unpkg.com/cytoscape@3.26.0/dist/cytoscape.min.js"></script>
 <script>
+let cyMini = null;
+
+function initMiniNetwork() {
+    cyMini = cytoscape({
+        container: document.getElementById('cy-mini'),
+        style: [
+            {
+                selector: 'node[type="base_station"]',
+                style: {
+                    'background-color': '#ff8c00',
+                    'label': 'data(label)',
+                    'width': 40,
+                    'height': 40,
+                    'font-size': '10px',
+                    'font-weight': 'bold',
+                    'text-valign': 'bottom',
+                    'text-margin-y': 5,
+                    'border-width': 2,
+                    'border-color': '#cc7000'
+                }
+            },
+            {
+                selector: 'node[type="base_station"][?connected]',
+                style: {
+                    'border-color': '#28a745',
+                    'border-width': 3
+                }
+            },
+            {
+                selector: 'node[type="sensor"]',
+                style: {
+                    'background-color': '#17a2b8',
+                    'label': '',
+                    'width': 15,
+                    'height': 15
+                }
+            },
+            {
+                selector: 'edge',
+                style: {
+                    'width': 1,
+                    'line-color': '#aaa',
+                    'curve-style': 'bezier',
+                    'opacity': 0.5
+                }
+            },
+            {
+                selector: 'edge[?primary]',
+                style: {
+                    'width': 2,
+                    'line-color': '#28a745',
+                    'opacity': 0.8
+                }
+            }
+        ],
+        layout: { name: 'preset' },
+        wheelSensitivity: 0.3,
+        autoungrabify: true,
+        userZoomingEnabled: true,
+        userPanningEnabled: true,
+        boxSelectionEnabled: false
+    });
+}
+
+function loadMiniTopology() {
+    fetch('/api/network')
+        .then(r => r.json())
+        .then(data => {
+            if (!data.success || !cyMini) return;
+            
+            cyMini.elements().remove();
+            
+            const elements = [];
+            data.nodes.forEach(node => {
+                elements.push({ data: node });
+            });
+            data.edges.forEach(edge => {
+                elements.push({ data: edge });
+            });
+            
+            cyMini.add(elements);
+            
+            cyMini.layout({
+                name: 'cose',
+                idealEdgeLength: 80,
+                nodeOverlap: 20,
+                refresh: 20,
+                fit: true,
+                padding: 20,
+                randomize: false,
+                componentSpacing: 60,
+                nodeRepulsion: 5000,
+                edgeElasticity: 50,
+                gravity: 50,
+                numIter: 500,
+                animate: false
+            }).run();
+            
+            document.getElementById('total-connections').textContent = data.edges.length;
+        })
+        .catch(error => console.error('Error loading topology:', error));
+}
+
 function updateDashboard() {
-    // Fetch main status
     fetch('/api/bssci/status')
         .then(response => response.json())
         .then(data => {
-            // TLS Status
             const tlsCard = document.getElementById('tls-card');
             const tlsActive = data.tls_server && data.tls_server.active;
             tlsCard.className = 'status-card ' + (tlsActive ? 'success' : 'danger');
@@ -269,11 +471,9 @@ function updateDashboard() {
             document.getElementById('tls-detail').textContent = tlsActive ? 
                 'Port ' + (data.tls_server.listening_port || '--') : 'Nicht verbunden';
             
-            // Health indicators
             document.getElementById('health-tls').className = 'health-dot ' + (tlsActive ? 'excellent' : 'danger');
             document.getElementById('health-tls-value').textContent = tlsActive ? 'Läuft' : 'Gestoppt';
             
-            // MQTT Status
             const mqttCard = document.getElementById('mqtt-card');
             const mqttActive = data.mqtt_broker && data.mqtt_broker.active;
             mqttCard.className = 'status-card ' + (mqttActive ? 'success' : 'danger');
@@ -284,11 +484,9 @@ function updateDashboard() {
             document.getElementById('health-mqtt').className = 'health-dot ' + (mqttActive ? 'excellent' : 'danger');
             document.getElementById('health-mqtt-value').textContent = mqttActive ? 'Verbunden' : 'Getrennt';
             
-            // Base Stations
             const bsCount = data.base_stations ? data.base_stations.total_connected : 0;
             document.getElementById('bs-count').textContent = bsCount;
             
-            // BS EUI list
             const euiList = document.getElementById('bs-euis');
             if (data.base_stations && data.base_stations.connected && data.base_stations.connected.length > 0) {
                 euiList.innerHTML = data.base_stations.connected.map(bs => bs.eui.substring(0, 12) + '...').join('<br>');
@@ -296,27 +494,24 @@ function updateDashboard() {
                 euiList.innerHTML = 'Keine verbunden';
             }
             
-            // BS Health
             let bsHealth = 'inactive';
             let bsHealthText = 'Keine';
-            if (bsCount >= 3) { bsHealth = 'excellent'; bsHealthText = bsCount + ' verbunden'; }
-            else if (bsCount >= 1) { bsHealth = 'good'; bsHealthText = bsCount + ' verbunden'; }
+            if (bsCount >= 3) { bsHealth = 'excellent'; bsHealthText = bsCount + ' online'; }
+            else if (bsCount >= 1) { bsHealth = 'good'; bsHealthText = bsCount + ' online'; }
             document.getElementById('health-bs').className = 'health-dot ' + bsHealth;
             document.getElementById('health-bs-value').textContent = bsHealthText;
             
-            // Sensors
             const totalSensors = data.tls_server ? (data.tls_server.total_sensors || 0) : 0;
             const registeredSensors = data.tls_server ? (data.tls_server.registered_sensors || 0) : 0;
             document.getElementById('sensor-count').textContent = registeredSensors;
             document.getElementById('sensor-detail').textContent = totalSensors + ' konfiguriert';
             
-            // Sensor Health
             let sensorHealth = 'inactive';
-            let sensorHealthText = 'Keine aktiv';
+            let sensorHealthText = 'Keine';
             const sensorRatio = totalSensors > 0 ? registeredSensors / totalSensors : 0;
-            if (sensorRatio >= 0.8) { sensorHealth = 'excellent'; sensorHealthText = Math.round(sensorRatio * 100) + '% aktiv'; }
-            else if (sensorRatio >= 0.5) { sensorHealth = 'good'; sensorHealthText = Math.round(sensorRatio * 100) + '% aktiv'; }
-            else if (sensorRatio > 0) { sensorHealth = 'warning'; sensorHealthText = Math.round(sensorRatio * 100) + '% aktiv'; }
+            if (sensorRatio >= 0.8) { sensorHealth = 'excellent'; sensorHealthText = Math.round(sensorRatio * 100) + '%'; }
+            else if (sensorRatio >= 0.5) { sensorHealth = 'good'; sensorHealthText = Math.round(sensorRatio * 100) + '%'; }
+            else if (sensorRatio > 0) { sensorHealth = 'warning'; sensorHealthText = Math.round(sensorRatio * 100) + '%'; }
             document.getElementById('health-sensors').className = 'health-dot ' + sensorHealth;
             document.getElementById('health-sensors-value').textContent = sensorHealthText;
             
@@ -324,29 +519,27 @@ function updateDashboard() {
         })
         .catch(error => console.error('Error fetching status:', error));
     
-    // Fetch VM status
     fetch('/api/vm/status')
         .then(response => response.json())
         .then(data => {
             const vmCapable = data.vm_capable_base_stations ? data.vm_capable_base_stations.length : 0;
-            document.getElementById('vm-capable-count').textContent = vmCapable;
+            const gaugeVm = document.getElementById('gauge-vm');
+            gaugeVm.textContent = vmCapable;
+            gaugeVm.style.background = vmCapable >= 2 ? '#28a745' : vmCapable >= 1 ? '#ffc107' : '#6c757d';
             
             let vmHealth = 'inactive';
-            let vmHealthText = 'Keine BS';
-            if (vmCapable >= 2) { vmHealth = 'excellent'; vmHealthText = vmCapable + ' BS aktiv'; }
-            else if (vmCapable >= 1) { vmHealth = 'good'; vmHealthText = vmCapable + ' BS aktiv'; }
+            let vmHealthText = 'Keine';
+            if (vmCapable >= 2) { vmHealth = 'excellent'; vmHealthText = vmCapable + ' BS'; }
+            else if (vmCapable >= 1) { vmHealth = 'good'; vmHealthText = vmCapable + ' BS'; }
             document.getElementById('health-vm').className = 'health-dot ' + vmHealth;
             document.getElementById('health-vm-value').textContent = vmHealthText;
         })
         .catch(error => console.error('Error fetching VM status:', error));
     
-    // Fetch traffic stats
     fetch('/api/traffic/stats')
         .then(response => response.json())
         .then(data => {
             document.getElementById('total-messages').textContent = data.total_messages || 0;
-            
-            // Packets per hour (rough estimate)
             const packetsPerHour = Math.round((data.total_messages || 0) / 24);
             const gaugePackets = document.getElementById('gauge-packets');
             gaugePackets.textContent = packetsPerHour;
@@ -354,42 +547,47 @@ function updateDashboard() {
         })
         .catch(error => console.error('Error fetching traffic:', error));
     
-    // Fetch health stats for signal quality
     fetch('/api/health/stats')
         .then(response => response.json())
         .then(data => {
             if (data.sensors && data.sensors.length > 0) {
-                // Calculate averages
-                let totalSnr = 0, totalRssi = 0, count = 0;
+                let totalSnr = 0, totalRssi = 0, totalLoss = 0, count = 0;
+                let excellent = 0, good = 0, fair = 0, poor = 0, critical = 0;
+                
                 data.sensors.forEach(s => {
-                    if (s.avg_snr) { totalSnr += s.avg_snr; count++; }
-                    if (s.avg_rssi) { totalRssi += s.avg_rssi; }
+                    if (s.avg_snr !== undefined) {
+                        totalSnr += s.avg_snr;
+                        count++;
+                        if (s.avg_snr >= 15) excellent++;
+                        else if (s.avg_snr >= 10) good++;
+                        else if (s.avg_snr >= 5) fair++;
+                        else if (s.avg_snr >= 0) poor++;
+                        else critical++;
+                    }
+                    if (s.avg_rssi) totalRssi += s.avg_rssi;
+                    if (s.packet_loss_rate !== undefined) totalLoss += s.packet_loss_rate;
                 });
                 
-                if (count > 0) {
-                    const avgSnr = Math.round(totalSnr / count);
-                    const avgRssi = Math.round(totalRssi / count);
-                    
-                    const gaugeSnr = document.getElementById('gauge-snr');
-                    gaugeSnr.textContent = avgSnr;
-                    gaugeSnr.style.background = avgSnr >= 10 ? '#28a745' : avgSnr >= 5 ? '#ffc107' : '#dc3545';
-                    
-                    const gaugeSignal = document.getElementById('gauge-signal');
-                    gaugeSignal.textContent = avgRssi;
-                    gaugeSignal.style.background = avgRssi >= -90 ? '#28a745' : avgRssi >= -100 ? '#ffc107' : '#dc3545';
+                const total = excellent + good + fair + poor + critical;
+                if (total > 0) {
+                    document.getElementById('signal-excellent').style.width = (excellent / total * 100) + '%';
+                    document.getElementById('signal-excellent-val').textContent = excellent;
+                    document.getElementById('signal-good').style.width = (good / total * 100) + '%';
+                    document.getElementById('signal-good-val').textContent = good;
+                    document.getElementById('signal-fair').style.width = (fair / total * 100) + '%';
+                    document.getElementById('signal-fair-val').textContent = fair;
+                    document.getElementById('signal-poor').style.width = (poor / total * 100) + '%';
+                    document.getElementById('signal-poor-val').textContent = poor;
+                    document.getElementById('signal-critical').style.width = (critical / total * 100) + '%';
+                    document.getElementById('signal-critical-val').textContent = critical;
                 }
                 
-                // Calculate packet loss
-                let totalLoss = 0, lossCount = 0;
-                data.sensors.forEach(s => {
-                    if (s.packet_loss_rate !== undefined) {
-                        totalLoss += s.packet_loss_rate;
-                        lossCount++;
-                    }
-                });
-                
-                if (lossCount > 0) {
-                    const avgLoss = Math.round(totalLoss / lossCount * 10) / 10;
+                if (count > 0) {
+                    document.getElementById('avg-snr').textContent = Math.round(totalSnr / count) + ' dB';
+                    document.getElementById('avg-rssi').textContent = Math.round(totalRssi / count) + ' dBm';
+                    const avgLoss = Math.round(totalLoss / count * 10) / 10;
+                    document.getElementById('avg-loss').textContent = avgLoss + '%';
+                    
                     const gaugeLoss = document.getElementById('gauge-loss');
                     gaugeLoss.textContent = avgLoss + '%';
                     gaugeLoss.style.background = avgLoss < 1 ? '#28a745' : avgLoss < 5 ? '#ffc107' : '#dc3545';
@@ -398,7 +596,6 @@ function updateDashboard() {
         })
         .catch(error => console.error('Error fetching health stats:', error));
     
-    // Fetch version
     fetch('/api/system/version')
         .then(response => response.json())
         .then(data => {
@@ -407,8 +604,13 @@ function updateDashboard() {
         .catch(error => console.error('Error fetching version:', error));
 }
 
-// Initial load and refresh every 5 seconds
-updateDashboard();
-setInterval(updateDashboard, 5000);
+document.addEventListener('DOMContentLoaded', function() {
+    initMiniNetwork();
+    loadMiniTopology();
+    updateDashboard();
+    
+    setInterval(updateDashboard, 5000);
+    setInterval(loadMiniTopology, 30000);
+});
 </script>
 {% endblock %}

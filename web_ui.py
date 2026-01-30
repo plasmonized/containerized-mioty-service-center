@@ -2567,6 +2567,30 @@ def get_vm_log():
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
+@app.route('/api/vm/capable')
+@login_required
+def get_vm_capable_base_stations():
+    """Get list of base stations that support VM (Variable MAC)"""
+    try:
+        global tls_server_instance
+        if tls_server_instance and hasattr(tls_server_instance, 'get_vm_capable_base_stations'):
+            vm_capable = tls_server_instance.get_vm_capable_base_stations()
+            connected = list(tls_server_instance.connected_base_stations.values()) if hasattr(tls_server_instance, 'connected_base_stations') else []
+            return jsonify({
+                'success': True,
+                'vm_capable': vm_capable,
+                'total_connected': len(connected),
+                'connected_base_stations': connected
+            })
+        return jsonify({
+            'success': True,
+            'vm_capable': [],
+            'total_connected': 0,
+            'connected_base_stations': []
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
 @app.route('/api/vm/send/<eui>', methods=['POST'])
 @login_required
 @permission_required('can_edit_sensors')

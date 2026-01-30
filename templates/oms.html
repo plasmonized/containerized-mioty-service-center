@@ -55,6 +55,19 @@
                             VM Status abfragen
                         </button>
                     </div>
+                    <div class="col-12 border-top pt-3 mt-2">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="periodicStatusCheck" onchange="togglePeriodicStatus()">
+                            <label class="form-check-label" for="periodicStatusCheck">
+                                Periodische Status-Abfrage
+                            </label>
+                        </div>
+                        <div class="input-group mt-2" style="max-width: 200px;">
+                            <input type="number" class="form-control" id="statusIntervalInput" value="60" min="10" max="3600">
+                            <span class="input-group-text">Sekunden</span>
+                        </div>
+                        <small class="text-muted">Automatische VM Status-Abfrage (10-3600s)</small>
+                    </div>
                 </div>
             </div>
         </div>
@@ -67,6 +80,21 @@
             <div class="card-body" style="max-height: 250px; overflow-y: auto;">
                 <div id="vm-log-container">
                     <p class="text-muted mb-0">No VM events logged yet.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header" style="background-color: #ff8c00; color: white;">
+                <h5 class="mb-0">VM-fähige Basisstationen</h5>
+            </div>
+            <div class="card-body">
+                <div id="vm-capable-container">
+                    <p class="text-muted mb-0">Lade VM-fähige Basisstationen...</p>
                 </div>
             </div>
         </div>
@@ -111,6 +139,7 @@
 {% block scripts %}
 <script>
 let refreshInterval;
+let periodicStatusInterval = null;
 
 function formatTimestamp(timestamp) {
     if (!timestamp) return 'Never';
@@ -148,6 +177,105 @@ function showAlert(message, type) {
     alert.innerHTML = `${message}<button type="button" class="btn-close" data-bs-dismiss="alert"></button>`;
     container.appendChild(alert);
     setTimeout(() => alert.remove(), 5000);
+}
+
+function togglePeriodicStatus() {
+    const checkbox = document.getElementById('periodicStatusCheck');
+    const intervalInput = document.getElementById('statusIntervalInput');
+    const interval = Math.max(10, Math.min(3600, parseInt(intervalInput.value) || 60));
+    
+    if (checkbox.checked) {
+        localStorage.setItem('vmPeriodicStatusEnabled', 'true');
+        localStorage.setItem('vmPeriodicStatusInterval', interval.toString());
+        startPeriodicStatus(interval);
+        showAlert(`Periodische Status-Abfrage aktiviert (alle ${interval} Sekunden)`, 'success');
+    } else {
+        localStorage.setItem('vmPeriodicStatusEnabled', 'false');
+        stopPeriodicStatus();
+        showAlert('Periodische Status-Abfrage deaktiviert', 'info');
+    }
+}
+
+function startPeriodicStatus(intervalSeconds) {
+    stopPeriodicStatus();
+    periodicStatusInterval = setInterval(() => {
+        vmStatus();
+    }, intervalSeconds * 1000);
+    console.log(`Periodic VM status started: every ${intervalSeconds}s`);
+}
+
+function stopPeriodicStatus() {
+    if (periodicStatusInterval) {
+        clearInterval(periodicStatusInterval);
+        periodicStatusInterval = null;
+        console.log('Periodic VM status stopped');
+    }
+}
+
+function loadPeriodicStatusSettings() {
+    const enabled = localStorage.getItem('vmPeriodicStatusEnabled') === 'true';
+    const interval = parseInt(localStorage.getItem('vmPeriodicStatusInterval')) || 60;
+    
+    document.getElementById('periodicStatusCheck').checked = enabled;
+    document.getElementById('statusIntervalInput').value = interval;
+    
+    if (enabled) {
+        startPeriodicStatus(interval);
+    }
+}
+
+function refreshVmCapable() {
+    fetch('/api/vm/capable')
+        .then(response => response.json())
+        .then(data => {
+            const container = document.getElementById('vm-capable-container');
+            if (data.success) {
+                const vmCapable = data.vm_capable || [];
+                const connected = data.connected_base_stations || [];
+                const totalConnected = data.total_connected || 0;
+                
+                if (connected.length === 0) {
+                    container.innerHTML = '<p class="text-muted mb-0">Keine Basisstationen verbunden.</p>';
+                } else if (vmCapable.length === 0) {
+                    container.innerHTML = `
+                        <p class="text-muted mb-0">
+                            <strong>${totalConnected}</strong> Basisstation(en) verbunden, aber keine VM-Unterstützung bestätigt.
+                            <br><small>Senden Sie eine VM Status-Abfrage, um die VM-Unterstützung zu ermitteln.</small>
+                        </p>
+                        <div class="mt-2">
+                            ${connected.map(bs => `<span class="badge bg-secondary me-1">${bs}</span>`).join('')}
+                        </div>
+                    `;
+                } else {
+                    const notVmCapable = connected.filter(bs => !vmCapable.includes(bs));
+                    container.innerHTML = `
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6 class="text-success"><i class="bi bi-check-circle"></i> VM-fähig (${vmCapable.length})</h6>
+                                <div>
+                                    ${vmCapable.map(bs => `<span class="badge bg-success me-1 mb-1">${bs}</span>`).join('')}
+                                </div>
+                            </div>
+                            ${notVmCapable.length > 0 ? `
+                            <div class="col-md-6">
+                                <h6 class="text-secondary"><i class="bi bi-question-circle"></i> Nicht bestätigt (${notVmCapable.length})</h6>
+                                <div>
+                                    ${notVmCapable.map(bs => `<span class="badge bg-secondary me-1 mb-1">${bs}</span>`).join('')}
+                                </div>
+                            </div>
+                            ` : ''}
+                        </div>
+                        <small class="text-muted mt-2 d-block">Gesamt: ${totalConnected} Basisstation(en) verbunden</small>
+                    `;
+                }
+            } else {
+                container.innerHTML = '<p class="text-danger mb-0">Fehler beim Laden der VM-fähigen Basisstationen.</p>';
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching VM capable base stations:', error);
+            document.getElementById('vm-capable-container').innerHTML = '<p class="text-danger mb-0">Fehler beim Laden.</p>';
+        });
 }
 
 function vmActivate() {
@@ -260,8 +388,10 @@ function refreshData() {
         });
     
     refreshVmLog();
+    refreshVmCapable();
 }
 
+loadPeriodicStatusSettings();
 refreshData();
 refreshInterval = setInterval(refreshData, 30000);
 </script>

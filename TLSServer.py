@@ -4,7 +4,7 @@ import logging
 import os
 import ssl
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict
+from typing import Any, Dict, Set
 
 import bssci_config
 import messages
@@ -106,6 +106,10 @@ class TLSServer:
         # List of {timestamp, event, details, bs_eui}
         self.vm_log: list = []
         self._max_vm_log_entries = 100
+        
+        # Track which base stations support VM (Variable MAC)
+        # Base stations that have successfully responded to VM commands
+        self.vm_capable_base_stations: Set[str] = set()
 
         # Start the deduplication task
         asyncio.create_task(self.process_deduplication_buffer())
@@ -1407,9 +1411,16 @@ class TLSServer:
                                     "bs_eui": bs_eui
                                 }
                                 self._add_vm_log("vm.activateRsp received", f"SUCCESS for {eui}, channel={vm_channel}", bs_eui)
+                                # Mark base station as VM-capable
+                                self.vm_capable_base_stations.add(bs_eui)
+                                logger.info(f"   📡 Base station {bs_eui} marked as VM-capable")
                             else:
                                 logger.warning(f"❌ VM ACTIVATE FAILED for sensor {eui}, code: {code}")
                                 self._add_vm_log("vm.activateRsp received", f"FAILED for {eui}, code={code}", bs_eui)
+                                # Error response - mark as NOT VM-capable
+                                if bs_eui in self.vm_capable_base_stations:
+                                    self.vm_capable_base_stations.discard(bs_eui)
+                                    logger.info(f"   📡 Base station {bs_eui} marked as NOT VM-capable (error code: {code})")
                             
                             if self.mqtt_out_queue:
                                 await self.mqtt_out_queue.put({
@@ -1466,9 +1477,13 @@ class TLSServer:
                             pending = self.pending_vm_operations.pop(op_id)
                             bs_eui = pending.get("bs_eui", self.connected_base_stations.get(writer, "unknown"))
                             
+                            # Base station responded to VM status - mark as VM-capable
+                            self.vm_capable_base_stations.add(bs_eui)
+                            
                             logger.info(f"═══════════════════════════════════════════════════════════")
                             logger.info(f"📊 VM STATUS RESPONSE from base station {bs_eui}")
                             logger.info(f"   Operation ID: {op_id}")
+                            logger.info(f"   📡 Base station {bs_eui} marked as VM-capable")
                             if mac_types:
                                 logger.info(f"   Active MAC Types: {mac_types}")
                                 for mac_type in mac_types:
@@ -1929,15 +1944,23 @@ class TLSServer:
         if len(self.vm_log) > self._max_vm_log_entries:
             self.vm_log = self.vm_log[-self._max_vm_log_entries:]
     
-    async def vm_activate(self, mac_type: int = 0) -> bool:
+    def get_vm_capable_base_stations(self) -> list:
+        """Get list of base stations that support VM (Variable MAC)"""
+        return list(self.vm_capable_base_stations)
+    
+    async def vm_activate(self, mac_type: int = 0, only_vm_capable: bool = False) -> bool:
         """Activate VM sub-channel reception
         
         Per BSSCI VM specification:
         - command: "vm.activate"
         - opId: Numeric ID of the operation
         - macType: Numeric MAC-Type of the intended Variable MAC
+        
+        Args:
+            mac_type: MAC type for VM activation
+            only_vm_capable: If True, only send to base stations known to support VM
         """
-        logger.info(f"📡 VM ACTIVATE request, macType {mac_type}")
+        logger.info(f"📡 VM ACTIVATE request, macType {mac_type}, only_vm_capable={only_vm_capable}")
         
         if not self.connected_base_stations:
             logger.warning("   No base stations connected")
@@ -1945,6 +1968,15 @@ class TLSServer:
         
         success = False
         for writer, bs_eui in self.connected_base_stations.items():
+            # Filter by VM capability if requested
+            if only_vm_capable and bs_eui not in self.vm_capable_base_stations:
+                logger.info(f"   Skipping base station {bs_eui} (not confirmed VM-capable)")
+                continue
+            
+            # Log warning if sending to unconfirmed base station
+            if bs_eui not in self.vm_capable_base_stations:
+                logger.warning(f"   ⚠️ Sending to base station {bs_eui} without confirmed VM support")
+            
             try:
                 self.opID += 1
                 op_id = self.opID
@@ -1967,14 +1999,17 @@ class TLSServer:
         
         return success
     
-    async def vm_deactivate(self) -> bool:
+    async def vm_deactivate(self, only_vm_capable: bool = False) -> bool:
         """Deactivate VM sub-channel reception
         
         Per BSSCI VM specification:
         - command: "vm.deactivate"
         - opId: Numeric ID of the operation
+        
+        Args:
+            only_vm_capable: If True, only send to base stations known to support VM
         """
-        logger.info(f"📡 VM DEACTIVATE request")
+        logger.info(f"📡 VM DEACTIVATE request, only_vm_capable={only_vm_capable}")
         
         if not self.connected_base_stations:
             logger.warning("   No base stations connected")
@@ -1982,6 +2017,15 @@ class TLSServer:
         
         success = False
         for writer, bs_eui in self.connected_base_stations.items():
+            # Filter by VM capability if requested
+            if only_vm_capable and bs_eui not in self.vm_capable_base_stations:
+                logger.info(f"   Skipping base station {bs_eui} (not confirmed VM-capable)")
+                continue
+            
+            # Log warning if sending to unconfirmed base station
+            if bs_eui not in self.vm_capable_base_stations:
+                logger.warning(f"   ⚠️ Sending to base station {bs_eui} without confirmed VM support")
+            
             try:
                 self.opID += 1
                 op_id = self.opID
@@ -2003,7 +2047,7 @@ class TLSServer:
         
         return success
     
-    async def vm_status(self) -> bool:
+    async def vm_status(self, only_vm_capable: bool = False) -> bool:
         """Query VM sub-channel status - returns list of activated macTypes
         
         Per BSSCI VM specification:
@@ -2011,8 +2055,11 @@ class TLSServer:
         - opId: Numeric ID of the operation
         
         Response will contain macTypes: Numeric[] - List of activated macTypes
+        
+        Args:
+            only_vm_capable: If True, only send to base stations known to support VM
         """
-        logger.info(f"📊 VM STATUS request - querying active MAC types")
+        logger.info(f"📊 VM STATUS request - querying active MAC types, only_vm_capable={only_vm_capable}")
         
         if not self.connected_base_stations:
             logger.warning("   No base stations connected")
@@ -2020,6 +2067,15 @@ class TLSServer:
         
         success = False
         for writer, bs_eui in self.connected_base_stations.items():
+            # Filter by VM capability if requested
+            if only_vm_capable and bs_eui not in self.vm_capable_base_stations:
+                logger.info(f"   Skipping base station {bs_eui} (not confirmed VM-capable)")
+                continue
+            
+            # Log warning if sending to unconfirmed base station
+            if bs_eui not in self.vm_capable_base_stations:
+                logger.warning(f"   ⚠️ Sending to base station {bs_eui} without confirmed VM support")
+            
             try:
                 self.opID += 1
                 op_id = self.opID

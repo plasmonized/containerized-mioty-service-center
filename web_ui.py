@@ -2481,7 +2481,7 @@ def vm_activate():
         if not tls_server_instance:
             return jsonify({'success': False, 'message': 'TLS server not available'}), 503
         
-        data = request.json or {}
+        data = request.get_json(silent=True) or {}
         mac_type = data.get('macType', 0)
         
         import asyncio
@@ -2512,7 +2512,7 @@ def vm_deactivate():
         if not tls_server_instance:
             return jsonify({'success': False, 'message': 'TLS server not available'}), 503
         
-        data = request.json or {}
+        data = request.get_json(silent=True) or {}
         mac_type = data.get('macType', 0)
         
         import asyncio
@@ -2543,7 +2543,7 @@ def vm_query_status():
         if not tls_server_instance:
             return jsonify({'success': False, 'message': 'TLS server not available'}), 503
         
-        data = request.json or {}
+        data = request.get_json(silent=True) or {}
         discover = data.get('discover', False)  # If true, query ALL base stations
         
         import asyncio

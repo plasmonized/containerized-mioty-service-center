@@ -2471,9 +2471,10 @@ def get_vm_status():
 @login_required
 @permission_required('can_edit_sensors')
 def vm_activate():
-    """Activate VM sub-channel reception on all base stations
+    """Activate VM sub-channel reception on VM-capable base stations only
     
     Per BSSCI VM specification, this sends vm.activate with macType parameter.
+    Only sends to base stations that have been confirmed as VM-capable.
     """
     try:
         global tls_server_instance
@@ -2486,14 +2487,14 @@ def vm_activate():
         import asyncio
         loop = asyncio.new_event_loop()
         try:
-            success = loop.run_until_complete(tls_server_instance.vm_activate(mac_type))
+            success = loop.run_until_complete(tls_server_instance.vm_activate(mac_type, only_vm_capable=True))
         finally:
             loop.close()
         
         if success:
-            return jsonify({'success': True, 'message': f'VM activate request sent (macType={mac_type})'})
+            return jsonify({'success': True, 'message': f'VM activate sent to VM-capable base stations (macType={mac_type})'})
         else:
-            return jsonify({'success': False, 'message': 'No base stations connected'})
+            return jsonify({'success': False, 'message': 'No VM-capable base stations found'})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
@@ -2501,9 +2502,10 @@ def vm_activate():
 @login_required
 @permission_required('can_edit_sensors')
 def vm_deactivate():
-    """Deactivate VM sub-channel reception on all base stations
+    """Deactivate VM sub-channel reception on VM-capable base stations only
     
     Per BSSCI VM specification, this sends vm.deactivate.
+    Only sends to base stations that have been confirmed as VM-capable.
     """
     try:
         global tls_server_instance
@@ -2513,14 +2515,14 @@ def vm_deactivate():
         import asyncio
         loop = asyncio.new_event_loop()
         try:
-            success = loop.run_until_complete(tls_server_instance.vm_deactivate())
+            success = loop.run_until_complete(tls_server_instance.vm_deactivate(only_vm_capable=True))
         finally:
             loop.close()
         
         if success:
-            return jsonify({'success': True, 'message': 'VM deactivate request sent'})
+            return jsonify({'success': True, 'message': 'VM deactivate sent to VM-capable base stations'})
         else:
-            return jsonify({'success': False, 'message': 'No base stations connected'})
+            return jsonify({'success': False, 'message': 'No VM-capable base stations found'})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
@@ -2530,25 +2532,34 @@ def vm_deactivate():
 def vm_query_status():
     """Query VM sub-channel status - returns list of activated macTypes
     
-    Per BSSCI VM specification, this sends vm.status to all connected base stations.
-    Response with macTypes will be logged.
+    Per BSSCI VM specification, this sends vm.status to VM-capable base stations.
+    Use discover=true to query ALL base stations (for initial VM capability detection).
     """
     try:
         global tls_server_instance
         if not tls_server_instance:
             return jsonify({'success': False, 'message': 'TLS server not available'}), 503
         
+        data = request.json or {}
+        discover = data.get('discover', False)  # If true, query ALL base stations
+        
         import asyncio
         loop = asyncio.new_event_loop()
         try:
-            success = loop.run_until_complete(tls_server_instance.vm_status())
+            success = loop.run_until_complete(tls_server_instance.vm_status(only_vm_capable=not discover))
         finally:
             loop.close()
         
         if success:
-            return jsonify({'success': True, 'message': 'VM status query sent - check logs for response'})
+            if discover:
+                return jsonify({'success': True, 'message': 'VM status query sent to ALL base stations (discovery mode)'})
+            else:
+                return jsonify({'success': True, 'message': 'VM status query sent to VM-capable base stations'})
         else:
-            return jsonify({'success': False, 'message': 'No base stations connected'})
+            if discover:
+                return jsonify({'success': False, 'message': 'No base stations connected'})
+            else:
+                return jsonify({'success': False, 'message': 'No VM-capable base stations found'})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 

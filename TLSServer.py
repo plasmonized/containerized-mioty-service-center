@@ -4,7 +4,7 @@ import logging
 import os
 import ssl
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict
+from typing import Any, Dict, Set
 
 import bssci_config
 import messages
@@ -102,12 +102,24 @@ class TLSServer:
         # meter_id -> {eui, snr, rssi, data, timestamp, bs_eui, message_count}
         self.oms_meters: Dict[str, Dict[str, Any]] = {}
         
-        # VM Log for OMS page - stores last 100 VM-related log entries
-        self.vm_log: List[Dict[str, Any]] = []
-        self.vm_log_max_size = 100
+        # VM log for tracking VM operations (activate, deactivate, status, etc.)
+        # List of {timestamp, event, details, bs_eui}
+        self.vm_log: list = []
+        self._max_vm_log_entries = 100
+        
+        # Track which base stations support VM (Variable MAC)
+        # Base stations that have successfully responded to VM commands
+        self.vm_capable_base_stations: Set[str] = set()
+        
+        # VM periodic status query settings
+        self.vm_periodic_status_enabled = True  # Enable by default
+        self.vm_periodic_status_interval = 60   # Query every 60 seconds
 
         # Start the deduplication task
         asyncio.create_task(self.process_deduplication_buffer())
+        
+        # Start periodic VM status query
+        asyncio.create_task(self.periodic_vm_status_query())
 
         # Start auto-detach monitoring if enabled
         if getattr(bssci_config, 'AUTO_DETACH_ENABLED', True):
@@ -728,27 +740,11 @@ class TLSServer:
                             writer.write(full_message)
                             await writer.drain()
                             self.opID += 1
-                            
-                            await asyncio.sleep(0.1)
-                            
-                            logger.info(f"   📊 Sending VM status request to {bs_eui}")
-                            op_id = self.opID
-                            self.opID += 1
-                            
-                            self.pending_vm_operations[op_id] = {
-                                "type": "vm_status",
-                                "bs_eui": bs_eui,
-                                "timestamp": asyncio.get_event_loop().time()
-                            }
-                            
-                            vm_status_msg = encode_message(messages.build_vm_status_request(op_id))
-                            writer.write(IDENTIFIER + len(vm_status_msg).to_bytes(4, byteorder="little") + vm_status_msg)
-                            await writer.drain()
 
                         except Exception as e:
                             logger.error(f"   ❌ Failed to send status to {bs_eui}: {e}")
 
-                    logger.info(f"📊 STATUS REQUEST CYCLE COMPLETED (incl. VM status)")
+                    logger.info(f"📊 STATUS REQUEST CYCLE COMPLETED")
                 else:
                     logger.debug(f"📊 No base stations connected - skipping status requests")
 
@@ -901,11 +897,16 @@ class TLSServer:
                         bs_eui = self.connected_base_stations[writer]
                         op_id = message.get("opId", "unknown")
 
+                        cpu_raw = message['cpuLoad']
+                        mem_raw = message['memLoad']
+                        cpu_pct = cpu_raw if cpu_raw > 1 else cpu_raw * 100
+                        mem_pct = mem_raw if mem_raw > 1 else mem_raw * 100
+                        
                         logger.info(f"📊 BASE STATION STATUS RESPONSE received from {bs_eui}")
                         logger.info(f"   Operation ID: {op_id}")
                         logger.info(f"   Status Code: {message['code']}")
-                        logger.info(f"   Memory Load: {message['memLoad']:.1%}")
-                        logger.info(f"   CPU Load: {message['cpuLoad']:.1%}")
+                        logger.info(f"   Memory Load: {mem_pct:.1f}%")
+                        logger.info(f"   CPU Load: {cpu_pct:.1f}%")
                         logger.info(f"   Duty Cycle: {message['dutyCycle']:.1%}")
 
                         # Parse uptime to human readable format
@@ -931,28 +932,16 @@ class TLSServer:
                             "uptime": message["uptime"],
                         }
                         
-                        cpu_load = message["cpuLoad"]
-                        mem_load = message["memLoad"]
-                        duty_cycle = message["dutyCycle"]
-                        temp = message.get("temp")
+                        temp_value = message.get("temp", None)
                         
-                        cpu_pct = cpu_load if cpu_load > 1 else cpu_load * 100
-                        mem_pct = mem_load if mem_load > 1 else mem_load * 100
-                        duty_pct = duty_cycle * 100
-                        
-                        health_data = {
+                        self.base_station_health[bs_eui.lower()] = {
                             "cpu": cpu_pct,
                             "memory": mem_pct,
-                            "duty_cycle": duty_pct,
+                            "duty_cycle": message["dutyCycle"] * 100,
                             "uptime": message["uptime"],
+                            "temperature": temp_value,
                             "last_update": datetime.now(timezone.utc).isoformat()
                         }
-                        
-                        if temp is not None:
-                            health_data["temperature"] = temp
-                            logger.info(f"   Temperature: {temp:.1f}°C")
-                        
-                        self.base_station_health[bs_eui.lower()] = health_data
 
                         mqtt_topic = f"bs/{bs_eui.upper()}"
                         payload = json.dumps(data_dict)
@@ -961,7 +950,7 @@ class TLSServer:
                         logger.info(f"   Topic: {bssci_config.BASE_TOPIC.rstrip('/')}/{mqtt_topic}")
                         logger.info(f"   Base Station EUI: {bs_eui}")
                         logger.info(f"   Payload size: {len(payload)} bytes")
-                        logger.info(f"   Status data: Code={data_dict['code']}, CPU={data_dict['cpuLoad']:.1%}, Memory={data_dict['memLoad']:.1%}")
+                        logger.info(f"   Status data: Code={data_dict['code']}, CPU={cpu_pct:.1f}%, Memory={mem_pct:.1f}%")
                         logger.info(f"   Queue size before add: {self.mqtt_out_queue.qsize()}")
 
                         try:
@@ -1410,7 +1399,7 @@ class TLSServer:
                             await self.mqtt_out_queue.put(detach_response_notification)
 
                     # Variable MAC (VM) Sub-Channel Message Handlers
-                    elif msg_type == "vmActRsp":
+                    elif msg_type in ("vm.activateRsp", "vmActRsp"):
                         op_id = message.get("opId", "unknown")
                         code = message.get("code", -1)
                         bs_eui = self.connected_base_stations.get(writer, "unknown")
@@ -1428,8 +1417,17 @@ class TLSServer:
                                     "activated_at": asyncio.get_event_loop().time(),
                                     "bs_eui": bs_eui
                                 }
+                                self._add_vm_log("vm.activateRsp received", f"SUCCESS for {eui}, channel={vm_channel}", bs_eui)
+                                # Mark base station as VM-capable
+                                self.vm_capable_base_stations.add(bs_eui)
+                                logger.info(f"   📡 Base station {bs_eui} marked as VM-capable")
                             else:
                                 logger.warning(f"❌ VM ACTIVATE FAILED for sensor {eui}, code: {code}")
+                                self._add_vm_log("vm.activateRsp received", f"FAILED for {eui}, code={code}", bs_eui)
+                                # Error response - mark as NOT VM-capable
+                                if bs_eui in self.vm_capable_base_stations:
+                                    self.vm_capable_base_stations.discard(bs_eui)
+                                    logger.info(f"   📡 Base station {bs_eui} marked as NOT VM-capable (error code: {code})")
                             
                             if self.mqtt_out_queue:
                                 await self.mqtt_out_queue.put({
@@ -1443,7 +1441,13 @@ class TLSServer:
                                     })
                                 })
                     
-                    elif msg_type == "vmDeactRsp":
+                    elif msg_type in ("vm.activateCmp", "vmActCmp"):
+                        op_id = message.get("opId", "unknown")
+                        bs_eui = self.connected_base_stations.get(writer, "unknown")
+                        logger.info(f"📡 VM ACTIVATE COMPLETE - Operation {op_id}")
+                        self._add_vm_log("vm.activateCmp received", f"Operation {op_id} complete", bs_eui)
+                    
+                    elif msg_type in ("vm.deactivateRsp", "vmDeactRsp"):
                         op_id = message.get("opId", "unknown")
                         code = message.get("code", -1)
                         
@@ -1451,12 +1455,15 @@ class TLSServer:
                             pending = self.pending_vm_operations.pop(op_id)
                             eui = pending.get("eui", "unknown")
                             
+                            bs_eui = self.connected_base_stations.get(writer, "unknown")
                             if code == 0:
                                 logger.info(f"✅ VM DEACTIVATE SUCCESS for sensor {eui}")
                                 if eui.upper() in self.vm_active_sensors:
                                     del self.vm_active_sensors[eui.upper()]
+                                self._add_vm_log("vm.deactivateRsp received", f"SUCCESS for {eui}", bs_eui)
                             else:
                                 logger.warning(f"❌ VM DEACTIVATE FAILED for sensor {eui}, code: {code}")
+                                self._add_vm_log("vm.deactivateRsp received", f"FAILED for {eui}, code={code}", bs_eui)
                             
                             if self.mqtt_out_queue:
                                 await self.mqtt_out_queue.put({
@@ -1477,18 +1484,21 @@ class TLSServer:
                             pending = self.pending_vm_operations.pop(op_id)
                             bs_eui = pending.get("bs_eui", self.connected_base_stations.get(writer, "unknown"))
                             
+                            # Base station responded to VM status - mark as VM-capable
+                            self.vm_capable_base_stations.add(bs_eui)
+                            
                             logger.info(f"═══════════════════════════════════════════════════════════")
                             logger.info(f"📊 VM STATUS RESPONSE from base station {bs_eui}")
                             logger.info(f"   Operation ID: {op_id}")
+                            logger.info(f"   📡 Base station {bs_eui} marked as VM-capable")
                             if mac_types:
                                 logger.info(f"   Active MAC Types: {mac_types}")
-                                mac_str = ", ".join([str(m) for m in mac_types])
-                                self.add_vm_log(f"BS {bs_eui}: Active MAC types: [{mac_str}]", "response")
                                 for mac_type in mac_types:
                                     logger.info(f"      - MAC Type {mac_type}")
+                                self._add_vm_log("vm.statusRsp received", f"Active MAC Types: {mac_types}", bs_eui)
                             else:
                                 logger.info(f"   No MAC Types active (VM reception not enabled)")
-                                self.add_vm_log(f"BS {bs_eui}: No MAC types active", "response")
+                                self._add_vm_log("vm.statusRsp received", "No MAC Types active", bs_eui)
                             logger.info(f"═══════════════════════════════════════════════════════════")
                             
                             if self.mqtt_out_queue:
@@ -1502,23 +1512,61 @@ class TLSServer:
                                     })
                                 })
                     
-                    elif msg_type == "vm.statusCmp":
+                    elif msg_type in ("vm.statusCmp", "vmStatusCmp"):
                         op_id = message.get("opId", "unknown")
+                        bs_eui = self.connected_base_stations.get(writer, "unknown")
                         logger.info(f"📊 VM STATUS COMPLETE - Operation {op_id}")
+                        self._add_vm_log("vm.statusCmp received", f"Operation {op_id} complete", bs_eui)
                     
-                    elif msg_type == "vmUlData":
-                        eui = int(message["epEui"]).to_bytes(8, byteorder="big").hex()
+                    elif msg_type in ("vm.deactivateCmp", "vmDeactCmp"):
+                        op_id = message.get("opId", "unknown")
+                        bs_eui = self.connected_base_stations.get(writer, "unknown")
+                        logger.info(f"📡 VM DEACTIVATE COMPLETE - Operation {op_id}")
+                        self._add_vm_log("vm.deactivateCmp received", f"Operation {op_id} complete", bs_eui)
+                    
+                    elif msg_type in ("vm.dlDataCmp", "vmDlDataCmp"):
+                        op_id = message.get("opId", "unknown")
+                        bs_eui = self.connected_base_stations.get(writer, "unknown")
+                        logger.info(f"📤 VM DOWNLINK DATA COMPLETE - Operation {op_id}")
+                        self._add_vm_log("vm.dlDataCmp received", f"Operation {op_id} complete", bs_eui)
+                    
+                    elif msg_type in ("vm.ulDataCmp", "vmUlDataCmp"):
+                        op_id = message.get("opId", "unknown")
+                        bs_eui = self.connected_base_stations.get(writer, "unknown")
+                        logger.info(f"📨 VM UPLINK DATA COMPLETE - Operation {op_id}")
+                        self._add_vm_log("vm.ulDataCmp received", f"Operation {op_id} complete", bs_eui)
+                    
+                    elif msg_type in ("vm.ulData", "vmUlData"):
                         bs_eui = self.connected_base_stations.get(writer, "unknown")
                         op_id = message.get("opId", 0)
-                        port = message.get("port", 1)
-                        data = message.get("data", [])
+                        mac_type = message.get("macType", 0)
+                        # Per BSSCI spec: userData is the U-MPDU starting after MAC-Type
+                        data = message.get("userData", message.get("data", []))
                         snr = message.get("snr", 0)
                         rssi = message.get("rssi", 0)
+                        trx_time = message.get("trxTime", 0)
+                        sys_time = message.get("sysTime", 0)
+                        freq_off = message.get("freqOff", 0)
+                        eq_snr = message.get("eqSnr", None)
+                        carr_space = message.get("carrSpace", 1)
+                        patt_grp = message.get("pattGrp", 0)
+                        patt_num = message.get("pattNum", 0)
+                        # Legacy support for epEui (some implementations may use it)
+                        eui = ""
+                        if "epEui" in message:
+                            eui = int(message["epEui"]).to_bytes(8, byteorder="big").hex()
+                        port = message.get("port", 1)
                         
-                        logger.info(f"📨 VM UPLINK DATA received from sensor {eui}")
-                        logger.info(f"   Port: {port}, Data length: {len(data)} bytes")
+                        logger.info(f"📨 VM UPLINK DATA received (macType={mac_type})")
+                        logger.info(f"   Operation ID: {op_id}")
+                        if eui:
+                            logger.info(f"   Sensor EUI: {eui}")
+                        logger.info(f"   Data length: {len(data)} bytes")
                         logger.info(f"   Via base station: {bs_eui}")
-                        logger.info(f"   SNR: {snr}, RSSI: {rssi}")
+                        logger.info(f"   SNR: {snr} dB, RSSI: {rssi} dBm")
+                        if eq_snr is not None:
+                            logger.info(f"   Equivalent SNR: {eq_snr} dB")
+                        logger.info(f"   Carrier spacing: {carr_space} (0=narrow, 1=standard, 2=wide)")
                         
                         # Parse OMS meter ID from WMBUS payload (if applicable)
                         data_hex = bytes(data).hex() if isinstance(data, list) else data
@@ -1548,33 +1596,46 @@ class TLSServer:
                                     'message_count': 1
                                 }
                         
-                        # Send acknowledgment
+                        # Send acknowledgment (vm.ulDataRsp)
                         msg_pack = encode_message(messages.build_vm_ul_data_response(op_id))
                         writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
                         await writer.drain()
                         
-                        # Update last seen
-                        self.sensor_last_seen[eui.upper()] = asyncio.get_event_loop().time()
+                        # Update last seen (use meter_id if no EUI available)
+                        identifier = eui.upper() if eui else (meter_id or f"vm_{op_id}")
+                        if eui:
+                            self.sensor_last_seen[eui.upper()] = asyncio.get_event_loop().time()
                         
                         # Increment VM message counter
                         self.traffic_metrics['vm_messages'] += 1
                         
+                        # Log VM uplink data
+                        self._add_vm_log("vm.ulData received", 
+                                        f"macType={mac_type}, meter={meter_id or 'N/A'}, {len(data)} bytes", 
+                                        bs_eui)
+                        
                         # Publish to MQTT
                         if self.mqtt_out_queue:
+                            # Use meter_id for topic if available, else EUI, else generic vm topic
+                            topic_id = meter_id or eui.upper() or "unknown"
                             await self.mqtt_out_queue.put({
-                                "topic": f"ep/{eui.upper()}/vm/ul",
+                                "topic": f"vm/{topic_id}/ul",
                                 "payload": json.dumps({
                                     "bs_eui": bs_eui,
-                                    "port": port,
+                                    "mac_type": mac_type,
+                                    "eui": eui.upper() if eui else None,
                                     "data": data_hex,
                                     "meter_id": meter_id,
                                     "snr": snr,
                                     "rssi": rssi,
+                                    "eq_snr": eq_snr,
+                                    "freq_off": freq_off,
+                                    "carr_space": carr_space,
                                     "timestamp": asyncio.get_event_loop().time()
                                 })
                             })
                     
-                    elif msg_type == "vmDlDataRsp":
+                    elif msg_type in ("vm.dlDataRsp", "vmDlDataRsp"):
                         op_id = message.get("opId", "unknown")
                         code = message.get("code", -1)
                         
@@ -1927,15 +1988,35 @@ class TLSServer:
 
     # ==================== Variable MAC (VM) Sub-Channel Methods ====================
     
-    async def vm_activate(self, mac_type: int = 0) -> bool:
+    def _add_vm_log(self, event: str, details: str, bs_eui: str = None) -> None:
+        """Add an entry to the VM log"""
+        log_entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "event": event,
+            "details": details,
+            "bs_eui": bs_eui
+        }
+        self.vm_log.append(log_entry)
+        if len(self.vm_log) > self._max_vm_log_entries:
+            self.vm_log = self.vm_log[-self._max_vm_log_entries:]
+    
+    def get_vm_capable_base_stations(self) -> list:
+        """Get list of base stations that support VM (Variable MAC)"""
+        return list(self.vm_capable_base_stations)
+    
+    async def vm_activate(self, mac_type: int = 0, only_vm_capable: bool = False) -> bool:
         """Activate VM sub-channel reception
         
         Per BSSCI VM specification:
         - command: "vm.activate"
         - opId: Numeric ID of the operation
         - macType: Numeric MAC-Type of the intended Variable MAC
+        
+        Args:
+            mac_type: MAC type for VM activation
+            only_vm_capable: If True, only send to base stations known to support VM
         """
-        logger.info(f"📡 VM ACTIVATE request, macType {mac_type}")
+        logger.info(f"📡 VM ACTIVATE request, macType {mac_type}, only_vm_capable={only_vm_capable}")
         
         if not self.connected_base_stations:
             logger.warning("   No base stations connected")
@@ -1943,6 +2024,15 @@ class TLSServer:
         
         success = False
         for writer, bs_eui in self.connected_base_stations.items():
+            # Filter by VM capability if requested
+            if only_vm_capable and bs_eui not in self.vm_capable_base_stations:
+                logger.info(f"   Skipping base station {bs_eui} (not confirmed VM-capable)")
+                continue
+            
+            # Log warning if sending to unconfirmed base station
+            if bs_eui not in self.vm_capable_base_stations:
+                logger.warning(f"   ⚠️ Sending to base station {bs_eui} without confirmed VM support")
+            
             try:
                 self.opID += 1
                 op_id = self.opID
@@ -1958,22 +2048,26 @@ class TLSServer:
                 await writer.drain()
                 
                 logger.info(f"   Sent VM activate to base station {bs_eui}")
-                self.add_vm_log(f"Sent vm.activate (macType={mac_type}) to BS {bs_eui}", "command")
+                self._add_vm_log("vm.activate sent", f"macType={mac_type}", bs_eui)
                 success = True
             except Exception as e:
                 logger.error(f"   Failed to send VM activate to {bs_eui}: {e}")
-                self.add_vm_log(f"Failed vm.activate to BS {bs_eui}: {e}", "error")
         
         return success
     
-    async def vm_deactivate(self) -> bool:
+    async def vm_deactivate(self, mac_type: int = 0, only_vm_capable: bool = False) -> bool:
         """Deactivate VM sub-channel reception
         
         Per BSSCI VM specification:
         - command: "vm.deactivate"
         - opId: Numeric ID of the operation
+        - macType: Numeric - MAC-Type of the intended Variable MAC
+        
+        Args:
+            mac_type: MAC-Type to deactivate (0=OMS metering)
+            only_vm_capable: If True, only send to base stations known to support VM
         """
-        logger.info(f"📡 VM DEACTIVATE request")
+        logger.info(f"📡 VM DEACTIVATE request, macType={mac_type}, only_vm_capable={only_vm_capable}")
         
         if not self.connected_base_stations:
             logger.warning("   No base stations connected")
@@ -1981,29 +2075,38 @@ class TLSServer:
         
         success = False
         for writer, bs_eui in self.connected_base_stations.items():
+            # Filter by VM capability if requested
+            if only_vm_capable and bs_eui not in self.vm_capable_base_stations:
+                logger.info(f"   Skipping base station {bs_eui} (not confirmed VM-capable)")
+                continue
+            
+            # Log warning if sending to unconfirmed base station
+            if bs_eui not in self.vm_capable_base_stations:
+                logger.warning(f"   ⚠️ Sending to base station {bs_eui} without confirmed VM support")
+            
             try:
                 self.opID += 1
                 op_id = self.opID
                 
                 self.pending_vm_operations[op_id] = {
                     "operation": "deactivate",
+                    "mac_type": mac_type,
                     "timestamp": asyncio.get_event_loop().time()
                 }
                 
-                msg_pack = encode_message(messages.build_vm_deactivate_request(op_id))
+                msg_pack = encode_message(messages.build_vm_deactivate_request(op_id, mac_type))
                 writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
                 await writer.drain()
                 
-                logger.info(f"   Sent VM deactivate to base station {bs_eui}")
-                self.add_vm_log(f"Sent vm.deactivate to BS {bs_eui}", "command")
+                logger.info(f"   Sent VM deactivate (macType={mac_type}) to base station {bs_eui}")
+                self._add_vm_log("vm.deactivate sent", f"macType={mac_type}", bs_eui)
                 success = True
             except Exception as e:
                 logger.error(f"   Failed to send VM deactivate to {bs_eui}: {e}")
-                self.add_vm_log(f"Failed vm.deactivate to BS {bs_eui}: {e}", "error")
         
         return success
     
-    async def vm_status(self) -> bool:
+    async def vm_status(self, only_vm_capable: bool = False) -> bool:
         """Query VM sub-channel status - returns list of activated macTypes
         
         Per BSSCI VM specification:
@@ -2011,8 +2114,11 @@ class TLSServer:
         - opId: Numeric ID of the operation
         
         Response will contain macTypes: Numeric[] - List of activated macTypes
+        
+        Args:
+            only_vm_capable: If True, only send to base stations known to support VM
         """
-        logger.info(f"📊 VM STATUS request - querying active MAC types")
+        logger.info(f"📊 VM STATUS request - querying active MAC types, only_vm_capable={only_vm_capable}")
         
         if not self.connected_base_stations:
             logger.warning("   No base stations connected")
@@ -2020,6 +2126,15 @@ class TLSServer:
         
         success = False
         for writer, bs_eui in self.connected_base_stations.items():
+            # Filter by VM capability if requested
+            if only_vm_capable and bs_eui not in self.vm_capable_base_stations:
+                logger.info(f"   Skipping base station {bs_eui} (not confirmed VM-capable)")
+                continue
+            
+            # Log warning if sending to unconfirmed base station
+            if bs_eui not in self.vm_capable_base_stations:
+                logger.warning(f"   ⚠️ Sending to base station {bs_eui} without confirmed VM support")
+            
             try:
                 self.opID += 1
                 op_id = self.opID
@@ -2035,13 +2150,56 @@ class TLSServer:
                 await writer.drain()
                 
                 logger.info(f"   Sent VM status request to base station {bs_eui}")
-                self.add_vm_log(f"Sent vm.status to BS {bs_eui}", "command")
+                self._add_vm_log("vm.status sent", "Status query", bs_eui)
                 success = True
             except Exception as e:
                 logger.error(f"   Failed to send VM status to {bs_eui}: {e}")
-                self.add_vm_log(f"Failed vm.status to BS {bs_eui}: {e}", "error")
         
         return success
+    
+    async def periodic_vm_status_query(self) -> None:
+        """Background task that periodically queries VM status from VM-capable base stations
+        
+        Logic:
+        1. Wait 30 seconds after start for connections to establish
+        2. Query ALL connected base stations once to discover which support VM
+        3. Mark VM-capable base stations based on responses
+        4. Then only query VM-capable base stations every 60 seconds
+        """
+        logger.info("📡 Starting periodic VM status query background task")
+        
+        # Wait for initial connections to establish
+        await asyncio.sleep(30)
+        
+        # Initial discovery: query ALL base stations to find VM-capable ones
+        if self.connected_base_stations:
+            logger.info("📊 INITIAL VM DISCOVERY - querying ALL base stations to detect VM capability")
+            logger.info(f"   Connected base stations: {len(self.connected_base_stations)}")
+            await self.vm_status(only_vm_capable=False)  # Query ALL
+            self._add_vm_log("VM Discovery", "Initial query sent to all base stations", "system")
+            
+            # Wait for responses
+            await asyncio.sleep(5)
+            
+            if self.vm_capable_base_stations:
+                logger.info(f"✅ VM DISCOVERY COMPLETE - Found {len(self.vm_capable_base_stations)} VM-capable base stations:")
+                for bs in self.vm_capable_base_stations:
+                    logger.info(f"      - {bs}")
+            else:
+                logger.info("ℹ️  VM DISCOVERY COMPLETE - No VM-capable base stations found")
+        
+        # Periodic queries: only query VM-capable base stations
+        while True:
+            try:
+                await asyncio.sleep(self.vm_periodic_status_interval)
+                
+                if self.vm_periodic_status_enabled and self.vm_capable_base_stations:
+                    logger.info(f"📊 PERIODIC VM STATUS QUERY - {len(self.vm_capable_base_stations)} VM-capable base stations")
+                    await self.vm_status(only_vm_capable=True)  # Only VM-capable
+                
+            except Exception as e:
+                logger.error(f"❌ Error in periodic VM status query: {e}")
+                await asyncio.sleep(60)
     
     async def vm_send_data(self, sensor_eui: str, data: bytes, port: int = 1) -> bool:
         """Send data to sensor via VM sub-channel (downlink)"""
@@ -2092,22 +2250,6 @@ class TLSServer:
         except Exception as e:
             logger.error(f"   Failed to send VM downlink data: {e}")
             return False
-    
-    def add_vm_log(self, message: str, log_type: str = "info") -> None:
-        """Add entry to VM log for OMS page"""
-        import time
-        entry = {
-            "timestamp": time.time(),
-            "message": message,
-            "type": log_type
-        }
-        self.vm_log.append(entry)
-        if len(self.vm_log) > self.vm_log_max_size:
-            self.vm_log = self.vm_log[-self.vm_log_max_size:]
-    
-    def get_vm_log(self) -> list:
-        """Get VM log entries"""
-        return list(self.vm_log)
     
     def get_vm_status(self) -> dict:
         """Get VM sub-channel status for all sensors"""

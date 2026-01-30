@@ -35,41 +35,66 @@
 </div>
 
 <div class="row mb-4">
+    <div class="col-md-6">
+        <div class="card h-100">
+            <div class="card-header" style="background-color: #ff8c00; color: white;">
+                <h5 class="mb-0">VM Controls</h5>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-12">
+                        <label for="macTypeInput" class="form-label">MAC Type</label>
+                        <input type="number" class="form-control" id="macTypeInput" value="0" min="0">
+                        <small class="text-muted">MAC type for VM activation (default: 0)</small>
+                    </div>
+                    <div class="col-12">
+                        <button class="btn btn-primary me-2" onclick="vmActivate()" style="background-color: #ff8c00; border-color: #ff8c00;">
+                            VM aktivieren
+                        </button>
+                        <button class="btn btn-outline-secondary" onclick="vmStatus()">
+                            VM Status abfragen
+                        </button>
+                    </div>
+                    <div class="col-12 border-top pt-3 mt-2">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="periodicStatusCheck" onchange="togglePeriodicStatus()">
+                            <label class="form-check-label" for="periodicStatusCheck">
+                                Periodische Status-Abfrage
+                            </label>
+                        </div>
+                        <div class="input-group mt-2" style="max-width: 200px;">
+                            <input type="number" class="form-control" id="statusIntervalInput" value="60" min="10" max="3600">
+                            <span class="input-group-text">Sekunden</span>
+                        </div>
+                        <small class="text-muted">Automatische VM Status-Abfrage (10-3600s)</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card h-100">
+            <div class="card-header" style="background-color: #ff8c00; color: white;">
+                <h5 class="mb-0">VM Log</h5>
+            </div>
+            <div class="card-body" style="max-height: 250px; overflow-y: auto;">
+                <div id="vm-log-container">
+                    <p class="text-muted mb-0">No VM events logged yet.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-4">
     <div class="col-12">
         <div class="card">
             <div class="card-header" style="background-color: #ff8c00; color: white;">
-                <h5 class="mb-0">VM Sub-Channel Control</h5>
+                <h5 class="mb-0">VM-fähige Basisstationen</h5>
             </div>
             <div class="card-body">
-                <div class="row">
-                    <div class="col-md-6">
-                        <h6>Commands</h6>
-                        <div class="btn-group-vertical w-100" role="group">
-                            <button class="btn btn-outline-primary mb-2" onclick="sendVmStatus()">
-                                <i class="fas fa-info-circle"></i> Query VM Status
-                            </button>
-                            <button class="btn btn-outline-success mb-2" onclick="sendVmActivate(3)">
-                                <i class="fas fa-play"></i> Activate VM (macType 3 - OMS)
-                            </button>
-                            <button class="btn btn-outline-danger" onclick="sendVmDeactivate()">
-                                <i class="fas fa-stop"></i> Deactivate VM
-                            </button>
-                        </div>
-                        <div class="mt-3">
-                            <label class="form-label">Custom macType:</label>
-                            <div class="input-group">
-                                <input type="number" class="form-control" id="customMacType" value="3" min="0" max="255">
-                                <button class="btn btn-success" onclick="sendVmActivate(document.getElementById('customMacType').value)">Activate</button>
-                            </div>
-                            <small class="text-muted">macType 3 = OMS/WMBUS, 0 = Standard TS, 1 = Extended TS</small>
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <h6>VM Log <button class="btn btn-sm btn-outline-secondary" onclick="refreshVmLog()"><i class="fas fa-sync-alt"></i></button></h6>
-                        <div id="vm-log" class="bg-dark text-light p-2 rounded" style="height: 200px; overflow-y: auto; font-family: monospace; font-size: 12px;">
-                            <span class="text-muted">Loading VM log...</span>
-                        </div>
-                    </div>
+                <div id="vm-capable-container">
+                    <p class="text-muted mb-0">Lade VM-fähige Basisstationen...</p>
                 </div>
             </div>
         </div>
@@ -114,6 +139,7 @@
 {% block scripts %}
 <script>
 let refreshInterval;
+let periodicStatusInterval = null;
 
 function formatTimestamp(timestamp) {
     if (!timestamp) return 'Never';
@@ -132,10 +158,188 @@ function formatTimeSince(timestamp) {
     return Math.floor(diff / 86400) + 'd ago';
 }
 
+function formatIsoTimestamp(isoString) {
+    if (!isoString) return '';
+    const date = new Date(isoString);
+    return date.toLocaleTimeString();
+}
+
 function truncateData(data, maxLen) {
     if (!data) return '';
     if (data.length <= maxLen) return data;
     return data.substring(0, maxLen) + '...';
+}
+
+function showAlert(message, type) {
+    const container = document.getElementById('alert-container');
+    const alert = document.createElement('div');
+    alert.className = `alert alert-${type} alert-dismissible fade show`;
+    alert.innerHTML = `${message}<button type="button" class="btn-close" data-bs-dismiss="alert"></button>`;
+    container.appendChild(alert);
+    setTimeout(() => alert.remove(), 5000);
+}
+
+function togglePeriodicStatus() {
+    const checkbox = document.getElementById('periodicStatusCheck');
+    const intervalInput = document.getElementById('statusIntervalInput');
+    const interval = Math.max(10, Math.min(3600, parseInt(intervalInput.value) || 60));
+    
+    if (checkbox.checked) {
+        localStorage.setItem('vmPeriodicStatusEnabled', 'true');
+        localStorage.setItem('vmPeriodicStatusInterval', interval.toString());
+        startPeriodicStatus(interval);
+        showAlert(`Periodische Status-Abfrage aktiviert (alle ${interval} Sekunden)`, 'success');
+    } else {
+        localStorage.setItem('vmPeriodicStatusEnabled', 'false');
+        stopPeriodicStatus();
+        showAlert('Periodische Status-Abfrage deaktiviert', 'info');
+    }
+}
+
+function startPeriodicStatus(intervalSeconds) {
+    stopPeriodicStatus();
+    periodicStatusInterval = setInterval(() => {
+        vmStatus();
+    }, intervalSeconds * 1000);
+    console.log(`Periodic VM status started: every ${intervalSeconds}s`);
+}
+
+function stopPeriodicStatus() {
+    if (periodicStatusInterval) {
+        clearInterval(periodicStatusInterval);
+        periodicStatusInterval = null;
+        console.log('Periodic VM status stopped');
+    }
+}
+
+function loadPeriodicStatusSettings() {
+    const enabled = localStorage.getItem('vmPeriodicStatusEnabled') === 'true';
+    const interval = parseInt(localStorage.getItem('vmPeriodicStatusInterval')) || 60;
+    
+    document.getElementById('periodicStatusCheck').checked = enabled;
+    document.getElementById('statusIntervalInput').value = interval;
+    
+    if (enabled) {
+        startPeriodicStatus(interval);
+    }
+}
+
+function refreshVmCapable() {
+    fetch('/api/vm/capable')
+        .then(response => response.json())
+        .then(data => {
+            const container = document.getElementById('vm-capable-container');
+            if (data.success) {
+                const vmCapable = data.vm_capable || [];
+                const connected = data.connected_base_stations || [];
+                const totalConnected = data.total_connected || 0;
+                
+                if (connected.length === 0) {
+                    container.innerHTML = '<p class="text-muted mb-0">Keine Basisstationen verbunden.</p>';
+                } else if (vmCapable.length === 0) {
+                    container.innerHTML = `
+                        <p class="text-muted mb-0">
+                            <strong>${totalConnected}</strong> Basisstation(en) verbunden, aber keine VM-Unterstützung bestätigt.
+                            <br><small>Senden Sie eine VM Status-Abfrage, um die VM-Unterstützung zu ermitteln.</small>
+                        </p>
+                        <div class="mt-2">
+                            ${connected.map(bs => `<span class="badge bg-secondary me-1">${bs}</span>`).join('')}
+                        </div>
+                    `;
+                } else {
+                    const notVmCapable = connected.filter(bs => !vmCapable.includes(bs));
+                    container.innerHTML = `
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6 class="text-success"><i class="bi bi-check-circle"></i> VM-fähig (${vmCapable.length})</h6>
+                                <div>
+                                    ${vmCapable.map(bs => `<span class="badge bg-success me-1 mb-1">${bs}</span>`).join('')}
+                                </div>
+                            </div>
+                            ${notVmCapable.length > 0 ? `
+                            <div class="col-md-6">
+                                <h6 class="text-secondary"><i class="bi bi-question-circle"></i> Nicht bestätigt (${notVmCapable.length})</h6>
+                                <div>
+                                    ${notVmCapable.map(bs => `<span class="badge bg-secondary me-1 mb-1">${bs}</span>`).join('')}
+                                </div>
+                            </div>
+                            ` : ''}
+                        </div>
+                        <small class="text-muted mt-2 d-block">Gesamt: ${totalConnected} Basisstation(en) verbunden</small>
+                    `;
+                }
+            } else {
+                container.innerHTML = '<p class="text-danger mb-0">Fehler beim Laden der VM-fähigen Basisstationen.</p>';
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching VM capable base stations:', error);
+            document.getElementById('vm-capable-container').innerHTML = '<p class="text-danger mb-0">Fehler beim Laden.</p>';
+        });
+}
+
+function vmActivate() {
+    const macType = parseInt(document.getElementById('macTypeInput').value) || 0;
+    fetch('/api/vm/activate', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({macType: macType})
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showAlert(data.message, 'success');
+            setTimeout(refreshVmLog, 1000);
+        } else {
+            showAlert(data.message || 'Failed to activate VM', 'danger');
+        }
+    })
+    .catch(error => {
+        console.error('Error activating VM:', error);
+        showAlert('Error activating VM', 'danger');
+    });
+}
+
+function vmStatus() {
+    fetch('/api/vm/status', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'}
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showAlert(data.message, 'success');
+            setTimeout(refreshVmLog, 1000);
+        } else {
+            showAlert(data.message || 'Failed to query VM status', 'danger');
+        }
+    })
+    .catch(error => {
+        console.error('Error querying VM status:', error);
+        showAlert('Error querying VM status', 'danger');
+    });
+}
+
+function refreshVmLog() {
+    fetch('/api/vm/log')
+        .then(response => response.json())
+        .then(data => {
+            const container = document.getElementById('vm-log-container');
+            if (data.success && data.log && data.log.length > 0) {
+                const entries = data.log.slice().reverse().slice(0, 20);
+                container.innerHTML = entries.map(entry => `
+                    <div class="mb-2 pb-2 border-bottom">
+                        <small class="text-muted">${formatIsoTimestamp(entry.timestamp)}</small>
+                        <span class="badge bg-secondary ms-1">${entry.event}</span>
+                        ${entry.bs_eui ? `<small class="text-muted ms-1">[${entry.bs_eui}]</small>` : ''}
+                        <br><small>${entry.details}</small>
+                    </div>
+                `).join('');
+            } else {
+                container.innerHTML = '<p class="text-muted mb-0">No VM events logged yet.</p>';
+            }
+        })
+        .catch(error => console.error('Error fetching VM log:', error));
 }
 
 function refreshData() {
@@ -182,103 +386,13 @@ function refreshData() {
         .catch(error => {
             console.error('Error fetching OMS meters:', error);
         });
+    
+    refreshVmLog();
+    refreshVmCapable();
 }
 
+loadPeriodicStatusSettings();
 refreshData();
-refreshVmLog();
 refreshInterval = setInterval(refreshData, 30000);
-setInterval(refreshVmLog, 10000);
-
-function refreshVmLog() {
-    fetch('/api/vm/log')
-        .then(response => response.json())
-        .then(data => {
-            const logDiv = document.getElementById('vm-log');
-            if (data.success && data.entries && data.entries.length > 0) {
-                logDiv.innerHTML = data.entries.map(e => {
-                    const timeStr = new Date(e.timestamp * 1000).toLocaleTimeString();
-                    const typeClass = e.type === 'error' ? 'text-danger' : 
-                                     e.type === 'response' ? 'text-success' : 
-                                     e.type === 'command' ? 'text-info' : 'text-light';
-                    return `<div class="${typeClass}">[${timeStr}] ${e.message}</div>`;
-                }).join('');
-                logDiv.scrollTop = logDiv.scrollHeight;
-            } else {
-                logDiv.innerHTML = '<span class="text-muted">No VM log entries yet. Send a command to see activity.</span>';
-            }
-        })
-        .catch(error => {
-            console.error('Error fetching VM log:', error);
-        });
-}
-
-function sendVmStatus() {
-    addVmLogEntry('Sending vm.status request...', 'command');
-    fetch('/api/vm/status', { method: 'POST' })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                addVmLogEntry('vm.status sent to ' + (data.base_stations_count || 0) + ' base station(s)', 'response');
-            } else {
-                addVmLogEntry('Error: ' + (data.error || 'Unknown error'), 'error');
-            }
-            setTimeout(refreshVmLog, 1000);
-        })
-        .catch(error => {
-            addVmLogEntry('Error: ' + error.message, 'error');
-        });
-}
-
-function sendVmActivate(macType) {
-    macType = parseInt(macType);
-    addVmLogEntry('Sending vm.activate (macType=' + macType + ')...', 'command');
-    fetch('/api/vm/activate', { 
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ macType: macType })
-    })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                addVmLogEntry('vm.activate sent successfully', 'response');
-            } else {
-                addVmLogEntry('Error: ' + (data.error || 'Unknown error'), 'error');
-            }
-            setTimeout(refreshVmLog, 1000);
-        })
-        .catch(error => {
-            addVmLogEntry('Error: ' + error.message, 'error');
-        });
-}
-
-function sendVmDeactivate() {
-    addVmLogEntry('Sending vm.deactivate...', 'command');
-    fetch('/api/vm/deactivate', { method: 'POST' })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                addVmLogEntry('vm.deactivate sent successfully', 'response');
-            } else {
-                addVmLogEntry('Error: ' + (data.error || 'Unknown error'), 'error');
-            }
-            setTimeout(refreshVmLog, 1000);
-        })
-        .catch(error => {
-            addVmLogEntry('Error: ' + error.message, 'error');
-        });
-}
-
-function addVmLogEntry(message, type) {
-    const logDiv = document.getElementById('vm-log');
-    const timeStr = new Date().toLocaleTimeString();
-    const typeClass = type === 'error' ? 'text-danger' : 
-                     type === 'response' ? 'text-success' : 
-                     type === 'command' ? 'text-info' : 'text-light';
-    const newEntry = document.createElement('div');
-    newEntry.className = typeClass;
-    newEntry.textContent = '[' + timeStr + '] ' + message;
-    logDiv.appendChild(newEntry);
-    logDiv.scrollTop = logDiv.scrollHeight;
-}
 </script>
 {% endblock %}

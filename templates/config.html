@@ -112,24 +112,8 @@
                                 <p class="text-muted">Loading version information...</p>
                             </div>
                             
-                            <div class="mb-3 p-2 rounded" style="background-color: rgba(255, 140, 0, 0.1); border: 1px solid #ff8c00;">
-                                <div class="form-check form-switch">
-                                    <input class="form-check-input" type="checkbox" id="betaUpdatesToggle" onchange="toggleBetaUpdates()">
-                                    <label class="form-check-label" for="betaUpdatesToggle">
-                                        <strong>Beta Updates</strong>
-                                        <small class="text-muted d-block">Receive development/experimental updates before stable release</small>
-                                    </label>
-                                </div>
-                                <div id="betaBranchInfo" class="mt-2 d-none">
-                                    <span class="badge bg-warning text-dark">
-                                        <i class="fas fa-flask"></i> Beta Mode Active
-                                    </span>
-                                    <small class="text-muted ms-2">Updates from: <span id="currentBranch">development</span></small>
-                                </div>
-                            </div>
-                            
                             <div class="mb-3">
-                                <button type="button" class="btn btn-info btn-sm" onclick="checkForUpdates(event)">
+                                <button type="button" class="btn btn-info btn-sm" onclick="checkForUpdates()">
                                     <i class="fas fa-sync-alt"></i> Check for Updates
                                 </button>
                                 <button type="button" class="btn btn-success btn-sm ms-2" id="updateBtn" onclick="performUpdate()" disabled>
@@ -157,8 +141,8 @@
 
             <div class="mt-3">
                 <button type="button" class="btn btn-primary" onclick="saveConfig()">Save Configuration</button>
-                <button type="button" class="btn btn-warning ms-2" onclick="restartService(event)">Restart Service</button>
-                <button type="button" class="btn btn-danger ms-2" onclick="restartContainer(event)">Restart Container</button>
+                <button type="button" class="btn btn-warning ms-2" onclick="restartService()">Restart Service</button>
+                <button type="button" class="btn btn-danger ms-2" onclick="restartContainer()">Restart Container</button>
                 <div class="alert alert-warning mt-3">
                     <small><strong>Note:</strong> Configuration changes require a restart to take effect. Use "Restart Service" for quick process restart, or "Restart Container" for full environment reload (recommended after changing MQTT credentials or other .env variables).</small>
                 </div>
@@ -208,14 +192,12 @@ function saveConfig() {
     });
 }
 
-function restartService(evt) {
+function restartService() {
     if (confirm('Are you sure you want to restart the BSSCI service? This will briefly interrupt connections.')) {
-        const button = evt ? evt.target : document.querySelector('button[onclick*="restartService"]');
-        const originalText = button ? button.textContent : '';
-        if (button) {
-            button.disabled = true;
-            button.textContent = 'Restarting...';
-        }
+        const button = event.target;
+        const originalText = button.textContent;
+        button.disabled = true;
+        button.textContent = 'Restarting...';
 
         fetch('/api/service/restart', {
             method: 'POST',
@@ -235,22 +217,18 @@ function restartService(evt) {
             alert('Error restarting service: ' + error);
         })
         .finally(() => {
-            if (button) {
-                button.disabled = false;
-                button.textContent = originalText;
-            }
+            button.disabled = false;
+            button.textContent = originalText;
         });
     }
 }
 
-function restartContainer(evt) {
+function restartContainer() {
     if (confirm('Are you sure you want to restart the entire container? This will fully restart the application and reload all environment variables. The service will be unavailable for about 10-15 seconds.')) {
-        const button = evt ? evt.target : document.querySelector('button[onclick*="restartContainer"]');
-        const originalText = button ? button.textContent : '';
-        if (button) {
-            button.disabled = true;
-            button.textContent = 'Restarting Container...';
-        }
+        const button = event.target;
+        const originalText = button.textContent;
+        button.disabled = true;
+        button.textContent = 'Restarting Container...';
 
         fetch('/api/container/restart', {
             method: 'POST',
@@ -278,82 +256,14 @@ function restartContainer(evt) {
             }, 15000);
         })
         .finally(() => {
-            if (button) {
-                button.disabled = false;
-                button.textContent = originalText;
-            }
+            button.disabled = false;
+            button.textContent = originalText;
         });
     }
 }
 
 // Update Management Functions
 let currentVersionInfo = null;
-
-function loadBetaStatus() {
-    fetch('/api/system/update-branch')
-        .then(response => response.json())
-        .then(data => {
-            const toggle = document.getElementById('betaUpdatesToggle');
-            const branchInfo = document.getElementById('betaBranchInfo');
-            const branchName = document.getElementById('currentBranch');
-            
-            if (data.is_beta) {
-                toggle.checked = true;
-                branchInfo.classList.remove('d-none');
-                branchName.textContent = data.branch;
-            } else {
-                toggle.checked = false;
-                branchInfo.classList.add('d-none');
-            }
-        })
-        .catch(error => {
-            console.error('Error loading beta status:', error);
-        });
-}
-
-function toggleBetaUpdates() {
-    const toggle = document.getElementById('betaUpdatesToggle');
-    const newBranch = toggle.checked ? 'development' : 'main';
-    
-    const confirmMsg = toggle.checked 
-        ? 'Enable Beta Updates?\n\nYou will receive development versions that may contain bugs or incomplete features.'
-        : 'Disable Beta Updates?\n\nYou will only receive stable releases.';
-    
-    if (!confirm(confirmMsg)) {
-        toggle.checked = !toggle.checked;
-        return;
-    }
-    
-    fetch('/api/system/update-branch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ branch: newBranch })
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            const branchInfo = document.getElementById('betaBranchInfo');
-            const branchName = document.getElementById('currentBranch');
-            
-            if (data.is_beta) {
-                branchInfo.classList.remove('d-none');
-                branchName.textContent = data.branch;
-            } else {
-                branchInfo.classList.add('d-none');
-            }
-            
-            alert(data.message);
-            checkForUpdates();
-        } else {
-            alert('Error: ' + data.error);
-            toggle.checked = !toggle.checked;
-        }
-    })
-    .catch(error => {
-        alert('Error changing update branch: ' + error.message);
-        toggle.checked = !toggle.checked;
-    });
-}
 
 function loadVersionInfo() {
     fetch('/api/system/version')
@@ -420,13 +330,11 @@ function displayVersionInfo(data) {
     }
 }
 
-function checkForUpdates(evt) {
-    const button = evt ? evt.target : document.querySelector('button[onclick*="checkForUpdates"]');
-    const originalText = button ? button.innerHTML : '';
-    if (button) {
-        button.disabled = true;
-        button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Checking...';
-    }
+function checkForUpdates() {
+    const button = event.target;
+    const originalText = button.innerHTML;
+    button.disabled = true;
+    button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Checking...';
     
     fetch('/api/system/check-updates')
         .then(response => {
@@ -451,10 +359,8 @@ function checkForUpdates(evt) {
                   '\n\nThis may be a network connectivity issue. Please check if you can access the service API.');
         })
         .finally(() => {
-            if (button) {
-                button.disabled = false;
-                button.innerHTML = originalText;
-            }
+            button.disabled = false;
+            button.innerHTML = originalText;
         });
 }
 
@@ -530,10 +436,9 @@ function restartSystemAfterUpdate() {
     });
 }
 
-// Load version info and beta status when page loads
+// Load version info when page loads
 document.addEventListener('DOMContentLoaded', function() {
     loadVersionInfo();
-    loadBetaStatus();
 });
 </script>
 {% endblock %}

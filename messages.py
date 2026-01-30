@@ -90,16 +90,18 @@ def build_vm_activate_response(opID: int) -> dict[str, object]:
     }
 
 
-def build_vm_deactivate_request(opID: int) -> dict[str, object]:
+def build_vm_deactivate_request(opID: int, mac_type: int = 0) -> dict[str, object]:
     """Build VM sub-channel deactivate request
     
     Per BSSCI VM specification:
     - command: "vm.deactivate"
     - opId: Numeric ID of the operation
+    - macType: Numeric - MAC-Type of the intended Variable MAC
     """
     return {
         "command": "vm.deactivate",
         "opId": opID,
+        "macType": mac_type,
     }
 
 
@@ -146,29 +148,75 @@ def build_vm_status_response(opID: int, mac_types: list = None) -> dict[str, obj
     }
 
 
-def build_vm_dl_data(sensor_eui: str, opID: int, data: bytes, port: int = 1) -> dict[str, object]:
-    """Build VM downlink data message (Service Center -> Base Station -> Endpoint)"""
+def build_vm_dl_data(opID: int, mac_type: int, user_data: list, 
+                     trx_time: int = 0, sys_time: int = 0, freq_off: int = 0,
+                     ul_snr: float = 0, ul_rssi: float = 0, carr_off_range: int = 5,
+                     carr_space: int = 1, ul_crc: list = None,
+                     tsi: int = 128, sync_burst: bool = False, dual_chan: bool = False,
+                     repetition: bool = False, long_blk_dist: bool = False) -> dict[str, object]:
+    """Build VM downlink data message (Service Center -> Base Station -> Endpoint)
+    
+    Per BSSCI VM specification:
+    - command: "vm.dlData"
+    - opId: Numeric ID of the operation
+    - macType: Numeric - MAC-Type of Variable MAC
+    - userData: Numeric[n] - End Point user data U-MPDU
+    - trxTime: Transceiver time of transmission (64 bit, ns resolution)
+    - sysTime: Unix UTC time of transmission (64 bit, ns resolution)
+    - freqOff: Frequency offset from center in Hz
+    - ulSnr: Uplink reception SNR in dB
+    - ulRssi: Uplink reception RSSI in dBm
+    - carrOffRange: Carrier offset range (5 or 1)
+    - carrSpace: Carrier spacing (0=narrow, 1=standard, 2=wide)
+    - ulCrc: Uplink header and payload CRC [header_crc, payload_crc]
+    - tsi: Transmission start time indicator (21-16383, default 128)
+    - syncBurst: True to enable sync burst
+    - dualChan: True to enable dual channel
+    - repetition: True to enable core frame repetition
+    - longBlkDist: True to enable long block distance
+    """
     return {
-        "command": "vmDlData",
+        "command": "vm.dlData",
         "opId": opID,
-        "epEui": int.from_bytes(bytes.fromhex(sensor_eui), "big"),
-        "port": port,
-        "data": list(data),
+        "macType": mac_type,
+        "userData": user_data,
+        "trxTime": trx_time,
+        "sysTime": sys_time,
+        "freqOff": freq_off,
+        "ulSnr": ul_snr,
+        "ulRssi": ul_rssi,
+        "carrOffRange": carr_off_range,
+        "carrSpace": carr_space,
+        "ulCrc": ul_crc or [0, 0],
+        "tsi": tsi,
+        "syncBurst": sync_burst,
+        "dualChan": dual_chan,
+        "repetition": repetition,
+        "longBlkDist": long_blk_dist,
     }
 
 
-def build_vm_dl_data_response(opID: int, code: int = 0) -> dict[str, object]:
-    """Build VM downlink data response"""
+def build_vm_dl_data_response(opID: int) -> dict[str, object]:
+    """Build VM downlink data response
+    
+    Per BSSCI VM specification:
+    - command: "vm.dlDataRsp"
+    - opId: Numeric ID of the operation
+    """
     return {
-        "command": "vmDlDataRsp",
+        "command": "vm.dlDataRsp",
         "opId": opID,
-        "code": code,
     }
 
 
 def build_vm_ul_data_response(opID: int) -> dict[str, object]:
-    """Build VM uplink data response (acknowledge receipt of VM uplink data)"""
+    """Build VM uplink data response (acknowledge receipt of VM uplink data)
+    
+    Per BSSCI VM specification:
+    - command: "vm.ulDataRsp"
+    - opId: Numeric ID of the operation
+    """
     return {
-        "command": "vmUlDataRsp",
+        "command": "vm.ulDataRsp",
         "opId": opID,
     }

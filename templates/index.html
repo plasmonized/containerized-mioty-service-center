@@ -2,56 +2,251 @@
 {% block title %}Dashboard{% endblock %}
 
 {% block content %}
-<div class="row">
-    <div class="col-md-12">
-        <h1>BSSCI Service Center Dashboard</h1>
-        <div id="service-status" class="alert alert-info" role="alert">
-            <strong>Service Status</strong><br>
-            <div id="service-details">Loading service status...</div>
+<style>
+.status-card {
+    border-radius: 12px;
+    padding: 1.5rem;
+    text-align: center;
+    transition: transform 0.2s, box-shadow 0.2s;
+    height: 100%;
+    border: none;
+}
+.status-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+.status-card.success {
+    background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+    color: white;
+}
+.status-card.danger {
+    background: linear-gradient(135deg, #dc3545 0%, #e83e8c 100%);
+    color: white;
+}
+.status-card.primary {
+    background: linear-gradient(135deg, #fd7e14 0%, #ffc107 100%);
+    color: white;
+}
+.status-card.info {
+    background: linear-gradient(135deg, #17a2b8 0%, #6f42c1 100%);
+    color: white;
+}
+.status-icon {
+    font-size: 2.5rem;
+    margin-bottom: 0.5rem;
+}
+.status-value {
+    font-size: 2rem;
+    font-weight: bold;
+    margin-bottom: 0.25rem;
+}
+.status-label {
+    font-size: 0.9rem;
+    opacity: 0.9;
+}
+.status-detail {
+    font-size: 0.75rem;
+    opacity: 0.8;
+    margin-top: 0.5rem;
+}
+.eui-list {
+    font-size: 0.7rem;
+    opacity: 0.85;
+    margin-top: 0.5rem;
+    max-height: 60px;
+    overflow-y: auto;
+}
+.health-card {
+    border-radius: 12px;
+    border: 1px solid #dee2e6;
+}
+.health-header {
+    background: linear-gradient(135deg, #343a40 0%, #495057 100%);
+    color: white;
+    border-radius: 12px 12px 0 0;
+    padding: 1rem 1.5rem;
+}
+.health-body {
+    padding: 1.5rem;
+}
+.health-indicator {
+    display: flex;
+    align-items: center;
+    padding: 0.75rem 0;
+    border-bottom: 1px solid #eee;
+}
+.health-indicator:last-child {
+    border-bottom: none;
+}
+.health-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    margin-right: 12px;
+    flex-shrink: 0;
+}
+.health-dot.excellent { background: #28a745; }
+.health-dot.good { background: #20c997; }
+.health-dot.warning { background: #ffc107; }
+.health-dot.danger { background: #dc3545; }
+.health-dot.inactive { background: #6c757d; }
+.health-label {
+    flex-grow: 1;
+    font-weight: 500;
+}
+.health-value {
+    font-weight: bold;
+    color: #495057;
+}
+.chart-container {
+    position: relative;
+    height: 200px;
+}
+.gauge-container {
+    display: flex;
+    justify-content: space-around;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+.gauge-item {
+    text-align: center;
+    min-width: 100px;
+}
+.gauge-circle {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 0.5rem;
+    font-size: 1.25rem;
+    font-weight: bold;
+    color: white;
+}
+.gauge-label {
+    font-size: 0.8rem;
+    color: #6c757d;
+}
+</style>
+
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="mb-0">Dashboard</h2>
+        <span class="text-muted" id="version-display"></span>
+    </div>
+
+    <!-- Status Cards Row -->
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-md-3">
+            <div class="status-card" id="tls-card">
+                <div class="status-icon">&#128274;</div>
+                <div class="status-value" id="tls-status">--</div>
+                <div class="status-label">TLS Server</div>
+                <div class="status-detail" id="tls-detail">Port --</div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="status-card" id="mqtt-card">
+                <div class="status-icon">&#128225;</div>
+                <div class="status-value" id="mqtt-status">--</div>
+                <div class="status-label">MQTT Broker</div>
+                <div class="status-detail" id="mqtt-detail">--</div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="status-card primary" id="bs-card">
+                <div class="status-icon">&#128752;</div>
+                <div class="status-value" id="bs-count">0</div>
+                <div class="status-label">Base Stations</div>
+                <div class="eui-list" id="bs-euis"></div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="status-card info" id="sensor-card">
+                <div class="status-icon">&#128225;</div>
+                <div class="status-value" id="sensor-count">0</div>
+                <div class="status-label">Sensoren aktiv</div>
+                <div class="status-detail" id="sensor-detail">0 konfiguriert</div>
+            </div>
         </div>
     </div>
-</div>
 
-<div class="row">
-    <div class="col-md-4">
-        <div class="card">
-            <div class="card-header">
-                <h5>Quick Actions</h5>
-            </div>
-            <div class="card-body">
-                <a href="{{ url_for('sensors') }}" class="btn btn-primary btn-block mb-2">Manage Sensors</a>
-                <a href="{{ url_for('config') }}" class="btn btn-secondary btn-block mb-2">Configuration</a>
-                <a href="{{ url_for('logs') }}" class="btn btn-info btn-block">View Logs</a>
-            </div>
-        </div>
-    </div>
-
-    <div class="col-md-8">
-        <div class="card mb-3">
-            <div class="card-header">
-                <h5>Base Station Status</h5>
-            </div>
-            <div class="card-body">
-                <div class="row">
-                    <div class="col-md-6">
-                        <h6>Connected Base Stations: <span id="connected-count" class="badge badge-success">0</span></h6>
-                        <div id="connected-stations"></div>
+    <!-- Health Overview Row -->
+    <div class="row g-3">
+        <div class="col-md-6">
+            <div class="health-card">
+                <div class="health-header">
+                    <h5 class="mb-0">&#128200; System Gesundheit</h5>
+                </div>
+                <div class="health-body">
+                    <div class="health-indicator">
+                        <div class="health-dot" id="health-tls"></div>
+                        <span class="health-label">TLS Server</span>
+                        <span class="health-value" id="health-tls-value">--</span>
                     </div>
-                    <div class="col-md-6">
-                        <h6>Connecting Base Stations: <span id="connecting-count" class="badge badge-warning">0</span></h6>
-                        <div id="connecting-stations"></div>
+                    <div class="health-indicator">
+                        <div class="health-dot" id="health-mqtt"></div>
+                        <span class="health-label">MQTT Verbindung</span>
+                        <span class="health-value" id="health-mqtt-value">--</span>
+                    </div>
+                    <div class="health-indicator">
+                        <div class="health-dot" id="health-bs"></div>
+                        <span class="health-label">Base Stations</span>
+                        <span class="health-value" id="health-bs-value">--</span>
+                    </div>
+                    <div class="health-indicator">
+                        <div class="health-dot" id="health-sensors"></div>
+                        <span class="health-label">Sensor Aktivität</span>
+                        <span class="health-value" id="health-sensors-value">--</span>
+                    </div>
+                    <div class="health-indicator">
+                        <div class="health-dot" id="health-vm"></div>
+                        <span class="health-label">VM Sub-Channel</span>
+                        <span class="health-value" id="health-vm-value">--</span>
                     </div>
                 </div>
             </div>
         </div>
-
-        <div class="card">
-            <div class="card-header">
-                <h5>Recent Logs</h5>
-            </div>
-            <div class="card-body" style="max-height: 400px; overflow-y: auto;">
-                <div id="recent-logs">
-                    Loading logs...
+        <div class="col-md-6">
+            <div class="health-card">
+                <div class="health-header">
+                    <h5 class="mb-0">&#128202; Netzwerk Übersicht</h5>
+                </div>
+                <div class="health-body">
+                    <div class="gauge-container" id="network-gauges">
+                        <div class="gauge-item">
+                            <div class="gauge-circle" id="gauge-signal" style="background: #6c757d;">--</div>
+                            <div class="gauge-label">Ø Signal (dB)</div>
+                        </div>
+                        <div class="gauge-item">
+                            <div class="gauge-circle" id="gauge-snr" style="background: #6c757d;">--</div>
+                            <div class="gauge-label">Ø SNR (dB)</div>
+                        </div>
+                        <div class="gauge-item">
+                            <div class="gauge-circle" id="gauge-packets" style="background: #6c757d;">0</div>
+                            <div class="gauge-label">Pakete/Std</div>
+                        </div>
+                        <div class="gauge-item">
+                            <div class="gauge-circle" id="gauge-loss" style="background: #28a745;">0%</div>
+                            <div class="gauge-label">Paketverlust</div>
+                        </div>
+                    </div>
+                    <hr>
+                    <div class="row text-center">
+                        <div class="col-4">
+                            <div class="h4 mb-0" id="total-messages">0</div>
+                            <small class="text-muted">Telegramme heute</small>
+                        </div>
+                        <div class="col-4">
+                            <div class="h4 mb-0" id="active-sensors-today">0</div>
+                            <small class="text-muted">Aktive Sensoren</small>
+                        </div>
+                        <div class="col-4">
+                            <div class="h4 mb-0" id="vm-capable-count">0</div>
+                            <small class="text-muted">VM-fähige BS</small>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -61,127 +256,159 @@
 
 {% block scripts %}
 <script>
-function updateServiceStatus() {
-            fetch('/api/bssci/status')
-                .then(response => response.json())
-                .then(data => {
-                    document.getElementById('service-status').className =
-                        data.running ? 'alert alert-success' : 'alert alert-warning';
-
-                    const serviceTypeText = data.service_type ?
-                        ` (${data.service_type.charAt(0).toUpperCase() + data.service_type.slice(1)} Mode)` : '';
-
-                    document.getElementById('service-details').innerHTML = data.running ?
-                        `The BSSCI Service Center is running and ready to accept base station connections${serviceTypeText}.
-                            <ul class="list-unstyled mt-2 mb-0">
-                                <li><strong>TLS Server:</strong> ${data.tls_server.active ?
-                                    `Listening on port ${data.tls_server.listening_port}` : 'Inactive'}</li>
-                                <li><strong>MQTT Broker:</strong> ${data.mqtt_broker.active ?
-                                    `Connected to ${data.mqtt_broker.broker_host}:${data.mqtt_broker.broker_port}` : 'Inactive'}</li>
-                                <li><strong>Base Stations:</strong> ${data.tls_server.connected_base_stations || 0} connected</li>
-                                <li><strong>Sensors:</strong> ${data.tls_server.total_sensors || 0} configured, ${data.tls_server.registered_sensors || 0} registered</li>
-                            </ul>` :
-                        `Service Center has issues - check configuration and logs${serviceTypeText}.
-                            <div class="mt-2">
-                                <small>TLS Server: ${data.tls_server.active ? 'Active' : 'Inactive'}</small><br>
-                                <small>MQTT Broker: ${data.mqtt_broker.active ? 'Active' : 'Inactive'}</small>
-                                ${data.error ? `<br><small class="text-danger">Error: ${data.error}</small>` : ''}
-                            </div>
-                        `;
-                })
-                .catch(error => {
-                    console.error('Error fetching service status:', error);
-                    document.getElementById('service-status').className = 'alert alert-warning';
-                    document.getElementById('service-details').innerHTML = 'Failed to load service status';
-                });
-        }
-
-function loadBaseStationStatus() {
+function updateDashboard() {
+    // Fetch main status
     fetch('/api/bssci/status')
         .then(response => response.json())
         .then(data => {
-            const connectedCount = data.base_stations ? data.base_stations.total_connected : 0;
-            const connectingCount = data.base_stations ? data.base_stations.total_connecting : 0;
-
-            document.getElementById('connected-count').textContent = connectedCount;
-            document.getElementById('connecting-count').textContent = connectingCount;
-
-            // Update connected stations list
-            const connectedDiv = document.getElementById('connected-stations');
+            // TLS Status
+            const tlsCard = document.getElementById('tls-card');
+            const tlsActive = data.tls_server && data.tls_server.active;
+            tlsCard.className = 'status-card ' + (tlsActive ? 'success' : 'danger');
+            document.getElementById('tls-status').textContent = tlsActive ? 'Aktiv' : 'Inaktiv';
+            document.getElementById('tls-detail').textContent = tlsActive ? 
+                'Port ' + (data.tls_server.listening_port || '--') : 'Nicht verbunden';
+            
+            // Health indicators
+            document.getElementById('health-tls').className = 'health-dot ' + (tlsActive ? 'excellent' : 'danger');
+            document.getElementById('health-tls-value').textContent = tlsActive ? 'Läuft' : 'Gestoppt';
+            
+            // MQTT Status
+            const mqttCard = document.getElementById('mqtt-card');
+            const mqttActive = data.mqtt_broker && data.mqtt_broker.active;
+            mqttCard.className = 'status-card ' + (mqttActive ? 'success' : 'danger');
+            document.getElementById('mqtt-status').textContent = mqttActive ? 'Verbunden' : 'Getrennt';
+            document.getElementById('mqtt-detail').textContent = mqttActive ? 
+                (data.mqtt_broker.broker_host || '--') : 'Keine Verbindung';
+            
+            document.getElementById('health-mqtt').className = 'health-dot ' + (mqttActive ? 'excellent' : 'danger');
+            document.getElementById('health-mqtt-value').textContent = mqttActive ? 'Verbunden' : 'Getrennt';
+            
+            // Base Stations
+            const bsCount = data.base_stations ? data.base_stations.total_connected : 0;
+            document.getElementById('bs-count').textContent = bsCount;
+            
+            // BS EUI list
+            const euiList = document.getElementById('bs-euis');
             if (data.base_stations && data.base_stations.connected && data.base_stations.connected.length > 0) {
-                let html = '<ul class="list-unstyled small">';
-                data.base_stations.connected.forEach(station => {
-                    html += `<li><strong>EUI:</strong> ${station.eui}</li>`;
-                    if (station.address) {
-                        html += `<li><small class="text-muted">Address: ${station.address}</small></li>`;
-                    }
-                });
-                html += '</ul>';
-                connectedDiv.innerHTML = html;
+                euiList.innerHTML = data.base_stations.connected.map(bs => bs.eui.substring(0, 12) + '...').join('<br>');
             } else {
-                connectedDiv.innerHTML = '<small class="text-muted">No connected base stations</small>';
+                euiList.innerHTML = 'Keine verbunden';
             }
-
-            // Update connecting stations list
-            const connectingDiv = document.getElementById('connecting-stations');
-            if (data.base_stations && data.base_stations.connecting && data.base_stations.connecting.length > 0) {
-                let html = '<ul class="list-unstyled small">';
-                data.base_stations.connecting.forEach(station => {
-                    html += `<li><strong>EUI:</strong> ${station.eui}</li>`;
-                    if (station.address) {
-                        html += `<li><small class="text-muted">Address: ${station.address}</small></li>`;
-                    }
-                });
-                html += '</ul>';
-                connectingDiv.innerHTML = html;
-            } else {
-                connectingDiv.innerHTML = '<small class="text-muted">No connecting base stations</small>';
-            } })
-        .catch(error => {
-            console.error('Error fetching base station status:', error);
-            document.getElementById('connected-count').textContent = '0';
-            document.getElementById('connecting-count').textContent = 'Error';
-            document.getElementById('connected-stations').innerHTML = '<small class="text-danger">Error loading station info</small>';
-            document.getElementById('connecting-stations').innerHTML = '<small class="text-danger">Error loading station info</small>';
-        });
-}
-
-function loadRecentLogs() {
-    fetch('/api/logs?limit=10')
+            
+            // BS Health
+            let bsHealth = 'inactive';
+            let bsHealthText = 'Keine';
+            if (bsCount >= 3) { bsHealth = 'excellent'; bsHealthText = bsCount + ' verbunden'; }
+            else if (bsCount >= 1) { bsHealth = 'good'; bsHealthText = bsCount + ' verbunden'; }
+            document.getElementById('health-bs').className = 'health-dot ' + bsHealth;
+            document.getElementById('health-bs-value').textContent = bsHealthText;
+            
+            // Sensors
+            const totalSensors = data.tls_server ? (data.tls_server.total_sensors || 0) : 0;
+            const registeredSensors = data.tls_server ? (data.tls_server.registered_sensors || 0) : 0;
+            document.getElementById('sensor-count').textContent = registeredSensors;
+            document.getElementById('sensor-detail').textContent = totalSensors + ' konfiguriert';
+            
+            // Sensor Health
+            let sensorHealth = 'inactive';
+            let sensorHealthText = 'Keine aktiv';
+            const sensorRatio = totalSensors > 0 ? registeredSensors / totalSensors : 0;
+            if (sensorRatio >= 0.8) { sensorHealth = 'excellent'; sensorHealthText = Math.round(sensorRatio * 100) + '% aktiv'; }
+            else if (sensorRatio >= 0.5) { sensorHealth = 'good'; sensorHealthText = Math.round(sensorRatio * 100) + '% aktiv'; }
+            else if (sensorRatio > 0) { sensorHealth = 'warning'; sensorHealthText = Math.round(sensorRatio * 100) + '% aktiv'; }
+            document.getElementById('health-sensors').className = 'health-dot ' + sensorHealth;
+            document.getElementById('health-sensors-value').textContent = sensorHealthText;
+            
+            document.getElementById('active-sensors-today').textContent = registeredSensors;
+        })
+        .catch(error => console.error('Error fetching status:', error));
+    
+    // Fetch VM status
+    fetch('/api/vm/status')
         .then(response => response.json())
         .then(data => {
-            const logsDiv = document.getElementById('recent-logs');
-            const logs = data.logs || [];
-
-            if (logs.length === 0) {
-                logsDiv.innerHTML = '<p class="text-muted">Recent logs will appear here when available</p>';
-                return;
-            }
-
-            const logHtml = logs.slice(-10).map(log =>
-                `<div class="log-entry mb-1">
-                    <small class="text-muted">${log.timestamp}</small>
-                    <span class="badge" style="background-color: ${log.level.toLowerCase() === 'error' ? '#dc3545' :
-                                                log.level.toLowerCase() === 'warning' ? '#ff8c00' : '#6c757d'}; color: white;">${log.level}</span>
-                    <strong>${log.logger}:</strong> ${log.message}
-                </div>`
-            ).join('');
-
-            logsDiv.innerHTML = logHtml;
+            const vmCapable = data.vm_capable_base_stations ? data.vm_capable_base_stations.length : 0;
+            document.getElementById('vm-capable-count').textContent = vmCapable;
+            
+            let vmHealth = 'inactive';
+            let vmHealthText = 'Keine BS';
+            if (vmCapable >= 2) { vmHealth = 'excellent'; vmHealthText = vmCapable + ' BS aktiv'; }
+            else if (vmCapable >= 1) { vmHealth = 'good'; vmHealthText = vmCapable + ' BS aktiv'; }
+            document.getElementById('health-vm').className = 'health-dot ' + vmHealth;
+            document.getElementById('health-vm-value').textContent = vmHealthText;
         })
-        .catch(error => {
-            console.error('Failed to load logs:', error);
-            document.getElementById('recent-logs').innerHTML = '<p class="text-muted">Recent logs will appear here when available</p>';
-        });
+        .catch(error => console.error('Error fetching VM status:', error));
+    
+    // Fetch traffic stats
+    fetch('/api/traffic/stats')
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('total-messages').textContent = data.total_messages || 0;
+            
+            // Packets per hour (rough estimate)
+            const packetsPerHour = Math.round((data.total_messages || 0) / 24);
+            const gaugePackets = document.getElementById('gauge-packets');
+            gaugePackets.textContent = packetsPerHour;
+            gaugePackets.style.background = packetsPerHour > 100 ? '#28a745' : packetsPerHour > 10 ? '#ffc107' : '#6c757d';
+        })
+        .catch(error => console.error('Error fetching traffic:', error));
+    
+    // Fetch health stats for signal quality
+    fetch('/api/health/stats')
+        .then(response => response.json())
+        .then(data => {
+            if (data.sensors && data.sensors.length > 0) {
+                // Calculate averages
+                let totalSnr = 0, totalRssi = 0, count = 0;
+                data.sensors.forEach(s => {
+                    if (s.avg_snr) { totalSnr += s.avg_snr; count++; }
+                    if (s.avg_rssi) { totalRssi += s.avg_rssi; }
+                });
+                
+                if (count > 0) {
+                    const avgSnr = Math.round(totalSnr / count);
+                    const avgRssi = Math.round(totalRssi / count);
+                    
+                    const gaugeSnr = document.getElementById('gauge-snr');
+                    gaugeSnr.textContent = avgSnr;
+                    gaugeSnr.style.background = avgSnr >= 10 ? '#28a745' : avgSnr >= 5 ? '#ffc107' : '#dc3545';
+                    
+                    const gaugeSignal = document.getElementById('gauge-signal');
+                    gaugeSignal.textContent = avgRssi;
+                    gaugeSignal.style.background = avgRssi >= -90 ? '#28a745' : avgRssi >= -100 ? '#ffc107' : '#dc3545';
+                }
+                
+                // Calculate packet loss
+                let totalLoss = 0, lossCount = 0;
+                data.sensors.forEach(s => {
+                    if (s.packet_loss_rate !== undefined) {
+                        totalLoss += s.packet_loss_rate;
+                        lossCount++;
+                    }
+                });
+                
+                if (lossCount > 0) {
+                    const avgLoss = Math.round(totalLoss / lossCount * 10) / 10;
+                    const gaugeLoss = document.getElementById('gauge-loss');
+                    gaugeLoss.textContent = avgLoss + '%';
+                    gaugeLoss.style.background = avgLoss < 1 ? '#28a745' : avgLoss < 5 ? '#ffc107' : '#dc3545';
+                }
+            }
+        })
+        .catch(error => console.error('Error fetching health stats:', error));
+    
+    // Fetch version
+    fetch('/api/system/version')
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('version-display').textContent = 'v' + (data.current_version || '--');
+        })
+        .catch(error => console.error('Error fetching version:', error));
 }
 
-// Update service status and base stations every 5 seconds
-        updateServiceStatus();
-        loadBaseStationStatus();
-        loadRecentLogs();
-        setInterval(() => {
-            updateServiceStatus();
-            loadBaseStationStatus();
-        }, 5000);
+// Initial load and refresh every 5 seconds
+updateDashboard();
+setInterval(updateDashboard, 5000);
 </script>
 {% endblock %}

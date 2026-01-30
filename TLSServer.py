@@ -101,6 +101,11 @@ class TLSServer:
         # OMS Meter tracking for VM uplink data (WMBUS/wireless M-Bus meters)
         # meter_id -> {eui, snr, rssi, data, timestamp, bs_eui, message_count}
         self.oms_meters: Dict[str, Dict[str, Any]] = {}
+        
+        # VM log for tracking VM operations (activate, deactivate, status, etc.)
+        # List of {timestamp, event, details, bs_eui}
+        self.vm_log: list = []
+        self._max_vm_log_entries = 100
 
         # Start the deduplication task
         asyncio.create_task(self.process_deduplication_buffer())
@@ -881,11 +886,16 @@ class TLSServer:
                         bs_eui = self.connected_base_stations[writer]
                         op_id = message.get("opId", "unknown")
 
+                        cpu_raw = message['cpuLoad']
+                        mem_raw = message['memLoad']
+                        cpu_pct = cpu_raw if cpu_raw > 1 else cpu_raw * 100
+                        mem_pct = mem_raw if mem_raw > 1 else mem_raw * 100
+                        
                         logger.info(f"📊 BASE STATION STATUS RESPONSE received from {bs_eui}")
                         logger.info(f"   Operation ID: {op_id}")
                         logger.info(f"   Status Code: {message['code']}")
-                        logger.info(f"   Memory Load: {message['memLoad']:.1%}")
-                        logger.info(f"   CPU Load: {message['cpuLoad']:.1%}")
+                        logger.info(f"   Memory Load: {mem_pct:.1f}%")
+                        logger.info(f"   CPU Load: {cpu_pct:.1f}%")
                         logger.info(f"   Duty Cycle: {message['dutyCycle']:.1%}")
 
                         # Parse uptime to human readable format
@@ -911,11 +921,14 @@ class TLSServer:
                             "uptime": message["uptime"],
                         }
                         
+                        temp_value = message.get("temp", None)
+                        
                         self.base_station_health[bs_eui.lower()] = {
-                            "cpu": message["cpuLoad"] * 100,
-                            "memory": message["memLoad"] * 100,
+                            "cpu": cpu_pct,
+                            "memory": mem_pct,
                             "duty_cycle": message["dutyCycle"] * 100,
                             "uptime": message["uptime"],
+                            "temperature": temp_value,
                             "last_update": datetime.now(timezone.utc).isoformat()
                         }
 
@@ -926,7 +939,7 @@ class TLSServer:
                         logger.info(f"   Topic: {bssci_config.BASE_TOPIC.rstrip('/')}/{mqtt_topic}")
                         logger.info(f"   Base Station EUI: {bs_eui}")
                         logger.info(f"   Payload size: {len(payload)} bytes")
-                        logger.info(f"   Status data: Code={data_dict['code']}, CPU={data_dict['cpuLoad']:.1%}, Memory={data_dict['memLoad']:.1%}")
+                        logger.info(f"   Status data: Code={data_dict['code']}, CPU={cpu_pct:.1f}%, Memory={mem_pct:.1f}%")
                         logger.info(f"   Queue size before add: {self.mqtt_out_queue.qsize()}")
 
                         try:
@@ -1393,8 +1406,10 @@ class TLSServer:
                                     "activated_at": asyncio.get_event_loop().time(),
                                     "bs_eui": bs_eui
                                 }
+                                self._add_vm_log("vm.activateRsp received", f"SUCCESS for {eui}, channel={vm_channel}", bs_eui)
                             else:
                                 logger.warning(f"❌ VM ACTIVATE FAILED for sensor {eui}, code: {code}")
+                                self._add_vm_log("vm.activateRsp received", f"FAILED for {eui}, code={code}", bs_eui)
                             
                             if self.mqtt_out_queue:
                                 await self.mqtt_out_queue.put({
@@ -1408,6 +1423,12 @@ class TLSServer:
                                     })
                                 })
                     
+                    elif msg_type == "vmActCmp":
+                        op_id = message.get("opId", "unknown")
+                        bs_eui = self.connected_base_stations.get(writer, "unknown")
+                        logger.info(f"📡 VM ACTIVATE COMPLETE - Operation {op_id}")
+                        self._add_vm_log("vm.activateCmp received", f"Operation {op_id} complete", bs_eui)
+                    
                     elif msg_type == "vmDeactRsp":
                         op_id = message.get("opId", "unknown")
                         code = message.get("code", -1)
@@ -1416,12 +1437,15 @@ class TLSServer:
                             pending = self.pending_vm_operations.pop(op_id)
                             eui = pending.get("eui", "unknown")
                             
+                            bs_eui = self.connected_base_stations.get(writer, "unknown")
                             if code == 0:
                                 logger.info(f"✅ VM DEACTIVATE SUCCESS for sensor {eui}")
                                 if eui.upper() in self.vm_active_sensors:
                                     del self.vm_active_sensors[eui.upper()]
+                                self._add_vm_log("vm.deactivateRsp received", f"SUCCESS for {eui}", bs_eui)
                             else:
                                 logger.warning(f"❌ VM DEACTIVATE FAILED for sensor {eui}, code: {code}")
+                                self._add_vm_log("vm.deactivateRsp received", f"FAILED for {eui}, code={code}", bs_eui)
                             
                             if self.mqtt_out_queue:
                                 await self.mqtt_out_queue.put({
@@ -1449,8 +1473,10 @@ class TLSServer:
                                 logger.info(f"   Active MAC Types: {mac_types}")
                                 for mac_type in mac_types:
                                     logger.info(f"      - MAC Type {mac_type}")
+                                self._add_vm_log("vm.statusRsp received", f"Active MAC Types: {mac_types}", bs_eui)
                             else:
                                 logger.info(f"   No MAC Types active (VM reception not enabled)")
+                                self._add_vm_log("vm.statusRsp received", "No MAC Types active", bs_eui)
                             logger.info(f"═══════════════════════════════════════════════════════════")
                             
                             if self.mqtt_out_queue:
@@ -1466,7 +1492,9 @@ class TLSServer:
                     
                     elif msg_type == "vm.statusCmp":
                         op_id = message.get("opId", "unknown")
+                        bs_eui = self.connected_base_stations.get(writer, "unknown")
                         logger.info(f"📊 VM STATUS COMPLETE - Operation {op_id}")
+                        self._add_vm_log("vm.statusCmp received", f"Operation {op_id} complete", bs_eui)
                     
                     elif msg_type == "vmUlData":
                         eui = int(message["epEui"]).to_bytes(8, byteorder="big").hex()
@@ -1889,6 +1917,18 @@ class TLSServer:
 
     # ==================== Variable MAC (VM) Sub-Channel Methods ====================
     
+    def _add_vm_log(self, event: str, details: str, bs_eui: str = None) -> None:
+        """Add an entry to the VM log"""
+        log_entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "event": event,
+            "details": details,
+            "bs_eui": bs_eui
+        }
+        self.vm_log.append(log_entry)
+        if len(self.vm_log) > self._max_vm_log_entries:
+            self.vm_log = self.vm_log[-self._max_vm_log_entries:]
+    
     async def vm_activate(self, mac_type: int = 0) -> bool:
         """Activate VM sub-channel reception
         
@@ -1920,6 +1960,7 @@ class TLSServer:
                 await writer.drain()
                 
                 logger.info(f"   Sent VM activate to base station {bs_eui}")
+                self._add_vm_log("vm.activate sent", f"macType={mac_type}", bs_eui)
                 success = True
             except Exception as e:
                 logger.error(f"   Failed to send VM activate to {bs_eui}: {e}")
@@ -1955,6 +1996,7 @@ class TLSServer:
                 await writer.drain()
                 
                 logger.info(f"   Sent VM deactivate to base station {bs_eui}")
+                self._add_vm_log("vm.deactivate sent", "Deactivate request", bs_eui)
                 success = True
             except Exception as e:
                 logger.error(f"   Failed to send VM deactivate to {bs_eui}: {e}")
@@ -1993,6 +2035,7 @@ class TLSServer:
                 await writer.drain()
                 
                 logger.info(f"   Sent VM status request to base station {bs_eui}")
+                self._add_vm_log("vm.status sent", "Status query", bs_eui)
                 success = True
             except Exception as e:
                 logger.error(f"   Failed to send VM status to {bs_eui}: {e}")

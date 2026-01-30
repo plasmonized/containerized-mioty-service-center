@@ -62,6 +62,7 @@
                         <th>IP Address</th>
                         <th>CPU</th>
                         <th>Memory</th>
+                        <th>Temp</th>
                         <th>Connected Sensors</th>
                         <th>Actions</th>
                     </tr>
@@ -141,6 +142,9 @@ function loadBaseStations() {
                 const memDisplay = bs.health?.memory !== undefined 
                     ? `${bs.health.memory.toFixed(1)}%` 
                     : '-';
+                const tempDisplay = bs.health?.temperature !== undefined && bs.health?.temperature !== null
+                    ? `${bs.health.temperature.toFixed(1)}°C`
+                    : 'N/A';
                 const ipDisplay = bs.configured_ip || '-';
                 const tagsHtml = (bs.tags || []).map(t => 
                     `<span class="badge bg-info me-1">${t}</span>`
@@ -155,6 +159,7 @@ function loadBaseStations() {
                         <td>${ipDisplay}</td>
                         <td>${cpuDisplay}</td>
                         <td>${memDisplay}</td>
+                        <td>${tempDisplay}</td>
                         <td>${bs.connected_sensors || 0}</td>
                         <td>
                             <button class="btn btn-sm btn-outline-primary me-1" onclick="editBaseStation('${bs.eui}')">Edit</button>

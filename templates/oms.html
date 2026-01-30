@@ -34,6 +34,45 @@
     </div>
 </div>
 
+<div class="row mb-4">
+    <div class="col-md-6">
+        <div class="card h-100">
+            <div class="card-header" style="background-color: #ff8c00; color: white;">
+                <h5 class="mb-0">VM Controls</h5>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-12">
+                        <label for="macTypeInput" class="form-label">MAC Type</label>
+                        <input type="number" class="form-control" id="macTypeInput" value="0" min="0">
+                        <small class="text-muted">MAC type for VM activation (default: 0)</small>
+                    </div>
+                    <div class="col-12">
+                        <button class="btn btn-primary me-2" onclick="vmActivate()" style="background-color: #ff8c00; border-color: #ff8c00;">
+                            VM aktivieren
+                        </button>
+                        <button class="btn btn-outline-secondary" onclick="vmStatus()">
+                            VM Status abfragen
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card h-100">
+            <div class="card-header" style="background-color: #ff8c00; color: white;">
+                <h5 class="mb-0">VM Log</h5>
+            </div>
+            <div class="card-body" style="max-height: 250px; overflow-y: auto;">
+                <div id="vm-log-container">
+                    <p class="text-muted mb-0">No VM events logged yet.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="card">
     <div class="card-header" style="background-color: #ff8c00; color: white;">
         <h5 class="mb-0">Detected OMS Meters (WMBUS)</h5>
@@ -90,10 +129,89 @@ function formatTimeSince(timestamp) {
     return Math.floor(diff / 86400) + 'd ago';
 }
 
+function formatIsoTimestamp(isoString) {
+    if (!isoString) return '';
+    const date = new Date(isoString);
+    return date.toLocaleTimeString();
+}
+
 function truncateData(data, maxLen) {
     if (!data) return '';
     if (data.length <= maxLen) return data;
     return data.substring(0, maxLen) + '...';
+}
+
+function showAlert(message, type) {
+    const container = document.getElementById('alert-container');
+    const alert = document.createElement('div');
+    alert.className = `alert alert-${type} alert-dismissible fade show`;
+    alert.innerHTML = `${message}<button type="button" class="btn-close" data-bs-dismiss="alert"></button>`;
+    container.appendChild(alert);
+    setTimeout(() => alert.remove(), 5000);
+}
+
+function vmActivate() {
+    const macType = parseInt(document.getElementById('macTypeInput').value) || 0;
+    fetch('/api/vm/activate', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({macType: macType})
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showAlert(data.message, 'success');
+            setTimeout(refreshVmLog, 1000);
+        } else {
+            showAlert(data.message || 'Failed to activate VM', 'danger');
+        }
+    })
+    .catch(error => {
+        console.error('Error activating VM:', error);
+        showAlert('Error activating VM', 'danger');
+    });
+}
+
+function vmStatus() {
+    fetch('/api/vm/status', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'}
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showAlert(data.message, 'success');
+            setTimeout(refreshVmLog, 1000);
+        } else {
+            showAlert(data.message || 'Failed to query VM status', 'danger');
+        }
+    })
+    .catch(error => {
+        console.error('Error querying VM status:', error);
+        showAlert('Error querying VM status', 'danger');
+    });
+}
+
+function refreshVmLog() {
+    fetch('/api/vm/log')
+        .then(response => response.json())
+        .then(data => {
+            const container = document.getElementById('vm-log-container');
+            if (data.success && data.log && data.log.length > 0) {
+                const entries = data.log.slice().reverse().slice(0, 20);
+                container.innerHTML = entries.map(entry => `
+                    <div class="mb-2 pb-2 border-bottom">
+                        <small class="text-muted">${formatIsoTimestamp(entry.timestamp)}</small>
+                        <span class="badge bg-secondary ms-1">${entry.event}</span>
+                        ${entry.bs_eui ? `<small class="text-muted ms-1">[${entry.bs_eui}]</small>` : ''}
+                        <br><small>${entry.details}</small>
+                    </div>
+                `).join('');
+            } else {
+                container.innerHTML = '<p class="text-muted mb-0">No VM events logged yet.</p>';
+            }
+        })
+        .catch(error => console.error('Error fetching VM log:', error));
 }
 
 function refreshData() {
@@ -140,6 +258,8 @@ function refreshData() {
         .catch(error => {
             console.error('Error fetching OMS meters:', error);
         });
+    
+    refreshVmLog();
 }
 
 refreshData();

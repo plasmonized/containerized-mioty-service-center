@@ -2552,6 +2552,21 @@ def vm_query_status():
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
+@app.route('/api/vm/log')
+@login_required
+def get_vm_log():
+    """Get VM operation log entries"""
+    try:
+        global tls_server_instance
+        if tls_server_instance and hasattr(tls_server_instance, 'vm_log'):
+            return jsonify({
+                'success': True,
+                'log': tls_server_instance.vm_log[-50:]
+            })
+        return jsonify({'success': True, 'log': []})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
 @app.route('/api/vm/send/<eui>', methods=['POST'])
 @login_required
 @permission_required('can_edit_sensors')

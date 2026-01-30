@@ -110,9 +110,16 @@ class TLSServer:
         # Track which base stations support VM (Variable MAC)
         # Base stations that have successfully responded to VM commands
         self.vm_capable_base_stations: Set[str] = set()
+        
+        # VM periodic status query settings
+        self.vm_periodic_status_enabled = True  # Enable by default
+        self.vm_periodic_status_interval = 60   # Query every 60 seconds
 
         # Start the deduplication task
         asyncio.create_task(self.process_deduplication_buffer())
+        
+        # Start periodic VM status query
+        asyncio.create_task(self.periodic_vm_status_query())
 
         # Start auto-detach monitoring if enabled
         if getattr(bssci_config, 'AUTO_DETACH_ENABLED', True):
@@ -2097,6 +2104,25 @@ class TLSServer:
                 logger.error(f"   Failed to send VM status to {bs_eui}: {e}")
         
         return success
+    
+    async def periodic_vm_status_query(self) -> None:
+        """Background task that periodically queries VM status from VM-capable base stations"""
+        logger.info("📡 Starting periodic VM status query background task")
+        
+        # Wait a bit for initial connections to establish
+        await asyncio.sleep(30)
+        
+        while True:
+            try:
+                if self.vm_periodic_status_enabled and self.vm_capable_base_stations:
+                    logger.info(f"📊 PERIODIC VM STATUS QUERY - {len(self.vm_capable_base_stations)} VM-capable base stations")
+                    await self.vm_status(only_vm_capable=True)
+                
+                await asyncio.sleep(self.vm_periodic_status_interval)
+                
+            except Exception as e:
+                logger.error(f"❌ Error in periodic VM status query: {e}")
+                await asyncio.sleep(60)  # Wait before retrying on error
     
     async def vm_send_data(self, sensor_eui: str, data: bytes, port: int = 1) -> bool:
         """Send data to sensor via VM sub-channel (downlink)"""

@@ -112,22 +112,6 @@
                                 <p class="text-muted">Loading version information...</p>
                             </div>
                             
-                            <div class="mb-3 p-2 rounded" style="background-color: rgba(255, 140, 0, 0.1); border: 1px solid #ff8c00;">
-                                <div class="form-check form-switch">
-                                    <input class="form-check-input" type="checkbox" id="betaUpdatesToggle" onchange="toggleBetaUpdates()">
-                                    <label class="form-check-label" for="betaUpdatesToggle">
-                                        <strong>Beta Updates</strong>
-                                        <small class="text-muted d-block">Receive development/experimental updates before stable release</small>
-                                    </label>
-                                </div>
-                                <div id="betaBranchInfo" class="mt-2 d-none">
-                                    <span class="badge bg-warning text-dark">
-                                        <i class="fas fa-flask"></i> Beta Mode Active
-                                    </span>
-                                    <small class="text-muted ms-2">Updates from: <span id="currentBranch">development</span></small>
-                                </div>
-                            </div>
-                            
                             <div class="mb-3">
                                 <button type="button" class="btn btn-info btn-sm" onclick="checkForUpdates(event)">
                                     <i class="fas fa-sync-alt"></i> Check for Updates
@@ -288,72 +272,6 @@ function restartContainer(evt) {
 
 // Update Management Functions
 let currentVersionInfo = null;
-
-function loadBetaStatus() {
-    fetch('/api/system/update-branch')
-        .then(response => response.json())
-        .then(data => {
-            const toggle = document.getElementById('betaUpdatesToggle');
-            const branchInfo = document.getElementById('betaBranchInfo');
-            const branchName = document.getElementById('currentBranch');
-            
-            if (data.is_beta) {
-                toggle.checked = true;
-                branchInfo.classList.remove('d-none');
-                branchName.textContent = data.branch;
-            } else {
-                toggle.checked = false;
-                branchInfo.classList.add('d-none');
-            }
-        })
-        .catch(error => {
-            console.error('Error loading beta status:', error);
-        });
-}
-
-function toggleBetaUpdates() {
-    const toggle = document.getElementById('betaUpdatesToggle');
-    const newBranch = toggle.checked ? 'development' : 'main';
-    
-    const confirmMsg = toggle.checked 
-        ? 'Enable Beta Updates?\n\nYou will receive development versions that may contain bugs or incomplete features.'
-        : 'Disable Beta Updates?\n\nYou will only receive stable releases.';
-    
-    if (!confirm(confirmMsg)) {
-        toggle.checked = !toggle.checked;
-        return;
-    }
-    
-    fetch('/api/system/update-branch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ branch: newBranch })
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            const branchInfo = document.getElementById('betaBranchInfo');
-            const branchName = document.getElementById('currentBranch');
-            
-            if (data.is_beta) {
-                branchInfo.classList.remove('d-none');
-                branchName.textContent = data.branch;
-            } else {
-                branchInfo.classList.add('d-none');
-            }
-            
-            alert(data.message);
-            checkForUpdates();
-        } else {
-            alert('Error: ' + data.error);
-            toggle.checked = !toggle.checked;
-        }
-    })
-    .catch(error => {
-        alert('Error changing update branch: ' + error.message);
-        toggle.checked = !toggle.checked;
-    });
-}
 
 function loadVersionInfo() {
     fetch('/api/system/version')
@@ -530,10 +448,9 @@ function restartSystemAfterUpdate() {
     });
 }
 
-// Load version info and beta status when page loads
+// Load version info when page loads
 document.addEventListener('DOMContentLoaded', function() {
     loadVersionInfo();
-    loadBetaStatus();
 });
 </script>
 {% endblock %}

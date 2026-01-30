@@ -49,6 +49,11 @@ a.card-link {
     font-size: 2.5rem;
     margin-bottom: 0.5rem;
 }
+.status-icon img {
+    width: 50px;
+    height: 50px;
+    filter: brightness(0) invert(1);
+}
 .status-value {
     font-size: 2rem;
     font-weight: bold;
@@ -210,7 +215,7 @@ a.card-link {
         <div class="col-6 col-md-3">
             <a href="/base-stations" class="card-link">
                 <div class="status-card primary" id="bs-card">
-                    <div class="status-icon">&#128752;</div>
+                    <div class="status-icon"><img src="/static/images/base_station_icon.png" alt="Base Station"></div>
                     <div class="status-value" id="bs-count">0</div>
                     <div class="status-label">Base Stations</div>
                     <div class="eui-list" id="bs-euis"></div>

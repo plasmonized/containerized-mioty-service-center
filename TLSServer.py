@@ -1623,26 +1623,47 @@ class TLSServer:
                                         f"macType={mac_type}, meter={meter_id or 'N/A'}, {len(data)} bytes", 
                                         bs_eui)
                         
-                        # Publish to MQTT
+                        # Publish to MQTT (same format as normal mioty uplink data)
                         if self.mqtt_out_queue:
-                            # Use meter_id for topic if available, else EUI, else generic vm topic
-                            topic_id = meter_id or eui.upper() or "unknown"
+                            import time as _time
+                            sensor_eui = eui.upper() if eui else "unknown"
+                            mqtt_payload = {
+                                "bs_eui": bs_eui,
+                                "snr": snr,
+                                "rssi": rssi,
+                                "data": data_hex,
+                                "mac_type": mac_type,
+                                "eq_snr": eq_snr,
+                                "freq_off": freq_off,
+                                "carr_space": carr_space,
+                                "timestamp": _time.time()
+                            }
+                            if meter_info:
+                                mqtt_payload["oms"] = {
+                                    "serial": meter_info['serial'],
+                                    "serial_hex": meter_info['serial_hex'],
+                                    "manufacturer": meter_info['manufacturer_code'],
+                                    "manufacturer_name": meter_info['manufacturer_name'],
+                                    "version": meter_info['version'],
+                                    "device_type": meter_info['device_type'],
+                                    "device_type_name": meter_info['device_type_name'],
+                                    "meter_id": meter_info['meter_id']
+                                }
+                            mqtt_topic = f"ep/{sensor_eui}/ul"
+                            payload_json = json.dumps(mqtt_payload)
+                            
+                            logger.info(f"📤 MQTT PUBLICATION - VM/OMS UPLINK DATA")
+                            logger.info(f"   Topic: {bssci_config.BASE_TOPIC.rstrip('/')}/{mqtt_topic}")
+                            if meter_info:
+                                logger.info(f"   OMS: {meter_info['manufacturer_code']} Serial {meter_info['serial']} ({meter_info['device_type_name']})")
+                            logger.info(f"   SNR={snr:.1f}dB, RSSI={rssi:.1f}dBm")
+                            
                             await self.mqtt_out_queue.put({
-                                "topic": f"vm/{topic_id}/ul",
-                                "payload": json.dumps({
-                                    "bs_eui": bs_eui,
-                                    "mac_type": mac_type,
-                                    "eui": eui.upper() if eui else None,
-                                    "data": data_hex,
-                                    "meter_id": meter_id,
-                                    "snr": snr,
-                                    "rssi": rssi,
-                                    "eq_snr": eq_snr,
-                                    "freq_off": freq_off,
-                                    "carr_space": carr_space,
-                                    "timestamp": asyncio.get_event_loop().time()
-                                })
+                                "topic": mqtt_topic,
+                                "payload": payload_json
                             })
+                            self.traffic_metrics['messages_out'] += 1
+                            self.traffic_metrics['bytes_out'] += len(payload_json)
                     
                     elif msg_type in ("vm.dlDataRsp", "vmDlDataRsp"):
                         op_id = message.get("opId", "unknown")

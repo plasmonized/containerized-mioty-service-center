@@ -1574,7 +1574,8 @@ class TLSServer:
                         if meter_info:
                             meter_id = meter_info['meter_id']
                             logger.info(f"   OMS Meter: {meter_info['manufacturer_code']} Serial {meter_info['serial']} ({meter_info['device_type_name']})")
-                            current_time = asyncio.get_event_loop().time()
+                            import time
+                            current_time = time.time()
                             
                             # Track OMS meter
                             if meter_id in self.oms_meters:

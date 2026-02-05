@@ -1624,9 +1624,9 @@ class TLSServer:
                                         bs_eui)
                         
                         # Publish to MQTT (same format as normal mioty uplink data)
-                        if self.mqtt_out_queue:
+                        if self.mqtt_out_queue and meter_info:
                             import time as _time
-                            sensor_eui = eui.upper() if eui else "unknown"
+                            oms_id = f"oms_{meter_info['manufacturer_code']}_{meter_info['serial']}"
                             mqtt_payload = {
                                 "bs_eui": bs_eui,
                                 "snr": snr,
@@ -1636,10 +1636,8 @@ class TLSServer:
                                 "eq_snr": eq_snr,
                                 "freq_off": freq_off,
                                 "carr_space": carr_space,
-                                "timestamp": _time.time()
-                            }
-                            if meter_info:
-                                mqtt_payload["oms"] = {
+                                "timestamp": _time.time(),
+                                "oms": {
                                     "serial": meter_info['serial'],
                                     "serial_hex": meter_info['serial_hex'],
                                     "manufacturer": meter_info['manufacturer_code'],
@@ -1649,13 +1647,13 @@ class TLSServer:
                                     "device_type_name": meter_info['device_type_name'],
                                     "meter_id": meter_info['meter_id']
                                 }
-                            mqtt_topic = f"ep/{sensor_eui}/ul"
+                            }
+                            mqtt_topic = f"ep/{oms_id}/ul"
                             payload_json = json.dumps(mqtt_payload)
                             
                             logger.info(f"📤 MQTT PUBLICATION - VM/OMS UPLINK DATA")
                             logger.info(f"   Topic: {bssci_config.BASE_TOPIC.rstrip('/')}/{mqtt_topic}")
-                            if meter_info:
-                                logger.info(f"   OMS: {meter_info['manufacturer_code']} Serial {meter_info['serial']} ({meter_info['device_type_name']})")
+                            logger.info(f"   OMS: {meter_info['manufacturer_code']} Serial {meter_info['serial']} ({meter_info['device_type_name']})")
                             logger.info(f"   SNR={snr:.1f}dB, RSSI={rssi:.1f}dBm")
                             
                             await self.mqtt_out_queue.put({

@@ -18,6 +18,8 @@ The BSSCI Service Center is a comprehensive IoT device management system that pr
 9. [API Reference](#api-reference)
 10. [Troubleshooting](#troubleshooting)
 11. [Advanced Features](#advanced-features)
+12. [OMS/Wireless M-Bus Support](#omswireless-m-bus-wmbus-meter-support)
+13. [User Authentication & Access Control](#user-authentication--role-based-access-control)
 
 ## System Architecture
 
@@ -57,7 +59,7 @@ The BSSCI Service Center is a comprehensive IoT device management system that pr
 - **Auto-Detach**: Automatic removal of inactive sensors after configurable timeout
 - **Automatic Offline Detection**: Based on send_interval - shows Online/Warning/Offline status
 
-### Sensor Detail Dashboard (NEW)
+### Sensor Detail Dashboard
 
 Click on any sensor EUI to view comprehensive statistics:
 - **Device Health**: Energy efficiency, signal strength indicators
@@ -67,7 +69,7 @@ Click on any sensor EUI to view comprehensive statistics:
 - **Telegram Tracking**: First seen, last seen timestamps, missed telegram detection
 - **Activity Status**: Real-time online/warning/offline indicator based on send interval
 
-### Network Topology Visualization (NEW)
+### Network Topology Visualization
 
 Interactive network visualization showing the complete mioty infrastructure:
 - **Cytoscape.js Based**: Smooth, interactive graph visualization
@@ -79,7 +81,7 @@ Interactive network visualization showing the complete mioty infrastructure:
 - **Position Saving**: Save and restore custom layout positions
 - **Auto-Refresh**: Updates every 30 seconds
 
-### System Health Dashboard (NEW)
+### System Health Dashboard
 
 Comprehensive system monitoring and health metrics:
 - **Packet Loss Detection**: 16-bit counter wrap-around handling for accurate loss calculation
@@ -88,7 +90,7 @@ Comprehensive system monitoring and health metrics:
 - **Signal Score Distribution**: Horizontal bar chart showing device breakdown by SNR quality (Excellent/Good/Fair/Poor/Critical)
 - **24-Hour History**: Extended SNR/RSSI history with 5-minute intervals (288 data points)
 
-### Base Station Management (NEW)
+### Base Station Management
 
 Dedicated management interface for base stations:
 - **Configuration**: Name, tags, IP address management
@@ -113,6 +115,25 @@ Full ETSI TS 103357 compliant Variable MAC implementation for metering devices:
 - **vm.ulData**: Receive uplink data via VM channel
 - **vm.dlData**: Send downlink data via VM channel
 
+### OMS/Wireless M-Bus (wMBUS) Meter Support
+
+Full EN 13757 compliant wireless M-Bus frame parsing for OMS-compatible metering devices received via VM sub-channel:
+- **Automatic Frame Detection**: Scans for valid wMBUS C-field values (0x44/0x46/0x48) to find frame start, handling BSSCI/VM wrapper bytes
+- **120+ Manufacturer Database**: Built-in manufacturer lookup table from the m-bus.de standard with automatic 3-letter IEC code decoding
+- **Manufacturer Decoding**: 2 bytes little-endian → 3-letter IEC code via bitshift formula
+- **Device Type Mapping**: Automatic identification of meter types (Water, Gas, Electricity, Heat, etc.)
+- **Serial Number Extraction**: 4-byte little-endian serial number from the A-field
+- **Dedicated OMS Page**: Web UI management page showing all detected wMBUS meters
+- **Per-Meter Tracking**: Serial number, manufacturer, device type, version, SNR, RSSI, base station, and message count
+
+### Coverage Map
+
+Interactive floorplan-based device positioning for network coverage visualization:
+- **Floorplan Upload**: Upload custom floorplan images for your deployment environment
+- **Drag-and-Drop Placement**: Position base stations and sensors on the floorplan
+- **Server-Side Persistence**: Device positions stored in `coverage_positions.json`, floorplan in `coverage_floorplan.txt`
+- **Zoom Level Persistence**: Zoom and pan state preserved across sessions
+
 ### Real-Time Monitoring
 
 - **Live Dashboard**: Real-time sensor status and base station monitoring
@@ -130,7 +151,7 @@ Full ETSI TS 103357 compliant Variable MAC implementation for metering devices:
 - **Queue Management**: Asynchronous message processing with monitoring
 - **Performance Metrics**: Real-time statistics and monitoring
 
-### Update System (NEW)
+### Update System
 
 Seamless software updates for both standalone and Docker installations:
 - **GitHub API Integration**: Check for updates without requiring git repository
@@ -138,6 +159,18 @@ Seamless software updates for both standalone and Docker installations:
 - **Docker Live-Updates**: Optional live-update mode for Docker containers
 - **Automatic Backup**: Creates backup before applying updates
 - **Branch Support**: Supports both main and master branches
+
+## Tested Base Stations
+
+The BSSCI Service Center has been tested and verified with the following base station hardware:
+
+| Manufacturer | Device |
+|---|---|
+| Diehl Metering | Premium Gateway |
+| Weptech | AVA1 |
+| Miromico | Edge |
+| Diehl Metering | Compact Gateway |
+| RAK | WisGate Connect for mioty |
 
 ## Installation & Setup
 
@@ -384,6 +417,8 @@ The system uses a simplified, unified MQTT topic structure under `{BASE_TOPIC}/e
 │       ├── status      # VM status updates
 │       ├── ulData      # VM uplink data
 │       └── dlData      # VM downlink data
+├── ep/oms_{MFR}_{SERIAL}/
+│   └── ul              # OMS meter uplink data
 ├── bs/{EUI}/           # Base station status
 ├── config/             # System configuration
 └── health_check        # Connection health monitoring
@@ -401,6 +436,7 @@ The system uses a simplified, unified MQTT topic structure under `{BASE_TOPIC}/e
 - `{BASE_TOPIC}/ep/{EUI}/status` - Registration status
 - `{BASE_TOPIC}/ep/{EUI}/response` - Command responses
 - `{BASE_TOPIC}/ep/{EUI}/warning` - Inactivity warnings
+- `{BASE_TOPIC}/ep/oms_{MFR}_{SERIAL}/ul` - OMS meter uplink data (e.g., `mioty/ep/oms_DME_269898905/ul`)
 - `{BASE_TOPIC}/bs/{EUI}` - Base station status
 
 **Key Simplifications:**
@@ -504,12 +540,49 @@ Commands receive responses on topic `EP/{EUI}/response`:
 }
 ```
 
+### OMS Meter MQTT Publishing
+
+OMS/wMBUS meters detected via the VM sub-channel are automatically published to MQTT using a unified payload format. Each meter publishes under a dedicated topic based on its manufacturer and serial number.
+
+**Topic Format**: `{BASE_TOPIC}/ep/oms_{manufacturer}_{serial}/ul`
+
+**Example Topic**: `mioty/ep/oms_DME_269898905/ul`
+
+**Payload Format**:
+```json
+{
+  "bs_eui": "00073200007E21C5",
+  "snr": 3.96,
+  "rssi": -122.13,
+  "data": "5544a511995416107607...",
+  "mac_type": 0,
+  "timestamp": 1739012345.67,
+  "oms": {
+    "serial": "269898905",
+    "serial_hex": "10165499",
+    "manufacturer": "DME",
+    "manufacturer_name": "DIEHL Metering",
+    "version": 118,
+    "device_type": 7,
+    "device_type_name": "Water",
+    "meter_id": "A51110165499"
+  }
+}
+```
+
+The payload follows the same structure as standard mioty sensor uplinks (`bs_eui`, `snr`, `rssi`, `data`, `mac_type`, `timestamp`) with an additional `oms` block containing the decoded wMBUS meter information.
+
 ## Web Interface
 
 ### Dashboard Overview
 
-The main dashboard provides real-time system status:
+The main dashboard provides a redesigned real-time system overview with mioty branding:
 
+- **Custom SVG Icons**: Base station tower icon and sensor with radio waves icon for visual clarity
+- **Clickable Cards**: Quick navigation cards for base stations, sensors, and system status
+- **Visual Health Indicators**: Color-coded status indicators for system components
+- **Network Topology Mini-Preview**: At-a-glance view of the network topology
+- **Orange/White Color Scheme**: Consistent mioty branding throughout the interface
 - **Service Status**: Overall system health and connectivity
 - **Base Station Monitor**: Connected and connecting base stations
 - **Sensor Summary**: Total sensors, registrations, and activity status
@@ -783,9 +856,20 @@ The system automatically tracks the best communication path for each sensor:
 - **Secure Channels**: All communication encrypted with TLS 1.2+
 - **Certificate Management**: Web-based certificate upload, generation, and backup
 
+#### User Authentication & Role-Based Access Control
+
+The system implements a comprehensive authentication and authorization system:
+- **Three User Roles**:
+  - **Admin**: Full access to all features including user management, configuration, and system updates
+  - **User**: Can manage sensors and base stations, view dashboards and logs
+  - **Viewer**: Read-only access to dashboards, sensor data, and monitoring pages
+- **Login Required**: All pages require authentication; unauthenticated requests redirect to login page
+- **API Protection**: All API endpoints protected with permission decorators based on user role
+- **User Management**: Users configured via `users.json` file with role assignments
+
 #### Access Control
-- **Web Interface Security**: Session-based access control
-- **API Protection**: Request validation and sanitization
+- **Web Interface Security**: Session-based access control with role-based permissions
+- **API Protection**: Request validation, sanitization, and role-based permission decorators
 - **Certificate-Based Auth**: Base station authentication via client certificates
 - **MQTT Security**: Username/password authentication for MQTT broker
 
@@ -1170,4 +1254,4 @@ For technical support and questions:
 
 ---
 
-*BSSCI Service Center - Professional IoT Device Management Platform*
+*BSSCI Service Center v1.660 - Professional IoT Device Management Platform*

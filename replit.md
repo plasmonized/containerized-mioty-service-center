@@ -54,22 +54,19 @@ JSON-based sensor configuration with support for:
 
 ## Recent Changes
 
-- **User Authentication & Role-Based Access Control**: Three user roles implemented - Admin (full access), User (can manage sensors/base stations), Viewer (read-only dashboards). Login required for all pages, API endpoints protected with permission decorators. Users managed via users.json file.
-- **Persistent Coverage Map Storage**: Floorplan images, device positions, and zoom levels are now stored server-side for access from any device. Files: coverage_positions.json and coverage_floorplan.txt (mounted as Docker volumes for persistence).
-- **Sensor Detail Dashboard**: Click on any sensor EUI to view detailed statistics including Device Health (energy efficiency, signal strength), Transmission Details (data rate, spreading factor, frequency, frame counter, airtime, duty cycle), SNR/RSSI statistics (min/avg/max), and gateway coverage. Tracks first seen, last seen timestamps, and detects missed frames.
-- **GitHub API-based Update System**: Update checking and installation now works in Docker containers without requiring a mounted .git directory. Uses GitHub API to fetch latest commits and downloads updates as ZIP archives.
-- **Network Topology Visualization**: New interactive network page showing base stations (large orange nodes) and sensors (small blue nodes) with Cytoscape.js. Displays primary routes (green thick lines) and secondary reception paths (gray thin lines). Click nodes for details, auto-refreshes every 30 seconds.
-- **Signal Score Distribution Chart**: Horizontal bar chart showing device breakdown by SNR quality (Excellent/Good/Fair/Poor/Critical) with summary counters and reference tables.
-- **24-Hour SNR/RSSI History**: Extended history from 1 hour to 24 hours with 5-minute intervals (288 data points).
-- **Health Dashboard**: New system health monitoring page with packet loss detection, base station health charts (CPU/Memory/Duty Cycle), and per-sensor statistics including average SNR/RSSI
-- **Packet Loss Tracking**: 16-bit counter wrap-around handling for accurate packet loss rate calculation per sensor
-- **Base Station Management Page**: New dedicated page for managing base stations with name, tags, IP address, CPU/memory health data, and connected sensor counts
-- **Active Sensors Tracking**: Hourly tracking of sensors that sent data, displayed in traffic dashboard
-- **12-Hour Traffic History**: Extended sensor and base station history graph to 12 hours
-- **Bulk Import/Export**: Added CSV/TXT sensor import/export functionality with flexible delimiter detection
-- **Variable MAC (VM)**: Full ETSI TS 103357 compliant VM sub-channel support for metering devices
-- **Traffic Dashboard**: Real-time traffic visualization with Chart.js showing messages, dropped packets, and connections
-- **Base Station Deduplication**: Fixed duplicate base station connections using EUI-based identification
+- **v1.660 - Robust wMBUS Frame Parser**: Automatic wMBUS frame-start detection by scanning for valid C-field (0x44/0x46/0x48). Handles BSSCI/VM wrapper bytes that some base stations prepend. Fixes incorrect manufacturer/device type parsing for certain meter telegrams.
+- **OMS/Wireless M-Bus Meter Support**: Full EN 13757 compliant wMBUS frame parsing with 120+ manufacturer database, automatic 3-letter IEC code decoding, device type mapping, and dedicated OMS management page. Meters publish to MQTT under `ep/oms_{manufacturer}_{serial}/ul` with unified payload format including decoded OMS metadata block.
+- **Dashboard Redesign**: Custom SVG icons (base station tower, sensor with radio waves), clickable cards, visual health indicators, network topology mini-preview. Orange/white color scheme matching mioty branding.
+- **User Authentication & Role-Based Access Control**: Three user roles - Admin (full access), User (sensor/BS management), Viewer (read-only dashboards). Login required for all pages, API endpoints protected with permission decorators. Users managed via users.json file.
+- **Persistent Coverage Map Storage**: Floorplan images, device positions, and zoom levels stored server-side. Files: coverage_positions.json and coverage_floorplan.txt.
+- **Sensor Detail Dashboard**: Click any sensor EUI for detailed statistics including Device Health, Transmission Details, SNR/RSSI statistics (min/avg/max), and gateway coverage.
+- **Network Topology Visualization**: Interactive Cytoscape.js graph showing base stations and sensors with primary/secondary routes.
+- **System Health Dashboard**: Packet loss detection, base station health charts (CPU/Memory/Duty Cycle), per-sensor statistics, signal score distribution.
+- **Base Station Management Page**: Dedicated page with name, tags, IP, health data, and connected sensor counts.
+- **Variable MAC (VM)**: Full ETSI TS 103357 compliant VM sub-channel support for metering devices.
+- **Traffic Dashboard**: Real-time visualization with 12-hour history, active sensor tracking, message statistics.
+- **Bulk Import/Export**: CSV/TXT sensor import/export with flexible delimiter detection.
+- **Update System**: GitHub API-based update checking, Docker live-updates, automatic backups.
 
 ## External Dependencies
 

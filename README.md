@@ -160,6 +160,18 @@ Seamless software updates for both standalone and Docker installations:
 - **Automatic Backup**: Creates backup before applying updates
 - **Branch Support**: Supports both main and master branches
 
+## Tested Base Stations
+
+The BSSCI Service Center has been tested and verified with the following base station hardware:
+
+| Manufacturer | Device |
+|---|---|
+| Diehl Metering | Premium Gateway |
+| Weptech | AVA1 |
+| Miromico | Edge |
+| Diehl Metering | Compact Gateway |
+| RAK | WisGate Connect for mioty |
+
 ## Installation & Setup
 
 ### Prerequisites

@@ -94,43 +94,28 @@
                         <small class="text-muted">Need Attention</small>
                     </div>
                 </div>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-6">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0">Signal Reference</h5>
-            </div>
-            <div class="card-body">
-                <div class="row">
+                <hr class="mt-3 mb-2">
+                <div class="row" style="font-size: 0.75em; color: #6c757d;">
                     <div class="col-6">
-                        <h6>SNR Reference</h6>
-                        <table class="table table-sm">
-                            <tr><td class="text-success">Excellent</td><td>>= 10 dB</td></tr>
-                            <tr><td style="color: #28a745;">Good</td><td>5 to 10 dB</td></tr>
-                            <tr><td class="text-warning">Fair</td><td>0 to 5 dB</td></tr>
-                            <tr><td style="color: #fd7e14;">Poor</td><td>-5 to 0 dB</td></tr>
-                            <tr><td class="text-danger">Critical</td><td>&lt; -5 dB</td></tr>
-                        </table>
+                        <strong>SNR:</strong>
+                        <span class="text-success">Excellent</span> &ge;10 dB &middot;
+                        <span style="color:#28a745;">Good</span> 5–10 &middot;
+                        <span class="text-warning">Fair</span> 0–5 &middot;
+                        <span style="color:#fd7e14;">Poor</span> -5–0 &middot;
+                        <span class="text-danger">Critical</span> &lt;-5
                     </div>
                     <div class="col-6">
-                        <h6>RSSI Reference</h6>
-                        <table class="table table-sm">
-                            <tr><td class="text-success">Excellent</td><td>>= -70 dBm</td></tr>
-                            <tr><td style="color: #28a745;">Good</td><td>-70 to -85 dBm</td></tr>
-                            <tr><td class="text-warning">Fair</td><td>-85 to -100 dBm</td></tr>
-                            <tr><td style="color: #fd7e14;">Poor</td><td>-100 to -110 dBm</td></tr>
-                            <tr><td class="text-danger">Critical</td><td>&lt; -110 dBm</td></tr>
-                        </table>
+                        <strong>RSSI:</strong>
+                        <span class="text-success">Excellent</span> &ge;-70 dBm &middot;
+                        <span style="color:#28a745;">Good</span> -70–-85 &middot;
+                        <span class="text-warning">Fair</span> -85–-100 &middot;
+                        <span style="color:#fd7e14;">Poor</span> -100–-110 &middot;
+                        <span class="text-danger">Critical</span> &lt;-110
                     </div>
                 </div>
             </div>
         </div>
     </div>
-</div>
-
-<div class="row mb-4">
     <div class="col-md-6">
         <div class="card">
             <div class="card-header">
@@ -138,16 +123,6 @@
             </div>
             <div class="card-body">
                 <canvas id="bsHealthChart" height="250"></canvas>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-6">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0">Sensor Packet Loss Rate</h5>
-            </div>
-            <div class="card-body">
-                <canvas id="sensorLossChart" height="250"></canvas>
             </div>
         </div>
     </div>
@@ -208,7 +183,6 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
 let bsHealthChart = null;
-let sensorLossChart = null;
 let snrRssiChart = null;
 let signalDistChart = null;
 
@@ -253,7 +227,6 @@ function loadHealth() {
             updateSnrRssiChart(data.snr_rssi_history);
             updateSignalDistChart(data.signal_distribution);
             updateBsHealthChart(data.base_stations);
-            updateSensorLossChart(data.sensors.slice(0, 10));
             updateBsTable(data.base_stations);
             updateSensorTable(data.sensors.slice(0, 10));
         });
@@ -370,29 +343,6 @@ function updateBsHealthChart(baseStations) {
         options: {
             responsive: true,
             scales: { y: { beginAtZero: true, max: 100 } }
-        }
-    });
-}
-
-function updateSensorLossChart(sensors) {
-    const ctx = document.getElementById('sensorLossChart').getContext('2d');
-    const labels = sensors.map(s => s.eui.substring(0, 8));
-    
-    if (sensorLossChart) sensorLossChart.destroy();
-    
-    sensorLossChart = new Chart(ctx, {
-        type: 'bar',
-        data: {
-            labels: labels,
-            datasets: [{
-                label: 'Packet Loss %',
-                data: sensors.map(s => s.packet_loss_rate),
-                backgroundColor: sensors.map(s => getLossColor(s.packet_loss_rate))
-            }]
-        },
-        options: {
-            responsive: true,
-            scales: { y: { beginAtZero: true } }
         }
     });
 }

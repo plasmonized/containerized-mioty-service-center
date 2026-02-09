@@ -2631,41 +2631,74 @@ class TLSServer:
         except Exception:
             return ("???", None)
 
+    # Valid wMBUS C-field values for meter telegrams
+    WMBUS_VALID_C_FIELDS = {0x44, 0x46, 0x48}  # SND-NR, SND-IR, SND-NKE
+
+    def _find_wmbus_frame_offset(self, data: list) -> int:
+        """Find the start offset of the wMBUS frame in the data.
+        
+        The wMBUS frame starts with L-field followed by C-field (0x44 = SND-NR).
+        Some BSSCI/VM implementations prepend extra bytes (status, CRC, etc.)
+        that need to be skipped.
+        
+        Returns the offset of the L-field, or -1 if no valid frame found.
+        """
+        for offset in range(min(4, len(data) - 9)):
+            if offset + 10 > len(data):
+                break
+            c_field = data[offset + 1]
+            l_field = data[offset]
+            if c_field in self.WMBUS_VALID_C_FIELDS and l_field > 9:
+                return offset
+        return -1
+
     def _extract_oms_meter_info(self, data: list) -> dict | None:
         """Extract OMS meter information from WMBUS payload data.
         
-        WMBUS format:
-        - Byte 0: Length (L-field)
-        - Byte 1: C-field (control)
-        - Bytes 2-3: M-field (manufacturer, little-endian)
-        - Bytes 4-7: A-field (meter ID/serial, 4 bytes, little-endian BCD)
-        - Byte 8: Version
-        - Byte 9: Type (device type)
+        Automatically detects the wMBUS frame start by scanning for a valid
+        C-field (0x44 = SND-NR). This handles cases where the BSSCI/VM
+        protocol prepends extra bytes before the actual wMBUS frame.
         
-        Returns dict with meter_id, serial, manufacturer_code, manufacturer_name, version, device_type, device_type_name
+        WMBUS DLL frame (EN 13757-4):
+        - L-field (1 byte): frame length
+        - C-field (1 byte): control (0x44 = SND-NR)
+        - M-field (2 bytes): manufacturer, little-endian
+        - A-field (6 bytes):
+          - ID (4 bytes): meter serial, little-endian
+          - Version (1 byte)
+          - Device type (1 byte)
+        - CI-field + data...
         """
         try:
             if len(data) < 10:
                 return None
             
-            # Extract manufacturer (bytes 2-3, little-endian)
-            man_bytes = bytes(data[2:4])
+            offset = self._find_wmbus_frame_offset(data)
+            if offset < 0:
+                logger.debug(f"No valid wMBUS frame found in {len(data)} bytes")
+                return None
+            
+            if offset > 0:
+                logger.debug(f"Skipped {offset} leading byte(s) before wMBUS frame")
+            
+            # L-field at offset, C-field at offset+1 (already validated)
+            # M-field at offset+2..offset+3
+            man_bytes = bytes(data[offset + 2 : offset + 4])
             man_hex = man_bytes.hex().upper()
             man_code, man_name = self._decode_manufacturer_code(man_bytes)
             
-            # Extract serial number (bytes 4-7, little-endian BCD)
-            # Interpret as little-endian integer for display
-            serial_bytes = bytes(data[4:8])
+            # A-field ID at offset+4..offset+7 (4 bytes, little-endian)
+            serial_bytes = bytes(data[offset + 4 : offset + 8])
             serial_int = int.from_bytes(serial_bytes, byteorder='little')
             serial = str(serial_int)
             serial_hex = serial_bytes[::-1].hex().upper()
             
-            # Extract version and type
-            version = data[8] if len(data) > 8 else 0
-            device_type = data[9] if len(data) > 9 else 0
+            # Version at offset+8, Device type at offset+9
+            version = data[offset + 8]
+            device_type = data[offset + 9]
             device_type_name = self.OMS_DEVICE_TYPES.get(device_type, f"Unknown (0x{device_type:02X})")
             
-            # Combined meter ID for tracking
+            # Combined meter ID for tracking (manufacturer hex + serial hex)
             meter_id = f"{man_hex}{serial_hex}"
             
             return {

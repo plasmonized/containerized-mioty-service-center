@@ -113,14 +113,16 @@
             <table class="table table-striped" id="meters-table-container">
                 <thead>
                     <tr>
-                        <th>Meter ID</th>
-                        <th>EUI</th>
+                        <th>Serial</th>
+                        <th>Manufacturer</th>
+                        <th>Type</th>
+                        <th>Version</th>
                         <th>SNR</th>
                         <th>RSSI</th>
                         <th>Last Data (hex)</th>
                         <th>Last Seen</th>
                         <th>Base Station</th>
-                        <th>Messages</th>
+                        <th>Msgs</th>
                     </tr>
                 </thead>
                 <tbody id="meters-table">
@@ -368,11 +370,16 @@ function refreshData() {
                 
                 tbody.innerHTML = meters.map(meter => `
                     <tr>
-                        <td><code>${meter.meter_id || 'Unknown'}</code></td>
-                        <td><code>${meter.eui || 'N/A'}</code></td>
+                        <td><code title="Hex: ${meter.serial_hex || meter.meter_id || ''}">${meter.serial || meter.meter_id || 'Unknown'}</code></td>
+                        <td>
+                            <strong>${meter.manufacturer_code || '???'}</strong>
+                            ${meter.manufacturer_name ? `<br><small class="text-muted">${meter.manufacturer_name}</small>` : ''}
+                        </td>
+                        <td><small>${meter.device_type_name || 'Unknown'}</small></td>
+                        <td>${meter.version !== undefined ? meter.version : 'N/A'}</td>
                         <td>${meter.snr || 0} dB</td>
                         <td>${meter.rssi || 0} dBm</td>
-                        <td><code title="${meter.last_data || ''}">${truncateData(meter.last_data, 40)}</code></td>
+                        <td><code title="${meter.last_data || ''}">${truncateData(meter.last_data, 30)}</code></td>
                         <td title="${formatTimestamp(meter.timestamp)}">${formatTimeSince(meter.timestamp)}</td>
                         <td><code>${meter.bs_eui || 'Unknown'}</code></td>
                         <td><span class="badge" style="background-color: #ff8c00;">${meter.message_count || 0}</span></td>

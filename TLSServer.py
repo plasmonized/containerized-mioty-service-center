@@ -1567,13 +1567,15 @@ class TLSServer:
                             logger.info(f"   Equivalent SNR: {eq_snr} dB")
                         logger.info(f"   Carrier spacing: {carr_space} (0=narrow, 1=standard, 2=wide)")
                         
-                        # Parse OMS meter ID from WMBUS payload (if applicable)
+                        # Parse OMS meter info from WMBUS payload
                         data_hex = bytes(data).hex() if isinstance(data, list) else data
-                        meter_id = self._extract_oms_meter_id(data if isinstance(data, list) else bytes.fromhex(data))
+                        meter_info = self._extract_oms_meter_info(data if isinstance(data, list) else bytes.fromhex(data))
                         
-                        if meter_id:
-                            logger.info(f"   OMS Meter ID: {meter_id}")
-                            current_time = asyncio.get_event_loop().time()
+                        if meter_info:
+                            meter_id = meter_info['meter_id']
+                            logger.info(f"   OMS Meter: {meter_info['manufacturer_code']} Serial {meter_info['serial']} ({meter_info['device_type_name']})")
+                            import time
+                            current_time = time.time()
                             
                             # Track OMS meter
                             if meter_id in self.oms_meters:
@@ -1586,6 +1588,13 @@ class TLSServer:
                             else:
                                 self.oms_meters[meter_id] = {
                                     'meter_id': meter_id,
+                                    'serial': meter_info['serial'],
+                                    'serial_hex': meter_info['serial_hex'],
+                                    'manufacturer_code': meter_info['manufacturer_code'],
+                                    'manufacturer_name': meter_info['manufacturer_name'],
+                                    'version': meter_info['version'],
+                                    'device_type': meter_info['device_type'],
+                                    'device_type_name': meter_info['device_type_name'],
                                     'eui': eui.upper(),
                                     'snr': snr,
                                     'rssi': rssi,
@@ -1601,6 +1610,7 @@ class TLSServer:
                         await writer.drain()
                         
                         # Update last seen (use meter_id if no EUI available)
+                        meter_id = meter_info['meter_id'] if meter_info else None
                         identifier = eui.upper() if eui else (meter_id or f"vm_{op_id}")
                         if eui:
                             self.sensor_last_seen[eui.upper()] = asyncio.get_event_loop().time()
@@ -1613,26 +1623,45 @@ class TLSServer:
                                         f"macType={mac_type}, meter={meter_id or 'N/A'}, {len(data)} bytes", 
                                         bs_eui)
                         
-                        # Publish to MQTT
-                        if self.mqtt_out_queue:
-                            # Use meter_id for topic if available, else EUI, else generic vm topic
-                            topic_id = meter_id or eui.upper() or "unknown"
+                        # Publish to MQTT (same format as normal mioty uplink data)
+                        if self.mqtt_out_queue and meter_info:
+                            import time as _time
+                            oms_id = f"oms_{meter_info['manufacturer_code']}_{meter_info['serial']}"
+                            mqtt_payload = {
+                                "bs_eui": bs_eui,
+                                "snr": snr,
+                                "rssi": rssi,
+                                "data": data_hex,
+                                "mac_type": mac_type,
+                                "eq_snr": eq_snr,
+                                "freq_off": freq_off,
+                                "carr_space": carr_space,
+                                "timestamp": _time.time(),
+                                "oms": {
+                                    "serial": meter_info['serial'],
+                                    "serial_hex": meter_info['serial_hex'],
+                                    "manufacturer": meter_info['manufacturer_code'],
+                                    "manufacturer_name": meter_info['manufacturer_name'],
+                                    "version": meter_info['version'],
+                                    "device_type": meter_info['device_type'],
+                                    "device_type_name": meter_info['device_type_name'],
+                                    "meter_id": meter_info['meter_id']
+                                }
+                            }
+                            mqtt_topic = f"ep/{oms_id}/ul"
+                            payload_json = json.dumps(mqtt_payload)
+                            
+                            logger.info(f"📤 MQTT PUBLICATION - VM/OMS UPLINK DATA")
+                            logger.info(f"   Topic: {bssci_config.BASE_TOPIC.rstrip('/')}/{mqtt_topic}")
+                            logger.info(f"   OMS: {meter_info['manufacturer_code']} Serial {meter_info['serial']} ({meter_info['device_type_name']})")
+                            logger.info(f"   SNR={snr:.1f}dB, RSSI={rssi:.1f}dBm")
+                            
                             await self.mqtt_out_queue.put({
-                                "topic": f"vm/{topic_id}/ul",
-                                "payload": json.dumps({
-                                    "bs_eui": bs_eui,
-                                    "mac_type": mac_type,
-                                    "eui": eui.upper() if eui else None,
-                                    "data": data_hex,
-                                    "meter_id": meter_id,
-                                    "snr": snr,
-                                    "rssi": rssi,
-                                    "eq_snr": eq_snr,
-                                    "freq_off": freq_off,
-                                    "carr_space": carr_space,
-                                    "timestamp": asyncio.get_event_loop().time()
-                                })
+                                "topic": mqtt_topic,
+                                "payload": payload_json
                             })
+                            self.traffic_metrics['messages_out'] += 1
+                            self.traffic_metrics['bytes_out'] += len(payload_json)
                     
                     elif msg_type in ("vm.dlDataRsp", "vmDlDataRsp"):
                         op_id = message.get("opId", "unknown")
@@ -2389,39 +2418,277 @@ class TLSServer:
         except Exception as e:
             logger.error(f"Failed to reload sensor configuration: {e}")
 
-    def _extract_oms_meter_id(self, data: list) -> str | None:
-        """Extract OMS meter ID from WMBUS payload data.
+    # OMS/WMBUS Manufacturer codes (from m-bus.de)
+    OMS_MANUFACTURERS = {
+        "0442": ("ABB", "ABB AB"),
+        "0465": ("ACE", "Actaris (Elektrizität)"),
+        "0467": ("ACG", "Actaris (Gas)"),
+        "0477": ("ACW", "Actaris (Wasser und Wärme)"),
+        "04A7": ("AEG", "AEG"),
+        "04AC": ("AEL", "Kohler, Türkei"),
+        "04AD": ("AEM", "S.C. AEM S.A. Romania"),
+        "05B0": ("AMP", "Ampy Automation Digilog Ltd"),
+        "05B4": ("AMT", "Aquametro"),
+        "0613": ("APS", "Apsis Kontrol Sistemleri"),
+        "08A3": ("BEC", "Berg Energiekontrollsysteme GmbH"),
+        "08B2": ("BER", "Bernina Electronic AG"),
+        "0A65": ("BSE", "Basari Elektronik A.S."),
+        "0A74": ("BST", "BESTAS Elektronik Optik"),
+        "0C49": ("CBI", "Circuit Breaker Industries"),
+        "0D8F": ("CLO", "Clorius Raab Karcher"),
+        "0DEE": ("CON", "Conlog"),
+        "0F4D": ("CZM", "Cazzaniga S.p.A."),
+        "102E": ("DAN", "Danubia"),
+        "10D3": ("DFS", "Danfoss A/S"),
+        "11A5": ("DME", "DIEHL Metering"),
+        "1347": ("DZG", "Deutsche Zählergesellschaft"),
+        "12FA": ("DWZ", "Lorenz GmbH & Co.KG"),
+        "148D": ("EDM", "EDMI Pty.Ltd."),
+        "14C5": ("EFE", "Engelmann Sensor GmbH"),
+        "1574": ("EKT", "PA KVANT J.S."),
+        "158D": ("ELM", "Elektromed Elektronik Ltd"),
+        "1593": ("ELS", "ELSTER Produktion GmbH"),
+        "15A8": ("EMH", "EMH Elektrizitätszähler GmbH"),
+        "15B5": ("EMU", "EMU Elektronik AG"),
+        "15AF": ("EMO", "Enermet"),
+        "15C4": ("END", "ENDYS GmbH"),
+        "15D0": ("ENP", "Kiev Polytechnical Scientific Research"),
+        "15D4": ("ENT", "ENTES Elektronik"),
+        "164C": ("ERL", "Erelsan Elektrik ve Elektronik"),
+        "166D": ("ESM", "Starion Elektrik ve Elektronik"),
+        "16B2": ("EUR", "Eurometers Ltd"),
+        "16F4": ("EWT", "Elin Wasserwerkstechnik"),
+        "18A4": ("FED", "Federal Elektrik"),
+        "19AC": ("FML", "Siemens Measurements Ltd."),
+        "1C4A": ("GBJ", "Grundfoss A/S"),
+        "1CA3": ("GEC", "GEC Meters Ltd."),
+        "1E70": ("GSP", "Ingenieurbuero Gasperowicz"),
+        "1EE6": ("GWF", "Gas- u. Wassermessfabrik Luzern"),
+        "20A7": ("HEG", "Hamburger Elektronik Gesellschaft"),
+        "20AC": ("HEL", "Heliowatt"),
+        "225A": ("HRZ", "HERZ Messtechnik GmbH"),
+        "2283": ("HTC", "Horstmann Timers and Controls Ltd."),
+        "2324": ("HYD", "Hydrometer GmbH"),
+        "246D": ("ICM", "Intracom"),
+        "2485": ("IDE", "IMIT S.p.A."),
+        "25D6": ("INV", "Invensys Metering Systems AG"),
+        "266B": ("ISK", "Iskraemeco"),
+        "2674": ("IST", "ista SE"),
+        "2692": ("ITR", "Itron"),
+        "26EB": ("IWK", "IWK Regler und Kompensatoren GmbH"),
+        "2C2D": ("KAM", "Kamstrup Energie A/S"),
+        "2D0C": ("KHL", "Kohler"),
+        "2D65": ("KKE", "KK-Electronic A/S"),
+        "2DD8": ("KNX", "KONNEX-based users"),
+        "2E4F": ("KRO", "Kromschröder"),
+        "2E74": ("KST", "Kundo SystemTechnik GmbH"),
+        "30AD": ("LEM", "LEM HEME Ltd."),
+        "30E2": ("LGB", "Landis & Gyr Energy Management"),
+        "30E4": ("LGD", "Landis & Gyr Deutschland"),
+        "30FA": ("LGZ", "Landis & Gyr Zug"),
+        "3101": ("LHA", "Atlantic Meters"),
+        "31AC": ("LML", "LUMEL"),
+        "3265": ("LSE", "Landis & Staefa electronic"),
+        "3270": ("LSP", "Landis & Staefa production"),
+        "32A7": ("LUG", "Landis & Staefa"),
+        "327A": ("LSZ", "Siemens Building Technologies"),
+        "3424": ("MAD", "Maddalena S.r.I."),
+        "34A9": ("MEI", "H. Meinecke AG"),
+        "3573": ("MKS", "MAK-SAY Elektrik Elektronik"),
+        "35D3": ("MNS", "MANAS Elektronik"),
+        "3613": ("MPS", "Multiprocessor Systems Ltd"),
+        "3683": ("MTC", "Metering Technology Corporation"),
+        "3933": ("NIS", "Nisko Industries Israel"),
+        "39B3": ("NMS", "Nisko Advanced Metering Solutions"),
+        "3A4D": ("NRM", "Norm Elektronik"),
+        "3DD2": ("ONR", "ONUR Elektroteknik"),
+        "4024": ("PAD", "PadMess GmbH"),
+        "41A7": ("PMG", "Spanner-Pollux GmbH"),
+        "4249": ("PRI", "Polymeters Response International Ltd."),
+        "4833": ("RAS", "Hydrometer GmbH"),
+        "48AC": ("REL", "Relay GmbH"),
+        "4965": ("RKE", "ista SE"),
+        "4C30": ("SAP", "Sappel"),
+        "4C68": ("SCH", "Schnitzel GmbH"),
+        "4CAE": ("SEN", "Sensus GmbH"),
+        "4DA3": ("SMC", "SMC"),
+        "4DA5": ("SME", "Siame"),
+        "4DAC": ("SML", "Siemens Measurements Ltd."),
+        "4D25": ("SIE", "Siemens AG"),
+        "4D82": ("SLB", "Schlumberger Industries Ltd."),
+        "4DEE": ("SON", "Sontex SA"),
+        "4DE6": ("SOF", "softflow.de GmbH"),
+        "4E0C": ("SPL", "Sappel"),
+        "4E18": ("SPX", "Spanner Pollux GmbH"),
+        "4ECD": ("SVM", "AB Svensk Värmemätning SVM"),
+        "5068": ("TCH", "Techem Service AG"),
+        "5130": ("TIP", "TIP Thüringer Industrie Produkte GmbH"),
+        "5427": ("UAG", "Uher"),
+        "54E9": ("UGI", "United Gas Industries"),
+        "58B3": ("VES", "ista SE"),
+        "5A09": ("VPI", "Van Putten Instruments B.V."),
+        "5DAF": ("WMO", "Westermo Teleindustri AB"),
+        "6685": ("YTE", "Yuksek Teknoloji"),
+        "6827": ("ZAG", "Zellwerg Uster AG"),
+        "6830": ("ZAP", "Zaptronix"),
+        "6936": ("ZIV", "ZIV Aplicaciones y Tecnologia"),
+    }
+    
+    # OMS/WMBUS Device types
+    OMS_DEVICE_TYPES = {
+        0x00: "Other",
+        0x01: "Oil",
+        0x02: "Electricity",
+        0x03: "Gas",
+        0x04: "Heat",
+        0x05: "Steam",
+        0x06: "Warm Water (30-90°C)",
+        0x07: "Water",
+        0x08: "Heat Cost Allocator",
+        0x09: "Compressed Air",
+        0x0A: "Cooling load meter (Volume measured at return temp: outlet)",
+        0x0B: "Cooling load meter (Volume measured at flow temp: inlet)",
+        0x0C: "Heat (Volume measured at flow temp: inlet)",
+        0x0D: "Heat / Cooling load meter",
+        0x0E: "Bus / System component",
+        0x0F: "Unknown Medium",
+        0x10: "Reserved for consumption meter",
+        0x11: "Reserved for consumption meter",
+        0x12: "Reserved for consumption meter",
+        0x13: "Reserved for consumption meter",
+        0x14: "Calorific value",
+        0x15: "Hot water (≥ 90°C)",
+        0x16: "Cold water",
+        0x17: "Dual register (hot/cold) Water meter",
+        0x18: "Pressure",
+        0x19: "A/D Converter",
+        0x1A: "Smoke detector",
+        0x1B: "Room sensor (temp., humidity, etc.)",
+        0x1C: "Gas detector",
+        0x1D: "Reserved for sensors",
+        0x20: "Breaker (electricity)",
+        0x21: "Valve (gas or water)",
+        0x22: "Reserved for switching devices",
+        0x23: "Reserved for switching devices",
+        0x24: "Reserved for switching devices",
+        0x25: "Customer unit (display device)",
+        0x26: "Reserved for customer units",
+        0x27: "Reserved for customer units",
+        0x28: "Waste water",
+        0x29: "Garbage",
+        0x2A: "Reserved for Carbon dioxide",
+        0x2B: "Reserved for environmental meter",
+        0x2C: "Reserved for environmental meter",
+        0x2D: "Reserved for environmental meter",
+        0x2E: "Reserved for environmental meter",
+        0x2F: "Reserved for environmental meter",
+        0x30: "Reserved for system devices",
+        0x31: "Communication controller",
+        0x32: "Unidirectional repeater",
+        0x33: "Bidirectional repeater",
+        0x34: "Reserved for system devices",
+        0x35: "Reserved for system devices",
+        0x36: "Radio converter (system side)",
+        0x37: "Radio converter (meter side)",
+        0x38: "Reserved for system devices",
+        0x39: "Reserved for system devices",
+        0x3A: "Reserved for system devices",
+        0x3B: "Reserved for system devices",
+        0x3C: "Reserved for system devices",
+        0x3D: "Reserved for system devices",
+        0x3E: "Reserved for system devices",
+        0x3F: "Reserved for system devices",
+    }
+
+    def _decode_manufacturer_code(self, man_bytes: bytes) -> tuple:
+        """Decode manufacturer code from 2 bytes (little-endian) to 3-letter code.
         
-        WMBUS format typically:
-        - Byte 0: Length
+        Formula: MAN = (ASCII(1)-64)*1024 + (ASCII(2)-64)*32 + (ASCII(3)-64)
+        Reverse: Extract letters from the integer value.
+        """
+        try:
+            # Little-endian: first byte is low, second is high
+            man_int = man_bytes[0] | (man_bytes[1] << 8)
+            
+            # Decode the 3 letters
+            char3 = (man_int & 0x1F) + 64
+            char2 = ((man_int >> 5) & 0x1F) + 64
+            char1 = ((man_int >> 10) & 0x1F) + 64
+            
+            code = chr(char1) + chr(char2) + chr(char3)
+            
+            # Look up in manufacturer table
+            hex_key = man_bytes.hex().upper()
+            # Also try swapped (big-endian for lookup)
+            hex_key_swap = bytes([man_bytes[1], man_bytes[0]]).hex().upper()
+            
+            if hex_key in self.OMS_MANUFACTURERS:
+                return (code, self.OMS_MANUFACTURERS[hex_key][1])
+            elif hex_key_swap in self.OMS_MANUFACTURERS:
+                return (code, self.OMS_MANUFACTURERS[hex_key_swap][1])
+            else:
+                return (code, None)
+        except Exception:
+            return ("???", None)
+
+    def _extract_oms_meter_info(self, data: list) -> dict | None:
+        """Extract OMS meter information from WMBUS payload data.
+        
+        WMBUS format:
+        - Byte 0: Length (L-field)
         - Byte 1: C-field (control)
-        - Bytes 2-3: M-field (manufacturer)
-        - Bytes 4-7: A-field (meter ID, 4 bytes, little-endian)
+        - Bytes 2-3: M-field (manufacturer, little-endian)
+        - Bytes 4-7: A-field (meter ID/serial, 4 bytes, little-endian BCD)
         - Byte 8: Version
         - Byte 9: Type (device type)
         
-        Returns the meter ID as a hex string, or None if data is too short.
+        Returns dict with meter_id, serial, manufacturer_code, manufacturer_name, version, device_type, device_type_name
         """
         try:
             if len(data) < 10:
                 return None
             
             # Extract manufacturer (bytes 2-3, little-endian)
-            manufacturer = bytes(data[2:4]).hex().upper()
+            man_bytes = bytes(data[2:4])
+            man_hex = man_bytes.hex().upper()
+            man_code, man_name = self._decode_manufacturer_code(man_bytes)
             
-            # Extract meter ID (bytes 4-7, little-endian, so reverse for display)
-            meter_id_bytes = data[4:8]
-            meter_id = bytes(meter_id_bytes[::-1]).hex().upper()
+            # Extract serial number (bytes 4-7, little-endian BCD)
+            # Interpret as little-endian integer for display
+            serial_bytes = bytes(data[4:8])
+            serial_int = int.from_bytes(serial_bytes, byteorder='little')
+            serial = str(serial_int)
+            serial_hex = serial_bytes[::-1].hex().upper()
             
             # Extract version and type
             version = data[8] if len(data) > 8 else 0
             device_type = data[9] if len(data) > 9 else 0
+            device_type_name = self.OMS_DEVICE_TYPES.get(device_type, f"Unknown (0x{device_type:02X})")
             
-            # Return combined identifier: manufacturer + meter_id
-            return f"{manufacturer}{meter_id}"
+            # Combined meter ID for tracking
+            meter_id = f"{man_hex}{serial_hex}"
+            
+            return {
+                'meter_id': meter_id,
+                'serial': serial,
+                'serial_hex': serial_hex,
+                'manufacturer_code': man_code,
+                'manufacturer_name': man_name,
+                'manufacturer_hex': man_hex,
+                'version': version,
+                'device_type': device_type,
+                'device_type_name': device_type_name
+            }
         except Exception as e:
-            logger.debug(f"Failed to extract OMS meter ID: {e}")
+            logger.debug(f"Failed to extract OMS meter info: {e}")
             return None
+
+    def _extract_oms_meter_id(self, data: list) -> str | None:
+        """Extract OMS meter ID from WMBUS payload data (legacy compatibility).
+        Returns just the meter_id string for backwards compatibility.
+        """
+        info = self._extract_oms_meter_info(data)
+        return info['meter_id'] if info else None
 
     def get_oms_meters(self) -> Dict[str, Dict[str, Any]]:
         """Return all tracked OMS meters."""

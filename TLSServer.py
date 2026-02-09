@@ -88,6 +88,10 @@ class TLSServer:
         # eui -> whether warning was sent
         self.sensor_warning_sent: Dict[str, bool] = {}
 
+        # Status request failure tracking: writer -> consecutive failure count
+        self.bs_status_failures: Dict[Any, int] = {}
+        self.BS_STATUS_FAILURE_THRESHOLD = 3
+
         # Network topology tracking: which base stations receive which sensors
         # sensor_eui -> {primary_bs: str, receiving_bases: {bs_eui: {snr, rssi, last_seen, count}}}
         self.sensor_topology: Dict[str, Dict[str, Any]] = {}
@@ -345,14 +349,22 @@ class TLSServer:
 
         successful_attachments = 0
         failed_attachments = 0
+        skipped_attachments = 0
 
         for i, sensor in enumerate(self.sensor_config, 1):
             try:
+                eui_upper = sensor['eui'].upper()
+                if eui_upper in self.registered_sensors:
+                    reg_info = self.registered_sensors[eui_upper]
+                    if reg_info.get('status') == 'registered' and bs_eui in reg_info.get('base_stations', []):
+                        skipped_attachments += 1
+                        logger.debug(f"   ⏭️  Sensor {sensor['eui']} already attached to {bs_eui} - skipping")
+                        continue
+
                 logger.info(f"   Processing sensor {i}/{len(self.sensor_config)}: {sensor['eui']}")
                 await self.send_attach_request(writer, sensor)
                 successful_attachments += 1
 
-                # Small delay between requests to avoid overwhelming the base station
                 await asyncio.sleep(0.1)
 
             except Exception as e:
@@ -362,67 +374,12 @@ class TLSServer:
 
         logger.info(f"✅ BATCH SENSOR ATTACHMENT completed for base station {bs_eui}")
         logger.info(f"   Successful: {successful_attachments}")
+        logger.info(f"   Skipped (already attached): {skipped_attachments}")
         logger.info(f"   Failed: {failed_attachments}")
         logger.info(f"   Total processed: {len(self.sensor_config)}")
 
         if failed_attachments > 0:
             logger.warning(f"   ⚠️  {failed_attachments} sensors failed to attach - check individual sensor logs above")
-
-    async def send_status_requests(self) -> None:
-        logger.info(f"📊 STATUS REQUEST TASK STARTED")
-        logger.info(f"   Status request interval: {bssci_config.STATUS_INTERVAL} seconds")
-
-        try:
-            while True:
-                await asyncio.sleep(bssci_config.STATUS_INTERVAL)
-                if self.connected_base_stations:
-                    logger.info(f"📊 PERIODIC STATUS REQUEST CYCLE STARTING")
-                    logger.info(f"   Connected base stations: {len(self.connected_base_stations)}")
-                    logger.info(f"   Base stations: {list(self.connected_base_stations.values())}")
-
-                    requests_sent = 0
-                    failed_requests = 0
-
-                    for writer, bs_eui in self.connected_base_stations.copy().items():  # Use copy to avoid dict change during iteration
-                        try:
-                            logger.info(f"📤 Sending status request to base station {bs_eui}")
-                            logger.info(f"   Operation ID: {self.opID}")
-                            self.traffic_metrics['status_requests'] += 1
-
-                            msg_pack = encode_message(messages.build_status_request(self.opID))
-                            full_message = IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack
-
-                            writer.write(full_message)
-                            await writer.drain()
-                            logger.info(f"✅ Status request transmitted to {bs_eui} (opID: {self.opID})")
-                            requests_sent += 1
-                            self.opID -= 1
-
-                        except Exception as e:
-                            failed_requests += 1
-                            logger.error(f"❌ Failed to send status request to base station {bs_eui}")
-                            logger.error(f"   Error: {type(e).__name__}: {e}")
-                            logger.warning(f"🔌 Removing disconnected base station {bs_eui} from active list")
-                            # Remove disconnected base station
-                            if writer in self.connected_base_stations:
-                                self.connected_base_stations.pop(writer)
-
-                    logger.info(f"📊 STATUS REQUEST CYCLE COMPLETE")
-                    logger.info(f"   Requests sent: {requests_sent}")
-                    logger.info(f"   Failed requests: {failed_requests}")
-                    logger.info(f"   Remaining connected base stations: {len(self.connected_base_stations)}")
-
-                else:
-                    logger.info(f"⏸️  STATUS REQUEST CYCLE SKIPPED - No base stations connected")
-
-        except asyncio.CancelledError:
-            logger.info(f"📊 STATUS REQUEST TASK CANCELLED")
-            self._status_task_running = False
-            raise
-        except Exception as e:
-            logger.error(f"❌ STATUS REQUEST TASK ERROR: {e}")
-            self._status_task_running = False
-            raise
 
     async def send_detach_request(self, writer: asyncio.streams.StreamWriter, sensor_eui: str) -> bool:
         """Send detach request for a specific sensor"""
@@ -740,16 +697,35 @@ class TLSServer:
                             writer.write(full_message)
                             await writer.drain()
                             self.opID += 1
+                            self.bs_status_failures.pop(writer, None)
 
                         except Exception as e:
-                            logger.error(f"   ❌ Failed to send status to {bs_eui}: {e}")
+                            bs_eui = self.connected_base_stations.get(writer, "unknown")
+                            fail_count = self.bs_status_failures.get(writer, 0) + 1
+                            self.bs_status_failures[writer] = fail_count
+                            logger.warning(f"   ⚠️ Failed to send status to {bs_eui} ({fail_count}/{self.BS_STATUS_FAILURE_THRESHOLD}): {e}")
+
+                            if fail_count >= self.BS_STATUS_FAILURE_THRESHOLD:
+                                logger.error(f"   🔌 Base station {bs_eui} reached failure threshold ({self.BS_STATUS_FAILURE_THRESHOLD}), removing from active list")
+                                if writer in self.connected_base_stations:
+                                    self.connected_base_stations.pop(writer)
+                                self.bs_status_failures.pop(writer, None)
+                                try:
+                                    writer.close()
+                                except:
+                                    pass
 
                     logger.info(f"📊 STATUS REQUEST CYCLE COMPLETED")
                 else:
                     logger.debug(f"📊 No base stations connected - skipping status requests")
 
+        except asyncio.CancelledError:
+            logger.info(f"📊 STATUS REQUEST TASK CANCELLED")
+            self._status_task_running = False
+            raise
         except Exception as e:
             logger.error(f"❌ STATUS REQUEST TASK FAILED: {e}")
+            self._status_task_running = False
             raise
 
     async def handle_client(
@@ -1724,6 +1700,7 @@ class TLSServer:
                 logger.info(f"   Remaining connected base stations: {len(self.connected_base_stations)}")
             if writer in self.connecting_base_stations:
                 self.connecting_base_stations.pop(writer)
+            self.bs_status_failures.pop(writer, None)
 
     async def process_deduplication_buffer(self) -> None:
         """Processes the deduplication buffer, forwards best messages, and cleans up old entries."""

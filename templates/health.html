@@ -1,15 +1,20 @@
 {% extends "base.html" %}
-{% block title %}System Health{% endblock %}
+{% block title %}Traffic{% endblock %}
 
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
-    <h1>System Health</h1>
-    <button class="btn btn-outline-secondary" onclick="refreshHealth()">Refresh</button>
+    <h1>Traffic</h1>
+    <div>
+        <button class="btn btn-outline-secondary me-2" onclick="resetMetrics()" title="Reset traffic metrics">Reset Metrics</button>
+        <button class="btn btn-primary" onclick="refreshAll()" style="background-color: #ff8c00; border-color: #ff8c00;">Refresh</button>
+    </div>
 </div>
+
+<div id="alert-container"></div>
 
 <div class="row mb-4">
     <div class="col-md-2">
-        <div class="card text-center">
+        <div class="card text-center h-100">
             <div class="card-body">
                 <h6 class="card-subtitle mb-2 text-muted">System Uptime</h6>
                 <h3 class="text-primary" id="systemUptime">-</h3>
@@ -17,23 +22,34 @@
         </div>
     </div>
     <div class="col-md-2">
-        <div class="card text-center">
+        <div class="card text-center h-100">
             <div class="card-body">
-                <h6 class="card-subtitle mb-2 text-muted">Packets Received</h6>
-                <h3 class="text-success" id="packetsReceived">0</h3>
+                <h6 class="card-subtitle mb-2 text-muted">Messages In</h6>
+                <h3 class="text-success" id="messages-in">0</h3>
+                <small class="text-muted" id="messages-in-rate">0/min</small>
             </div>
         </div>
     </div>
     <div class="col-md-2">
-        <div class="card text-center">
+        <div class="card text-center h-100">
             <div class="card-body">
-                <h6 class="card-subtitle mb-2 text-muted">Packets Lost</h6>
-                <h3 class="text-danger" id="packetsLost">0</h3>
+                <h6 class="card-subtitle mb-2 text-muted">Messages Out</h6>
+                <h3 class="text-primary" id="messages-out">0</h3>
+                <small class="text-muted" id="messages-out-rate">0/min</small>
             </div>
         </div>
     </div>
     <div class="col-md-2">
-        <div class="card text-center">
+        <div class="card text-center h-100">
+            <div class="card-body">
+                <h6 class="card-subtitle mb-2 text-muted">Dropped (Dedup)</h6>
+                <h3 class="text-warning" id="messages-dropped">0</h3>
+                <small class="text-muted" id="dedup-rate">0%</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="card text-center h-100">
             <div class="card-body">
                 <h6 class="card-subtitle mb-2 text-muted">Packet Loss</h6>
                 <h3 id="overallLossRate">0%</h3>
@@ -41,18 +57,33 @@
         </div>
     </div>
     <div class="col-md-2">
-        <div class="card text-center">
+        <div class="card text-center h-100">
             <div class="card-body">
-                <h6 class="card-subtitle mb-2 text-muted">Avg SNR</h6>
-                <h3 class="text-info" id="avgSnr">0 dB</h3>
+                <h6 class="card-subtitle mb-2 text-muted">Base Stations</h6>
+                <h3 class="text-info" id="connections">0</h3>
             </div>
         </div>
     </div>
-    <div class="col-md-2">
-        <div class="card text-center">
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Message Traffic</h5>
+            </div>
             <div class="card-body">
-                <h6 class="card-subtitle mb-2 text-muted">Avg RSSI</h6>
-                <h3 class="text-secondary" id="avgRssi">0 dBm</h3>
+                <canvas id="messageChart" height="200"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Sensors & Base Stations (12h)</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="connectionsChart" height="200"></canvas>
             </div>
         </div>
     </div>
@@ -94,43 +125,28 @@
                         <small class="text-muted">Need Attention</small>
                     </div>
                 </div>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-6">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0">Signal Reference</h5>
-            </div>
-            <div class="card-body">
-                <div class="row">
+                <hr class="mt-3 mb-2">
+                <div class="row" style="font-size: 0.75em; color: #6c757d;">
                     <div class="col-6">
-                        <h6>SNR Reference</h6>
-                        <table class="table table-sm">
-                            <tr><td class="text-success">Excellent</td><td>>= 10 dB</td></tr>
-                            <tr><td style="color: #28a745;">Good</td><td>5 to 10 dB</td></tr>
-                            <tr><td class="text-warning">Fair</td><td>0 to 5 dB</td></tr>
-                            <tr><td style="color: #fd7e14;">Poor</td><td>-5 to 0 dB</td></tr>
-                            <tr><td class="text-danger">Critical</td><td>&lt; -5 dB</td></tr>
-                        </table>
+                        <strong>SNR:</strong>
+                        <span class="text-success">Excellent</span> &ge;10 dB &middot;
+                        <span style="color:#28a745;">Good</span> 5–10 &middot;
+                        <span class="text-warning">Fair</span> 0–5 &middot;
+                        <span style="color:#fd7e14;">Poor</span> -5–0 &middot;
+                        <span class="text-danger">Critical</span> &lt;-5
                     </div>
                     <div class="col-6">
-                        <h6>RSSI Reference</h6>
-                        <table class="table table-sm">
-                            <tr><td class="text-success">Excellent</td><td>>= -70 dBm</td></tr>
-                            <tr><td style="color: #28a745;">Good</td><td>-70 to -85 dBm</td></tr>
-                            <tr><td class="text-warning">Fair</td><td>-85 to -100 dBm</td></tr>
-                            <tr><td style="color: #fd7e14;">Poor</td><td>-100 to -110 dBm</td></tr>
-                            <tr><td class="text-danger">Critical</td><td>&lt; -110 dBm</td></tr>
-                        </table>
+                        <strong>RSSI:</strong>
+                        <span class="text-success">Excellent</span> &ge;-70 dBm &middot;
+                        <span style="color:#28a745;">Good</span> -70–-85 &middot;
+                        <span class="text-warning">Fair</span> -85–-100 &middot;
+                        <span style="color:#fd7e14;">Poor</span> -100–-110 &middot;
+                        <span class="text-danger">Critical</span> &lt;-110
                     </div>
                 </div>
             </div>
         </div>
     </div>
-</div>
-
-<div class="row mb-4">
     <div class="col-md-6">
         <div class="card">
             <div class="card-header">
@@ -138,30 +154,9 @@
             </div>
             <div class="card-body">
                 <canvas id="bsHealthChart" height="250"></canvas>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-6">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0">Sensor Packet Loss Rate</h5>
-            </div>
-            <div class="card-body">
-                <canvas id="sensorLossChart" height="250"></canvas>
-            </div>
-        </div>
-    </div>
-</div>
-
-<div class="row">
-    <div class="col-md-5">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0">Base Station Details</h5>
-            </div>
-            <div class="card-body">
+                <hr class="mt-3 mb-2">
                 <div class="table-responsive">
-                    <table class="table table-sm">
+                    <table class="table table-sm mb-0">
                         <thead>
                             <tr>
                                 <th>Name/EUI</th>
@@ -177,26 +172,94 @@
             </div>
         </div>
     </div>
-    <div class="col-md-7">
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Operations</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="operationsChart" height="180"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Data Transfer</h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-sm mb-0">
+                    <tr><td>Bytes Received</td><td class="text-end" id="bytes-in">0 B</td></tr>
+                    <tr><td>Bytes Sent (MQTT)</td><td class="text-end" id="bytes-out">0 B</td></tr>
+                </table>
+            </div>
+        </div>
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5 class="mb-0">Deduplication</h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-sm mb-0">
+                    <tr><td>Total Messages</td><td class="text-end" id="dedup-total">0</td></tr>
+                    <tr><td>Duplicates Filtered</td><td class="text-end" id="dedup-filtered">0</td></tr>
+                    <tr><td>Published</td><td class="text-end" id="dedup-published">0</td></tr>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
         <div class="card">
             <div class="card-header">
                 <h5 class="mb-0">Top 10 Sensors by Packet Loss</h5>
             </div>
             <div class="card-body">
                 <div class="table-responsive">
-                    <table class="table table-sm" style="table-layout: fixed;">
+                    <table class="table table-sm mb-0" style="table-layout: fixed;">
                         <thead>
                             <tr>
-                                <th style="width: 40%;">EUI</th>
-                                <th style="width: 12%;">Received</th>
-                                <th style="width: 12%;">Lost</th>
-                                <th style="width: 12%;">Loss</th>
-                                <th style="width: 12%;">SNR</th>
-                                <th style="width: 12%;">RSSI</th>
+                                <th style="width: 35%;">EUI</th>
+                                <th style="width: 13%;">Received</th>
+                                <th style="width: 13%;">Lost</th>
+                                <th style="width: 13%;">Loss</th>
+                                <th style="width: 13%;">SNR</th>
+                                <th style="width: 13%;">RSSI</th>
                             </tr>
                         </thead>
                         <tbody id="sensorTable"></tbody>
                     </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Protocol Operations</h5>
+            </div>
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-md-3">
+                        <h5 class="mb-0" id="attach-requests">0</h5>
+                        <small class="text-muted">Attach Requests</small>
+                    </div>
+                    <div class="col-md-3">
+                        <h5 class="mb-0" id="detach-requests">0</h5>
+                        <small class="text-muted">Detach Requests</small>
+                    </div>
+                    <div class="col-md-3">
+                        <h5 class="mb-0" id="status-requests">0</h5>
+                        <small class="text-muted">Status Requests</small>
+                    </div>
+                    <div class="col-md-3">
+                        <h5 class="mb-0" id="vm-messages">0</h5>
+                        <small class="text-muted">VM Messages</small>
+                    </div>
                 </div>
             </div>
         </div>
@@ -208,9 +271,11 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
 let bsHealthChart = null;
-let sensorLossChart = null;
 let snrRssiChart = null;
 let signalDistChart = null;
+let messageChart = null;
+let connectionsChart = null;
+let operationsChart = null;
 
 function formatUptime(seconds) {
     const days = Math.floor(seconds / 86400);
@@ -233,45 +298,212 @@ function formatTime(timestamp) {
     return date.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
 }
 
+function formatBytes(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+function initTrafficCharts() {
+    const ctxMessage = document.getElementById('messageChart').getContext('2d');
+    messageChart = new Chart(ctxMessage, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Messages In',
+                data: [],
+                borderColor: '#28a745',
+                backgroundColor: 'rgba(40, 167, 69, 0.1)',
+                tension: 0.4,
+                fill: true
+            }, {
+                label: 'Messages Out',
+                data: [],
+                borderColor: '#007bff',
+                backgroundColor: 'rgba(0, 123, 255, 0.1)',
+                tension: 0.4,
+                fill: true
+            }, {
+                label: 'Dropped',
+                data: [],
+                borderColor: '#ffc107',
+                backgroundColor: 'rgba(255, 193, 7, 0.1)',
+                tension: 0.4,
+                fill: true
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: { y: { beginAtZero: true } },
+            plugins: { legend: { position: 'bottom' } }
+        }
+    });
+
+    const ctxOps = document.getElementById('operationsChart').getContext('2d');
+    operationsChart = new Chart(ctxOps, {
+        type: 'doughnut',
+        data: {
+            labels: ['Attach', 'Detach', 'Status', 'VM'],
+            datasets: [{
+                data: [0, 0, 0, 0],
+                backgroundColor: ['#28a745', '#dc3545', '#17a2b8', '#ff8c00']
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: { legend: { position: 'bottom' } }
+        }
+    });
+
+    const ctxConn = document.getElementById('connectionsChart').getContext('2d');
+    connectionsChart = new Chart(ctxConn, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Registered Sensors',
+                data: [],
+                borderColor: '#28a745',
+                backgroundColor: 'rgba(40, 167, 69, 0.1)',
+                tension: 0.4,
+                fill: false,
+                yAxisID: 'y'
+            }, {
+                label: 'Active Sensors (this hour)',
+                data: [],
+                borderColor: '#17a2b8',
+                backgroundColor: 'rgba(23, 162, 184, 0.1)',
+                tension: 0.4,
+                fill: false,
+                yAxisID: 'y'
+            }, {
+                label: 'Base Stations',
+                data: [],
+                borderColor: '#ff8c00',
+                backgroundColor: 'rgba(255, 140, 0, 0.1)',
+                tension: 0.4,
+                fill: false,
+                yAxisID: 'y1'
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    type: 'linear', display: true, position: 'left', beginAtZero: true,
+                    title: { display: true, text: 'Sensors' }
+                },
+                y1: {
+                    type: 'linear', display: true, position: 'right', beginAtZero: true,
+                    title: { display: true, text: 'Base Stations' },
+                    grid: { drawOnChartArea: false }
+                }
+            },
+            plugins: { legend: { position: 'bottom' } }
+        }
+    });
+}
+
 function loadHealth() {
     fetch('/api/health')
         .then(r => r.json())
         .then(data => {
             if (!data.success) return;
-            
+
             document.getElementById('systemUptime').textContent = formatUptime(data.system.uptime);
-            document.getElementById('packetsReceived').textContent = data.system.total_packets_received.toLocaleString();
-            document.getElementById('packetsLost').textContent = data.system.total_packets_lost.toLocaleString();
-            document.getElementById('avgSnr').textContent = data.system.avg_snr + ' dB';
-            document.getElementById('avgRssi').textContent = data.system.avg_rssi + ' dBm';
-            
+
             const lossRate = data.system.overall_packet_loss_rate;
             const lossEl = document.getElementById('overallLossRate');
             lossEl.textContent = lossRate + '%';
             lossEl.className = lossRate < 1 ? 'text-success' : lossRate < 5 ? 'text-warning' : 'text-danger';
-            
+
             updateSnrRssiChart(data.snr_rssi_history);
             updateSignalDistChart(data.signal_distribution);
             updateBsHealthChart(data.base_stations);
-            updateSensorLossChart(data.sensors.slice(0, 10));
             updateBsTable(data.base_stations);
             updateSensorTable(data.sensors.slice(0, 10));
         });
 }
 
+function loadTraffic() {
+    fetch('/api/traffic/metrics')
+        .then(r => r.json())
+        .then(data => {
+            if (!data.success) return;
+            const m = data.metrics;
+
+            document.getElementById('messages-in').textContent = m.messages_in.toLocaleString();
+            document.getElementById('messages-out').textContent = m.messages_out.toLocaleString();
+            document.getElementById('messages-dropped').textContent = m.messages_dropped.toLocaleString();
+            document.getElementById('connections').textContent = data.connections || 0;
+
+            const uptime = Math.floor(Date.now() / 1000 - m.start_time);
+            const uptimeMinutes = uptime / 60;
+            if (uptimeMinutes > 0) {
+                document.getElementById('messages-in-rate').textContent = (m.messages_in / uptimeMinutes).toFixed(1) + '/min';
+                document.getElementById('messages-out-rate').textContent = (m.messages_out / uptimeMinutes).toFixed(1) + '/min';
+            }
+
+            if (m.messages_in > 0) {
+                document.getElementById('dedup-rate').textContent = ((m.messages_dropped / m.messages_in) * 100).toFixed(1) + '% filtered';
+            }
+
+            document.getElementById('bytes-in').textContent = formatBytes(m.bytes_in);
+            document.getElementById('bytes-out').textContent = formatBytes(m.bytes_out);
+            document.getElementById('attach-requests').textContent = m.attach_requests.toLocaleString();
+            document.getElementById('detach-requests').textContent = m.detach_requests.toLocaleString();
+            document.getElementById('status-requests').textContent = m.status_requests.toLocaleString();
+            document.getElementById('vm-messages').textContent = m.vm_messages.toLocaleString();
+
+            if (data.dedup_stats) {
+                document.getElementById('dedup-total').textContent = data.dedup_stats.total_messages.toLocaleString();
+                document.getElementById('dedup-filtered').textContent = data.dedup_stats.duplicate_messages.toLocaleString();
+                document.getElementById('dedup-published').textContent = data.dedup_stats.published_messages.toLocaleString();
+            }
+
+            if (operationsChart) {
+                operationsChart.data.datasets[0].data = [
+                    m.attach_requests || 0, m.detach_requests || 0,
+                    m.status_requests || 0, m.vm_messages || 0
+                ];
+                operationsChart.update('none');
+            }
+
+            if (data.history && data.history.length > 0) {
+                updateTrafficCharts(data.history);
+            }
+        })
+        .catch(error => console.error('Error fetching traffic:', error));
+}
+
+function updateTrafficCharts(history) {
+    if (!messageChart || !connectionsChart) return;
+    const labels = history.map((_, i) => `-${history.length - i}m`);
+
+    messageChart.data.labels = labels;
+    messageChart.data.datasets[0].data = history.map(h => h.messages_in || 0);
+    messageChart.data.datasets[1].data = history.map(h => h.messages_out || 0);
+    messageChart.data.datasets[2].data = history.map(h => h.messages_dropped || 0);
+    messageChart.update('none');
+
+    connectionsChart.data.labels = labels;
+    connectionsChart.data.datasets[0].data = history.map(h => h.sensors_registered || h.sensors || 0);
+    connectionsChart.data.datasets[1].data = history.map(h => h.sensors_active || 0);
+    connectionsChart.data.datasets[2].data = history.map(h => h.base_stations || 0);
+    connectionsChart.update('none');
+}
+
 function updateSignalDistChart(dist) {
     const ctx = document.getElementById('signalDistChart').getContext('2d');
-    
     if (signalDistChart) signalDistChart.destroy();
-    
-    const strongCount = (dist.excellent || 0) + (dist.good || 0);
-    const fairCount = dist.fair || 0;
-    const needAttention = (dist.poor || 0) + (dist.critical || 0);
-    
-    document.getElementById('strongSignalCount').textContent = strongCount;
-    document.getElementById('fairSignalCount').textContent = fairCount;
-    document.getElementById('needAttentionCount').textContent = needAttention;
-    
+
+    document.getElementById('strongSignalCount').textContent = (dist.excellent || 0) + (dist.good || 0);
+    document.getElementById('fairSignalCount').textContent = dist.fair || 0;
+    document.getElementById('needAttentionCount').textContent = (dist.poor || 0) + (dist.critical || 0);
+
     signalDistChart = new Chart(ctx, {
         type: 'bar',
         data: {
@@ -286,58 +518,39 @@ function updateSignalDistChart(dist) {
             indexAxis: 'y',
             responsive: true,
             plugins: { legend: { display: false } },
-            scales: {
-                x: { beginAtZero: true, ticks: { stepSize: 1 } }
-            }
+            scales: { x: { beginAtZero: true, ticks: { stepSize: 1 } } }
         }
     });
 }
 
 function updateSnrRssiChart(history) {
     const ctx = document.getElementById('snrRssiChart').getContext('2d');
-    const labels = history.map(h => formatTime(h.timestamp));
-    
     if (snrRssiChart) snrRssiChart.destroy();
-    
+
     snrRssiChart = new Chart(ctx, {
         type: 'line',
         data: {
-            labels: labels,
+            labels: history.map(h => formatTime(h.timestamp)),
             datasets: [{
                 label: 'Avg SNR (dB)',
                 data: history.map(h => h.avg_snr),
                 borderColor: '#17a2b8',
                 backgroundColor: 'rgba(23, 162, 184, 0.1)',
-                fill: true,
-                tension: 0.3,
-                yAxisID: 'y'
+                fill: true, tension: 0.3, yAxisID: 'y'
             }, {
                 label: 'Avg RSSI (dBm)',
                 data: history.map(h => h.avg_rssi),
                 borderColor: '#6c757d',
                 backgroundColor: 'rgba(108, 117, 125, 0.1)',
-                fill: true,
-                tension: 0.3,
-                yAxisID: 'y1'
+                fill: true, tension: 0.3, yAxisID: 'y1'
             }]
         },
         options: {
             responsive: true,
             interaction: { mode: 'index', intersect: false },
             scales: {
-                y: {
-                    type: 'linear',
-                    display: true,
-                    position: 'left',
-                    title: { display: true, text: 'SNR (dB)' }
-                },
-                y1: {
-                    type: 'linear',
-                    display: true,
-                    position: 'right',
-                    title: { display: true, text: 'RSSI (dBm)' },
-                    grid: { drawOnChartArea: false }
-                }
+                y: { type: 'linear', display: true, position: 'left', title: { display: true, text: 'SNR (dB)' } },
+                y1: { type: 'linear', display: true, position: 'right', title: { display: true, text: 'RSSI (dBm)' }, grid: { drawOnChartArea: false } }
             }
         }
     });
@@ -345,61 +558,24 @@ function updateSnrRssiChart(history) {
 
 function updateBsHealthChart(baseStations) {
     const ctx = document.getElementById('bsHealthChart').getContext('2d');
-    const labels = baseStations.map(bs => bs.name || bs.eui.substring(0, 8));
-    
     if (bsHealthChart) bsHealthChart.destroy();
-    
+
     bsHealthChart = new Chart(ctx, {
         type: 'bar',
         data: {
-            labels: labels,
-            datasets: [{
-                label: 'CPU %',
-                data: baseStations.map(bs => bs.cpu),
-                backgroundColor: '#ff8c00'
-            }, {
-                label: 'Memory %',
-                data: baseStations.map(bs => bs.memory),
-                backgroundColor: '#17a2b8'
-            }, {
-                label: 'Duty Cycle %',
-                data: baseStations.map(bs => bs.duty_cycle),
-                backgroundColor: '#6c757d'
-            }]
+            labels: baseStations.map(bs => bs.name || bs.eui.substring(0, 8)),
+            datasets: [
+                { label: 'CPU %', data: baseStations.map(bs => bs.cpu), backgroundColor: '#ff8c00' },
+                { label: 'Memory %', data: baseStations.map(bs => bs.memory), backgroundColor: '#17a2b8' },
+                { label: 'Duty Cycle %', data: baseStations.map(bs => bs.duty_cycle), backgroundColor: '#6c757d' }
+            ]
         },
-        options: {
-            responsive: true,
-            scales: { y: { beginAtZero: true, max: 100 } }
-        }
-    });
-}
-
-function updateSensorLossChart(sensors) {
-    const ctx = document.getElementById('sensorLossChart').getContext('2d');
-    const labels = sensors.map(s => s.eui.substring(0, 8));
-    
-    if (sensorLossChart) sensorLossChart.destroy();
-    
-    sensorLossChart = new Chart(ctx, {
-        type: 'bar',
-        data: {
-            labels: labels,
-            datasets: [{
-                label: 'Packet Loss %',
-                data: sensors.map(s => s.packet_loss_rate),
-                backgroundColor: sensors.map(s => getLossColor(s.packet_loss_rate))
-            }]
-        },
-        options: {
-            responsive: true,
-            scales: { y: { beginAtZero: true } }
-        }
+        options: { responsive: true, scales: { y: { beginAtZero: true, max: 100 } } }
     });
 }
 
 function updateBsTable(baseStations) {
-    const table = document.getElementById('bsTable');
-    table.innerHTML = baseStations.map(bs => `
+    document.getElementById('bsTable').innerHTML = baseStations.map(bs => `
         <tr>
             <td>${bs.name || bs.eui.substring(0, 12)}</td>
             <td>${bs.cpu.toFixed(1)}%</td>
@@ -411,8 +587,7 @@ function updateBsTable(baseStations) {
 }
 
 function updateSensorTable(sensors) {
-    const table = document.getElementById('sensorTable');
-    table.innerHTML = sensors.map(s => `
+    document.getElementById('sensorTable').innerHTML = sensors.map(s => `
         <tr>
             <td><code style="font-size: 0.85em;">${s.eui}</code></td>
             <td>${s.packets_received}</td>
@@ -424,13 +599,40 @@ function updateSensorTable(sensors) {
     `).join('');
 }
 
-function refreshHealth() {
+function resetMetrics() {
+    if (confirm('Are you sure you want to reset all traffic metrics?')) {
+        fetch('/api/traffic/reset', { method: 'POST' })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    showAlert('success', 'Traffic metrics reset successfully');
+                    refreshAll();
+                } else {
+                    showAlert('danger', data.message || 'Failed to reset metrics');
+                }
+            })
+            .catch(error => showAlert('danger', 'Error: ' + error.message));
+    }
+}
+
+function showAlert(type, message) {
+    const container = document.getElementById('alert-container');
+    const alert = document.createElement('div');
+    alert.className = `alert alert-${type} alert-dismissible fade show`;
+    alert.innerHTML = `${message}<button type="button" class="btn-close" data-bs-dismiss="alert"></button>`;
+    container.appendChild(alert);
+    setTimeout(() => alert.remove(), 5000);
+}
+
+function refreshAll() {
     loadHealth();
+    loadTraffic();
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    loadHealth();
-    setInterval(loadHealth, 10000);
+    initTrafficCharts();
+    refreshAll();
+    setInterval(refreshAll, 10000);
 });
 </script>
 {% endblock %}

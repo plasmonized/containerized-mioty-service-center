@@ -42,14 +42,14 @@
                         <a class="nav-link" href="{{ url_for('sensors') }}">Sensors</a>
                     </li>
                     {% endif %}
+                    {% if 'oms' in visible_tabs %}
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('oms') }}">OMS</a>
+                    </li>
+                    {% endif %}
                     {% if 'base_stations' in visible_tabs %}
                     <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('base_stations') }}">Base Stations</a>
-                    </li>
-                    {% endif %}
-                    {% if 'config' in visible_tabs %}
-                    <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('config') }}">Configuration</a>
                     </li>
                     {% endif %}
                     {% if 'certificates' in visible_tabs %}
@@ -57,29 +57,24 @@
                         <a class="nav-link" href="{{ url_for('certificates') }}">Certificates</a>
                     </li>
                     {% endif %}
-                    {% if 'logs' in visible_tabs %}
+                    {% if 'health' in visible_tabs or 'traffic' in visible_tabs %}
                     <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('logs') }}">Logs</a>
-                    </li>
-                    {% endif %}
-                    {% if 'traffic' in visible_tabs %}
-                    <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('traffic') }}">Traffic</a>
-                    </li>
-                    {% endif %}
-                    {% if 'oms' in visible_tabs %}
-                    <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('oms') }}">OMS</a>
-                    </li>
-                    {% endif %}
-                    {% if 'health' in visible_tabs %}
-                    <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('health') }}">Health</a>
+                        <a class="nav-link" href="{{ url_for('health') }}">Traffic</a>
                     </li>
                     {% endif %}
                     {% if 'network' in visible_tabs or 'coverage' in visible_tabs %}
                     <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('network') }}">Network</a>
+                    </li>
+                    {% endif %}
+                    {% if 'config' in visible_tabs %}
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('config') }}">Configuration</a>
+                    </li>
+                    {% endif %}
+                    {% if 'logs' in visible_tabs %}
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('logs') }}">Logs</a>
                     </li>
                     {% endif %}
                 </ul>

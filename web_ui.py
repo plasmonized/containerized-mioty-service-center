@@ -1137,7 +1137,7 @@ def logs():
 @app.route('/traffic')
 @login_required
 def traffic():
-    return render_template('traffic.html')
+    return redirect(url_for('health'))
 
 @app.route('/oms')
 @login_required

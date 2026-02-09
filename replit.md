@@ -54,6 +54,7 @@ JSON-based sensor configuration with support for:
 
 ## Recent Changes
 
+- **v1.663 - Unified Base Station & Certificate Management**: Merged Base Stations and Certificates pages into single tabbed interface. Per-BS certificate generation (stored in `certs/bs_{eui}/`), auto-cert onboarding flow with ZIP download, Certificate overview tab with CA management, uptime tracking with horizontal bar chart (Chart.js). Removed standalone Certificates nav tab. 3-failure threshold for BS status requests, skip-attach for already-registered sensors on BS reconnect.
 - **v1.660 - Robust wMBUS Frame Parser**: Automatic wMBUS frame-start detection by scanning for valid C-field (0x44/0x46/0x48). Handles BSSCI/VM wrapper bytes that some base stations prepend. Fixes incorrect manufacturer/device type parsing for certain meter telegrams.
 - **OMS/Wireless M-Bus Meter Support**: Full EN 13757 compliant wMBUS frame parsing with 120+ manufacturer database, automatic 3-letter IEC code decoding, device type mapping, and dedicated OMS management page. Meters publish to MQTT under `ep/oms_{manufacturer}_{serial}/ul` with unified payload format including decoded OMS metadata block.
 - **Dashboard Redesign**: Custom SVG icons (base station tower, sensor with radio waves), clickable cards, visual health indicators, network topology mini-preview. Orange/white color scheme matching mioty branding.

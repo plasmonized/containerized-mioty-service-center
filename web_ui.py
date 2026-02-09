@@ -1288,7 +1288,7 @@ def network():
 @app.route('/coverage')
 @login_required
 def coverage():
-    return render_template('coverage.html')
+    return redirect(url_for('network'))
 
 @app.route('/api/coverage/topology')
 @login_required

@@ -77,14 +77,9 @@
                         <a class="nav-link" href="{{ url_for('health') }}">Health</a>
                     </li>
                     {% endif %}
-                    {% if 'network' in visible_tabs %}
+                    {% if 'network' in visible_tabs or 'coverage' in visible_tabs %}
                     <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('network') }}">Network</a>
-                    </li>
-                    {% endif %}
-                    {% if 'coverage' in visible_tabs %}
-                    <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('coverage') }}">Coverage</a>
                     </li>
                     {% endif %}
                 </ul>

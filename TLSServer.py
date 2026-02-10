@@ -141,9 +141,11 @@ class TLSServer:
         logger.info(f"   mqtt_in_queue ID: {id(self.mqtt_in_queue)}")
 
     def _get_next_op_id(self, writer: asyncio.streams.StreamWriter) -> int:
-        """Get the next sequential operation ID for a specific base station connection."""
-        op_id = self.bs_op_ids.get(writer, 0)
-        self.bs_op_ids[writer] = op_id + 1
+        """Get the next sequential operation ID for a specific base station connection.
+        SC-initiated operations use negative opIds (BSSCI convention:
+        BS uses positive/0, SC uses negative)."""
+        op_id = self.bs_op_ids.get(writer, -1)
+        self.bs_op_ids[writer] = op_id - 1
         return op_id
 
     def _get_local_time(self) -> str:
@@ -837,7 +839,7 @@ class TLSServer:
                                 self.connecting_base_stations.pop(old_writer, None)
                             
                             self.connected_base_stations[writer] = bs_eui
-                            self.bs_op_ids[writer] = 0
+                            self.bs_op_ids[writer] = -1
                             connection_time = asyncio.get_event_loop().time() - connection_start_time
 
                             logger.info(f"✅ BSSCI CONNECTION ESTABLISHED with base station {bs_eui}")

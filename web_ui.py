@@ -3,18 +3,101 @@ import io
 import json
 import logging
 import os
+import re
 import subprocess
 import shutil
 import threading
 import time
+import tempfile
+import zipfile
 from datetime import datetime, timezone, timedelta
-from flask import Flask, render_template, request, jsonify, redirect, url_for, Response, session
+from flask import Flask, render_template, request, jsonify, redirect, url_for, Response, session, send_file
 from functools import wraps
 from typing import List, Dict, Any
 import bssci_config
 
 # Global TLS server instance reference
 tls_server_instance = None
+
+# Uptime tracking
+bs_uptime_events = {}
+_last_known_bs_status = {}
+
+def record_bs_event(eui, event_type):
+    eui = eui.lower()
+    if eui not in bs_uptime_events:
+        bs_uptime_events[eui] = []
+    bs_uptime_events[eui].append({
+        "event": event_type,
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    })
+    if len(bs_uptime_events[eui]) > 500:
+        bs_uptime_events[eui] = bs_uptime_events[eui][-500:]
+
+def _track_bs_status_changes(current_statuses):
+    global _last_known_bs_status
+    for eui, status in current_statuses.items():
+        prev = _last_known_bs_status.get(eui)
+        if prev != status:
+            if status == "connected":
+                record_bs_event(eui, "connected")
+            elif prev == "connected" and status != "connected":
+                record_bs_event(eui, "disconnected")
+    _last_known_bs_status = dict(current_statuses)
+
+def _validate_eui(eui):
+    return bool(re.match(r'^[0-9a-f]{16}$', eui.lower()))
+
+def _ensure_ca_exists():
+    if os.path.exists('certs/ca_cert.pem') and os.path.exists('certs/ca_key.pem'):
+        return True
+    os.makedirs('certs', exist_ok=True)
+    result = subprocess.run(['openssl', 'genrsa', '-out', 'certs/ca_key.pem', '2048'],
+                           capture_output=True, text=True, timeout=30)
+    if result.returncode != 0:
+        return False
+    result = subprocess.run(['openssl', 'req', '-new', '-x509', '-key', 'certs/ca_key.pem',
+                            '-out', 'certs/ca_cert.pem', '-days', '365',
+                            '-subj', '/C=US/ST=State/L=City/O=BSSCI/CN=BSSCI-CA'],
+                           capture_output=True, text=True, timeout=30)
+    return result.returncode == 0
+
+def _generate_bs_certificate(eui):
+    eui = eui.lower()
+    if not _validate_eui(eui):
+        return False, "Invalid EUI format"
+    if not _ensure_ca_exists():
+        return False, "Failed to ensure CA exists"
+    bs_cert_dir = os.path.join('certs', f'bs_{eui}')
+    os.makedirs(bs_cert_dir, exist_ok=True)
+    key_path = os.path.join(bs_cert_dir, f'{eui}_key.pem')
+    csr_path = os.path.join(bs_cert_dir, f'{eui}.csr')
+    cert_path = os.path.join(bs_cert_dir, f'{eui}_cert.pem')
+    result = subprocess.run(['openssl', 'genrsa', '-out', key_path, '2048'],
+                           capture_output=True, text=True, timeout=30)
+    if result.returncode != 0:
+        return False, f"Key generation failed: {result.stderr}"
+    result = subprocess.run(['openssl', 'req', '-new', '-key', key_path, '-out', csr_path,
+                            '-subj', f'/C=US/ST=State/L=City/O=BSSCI/CN={eui}'],
+                           capture_output=True, text=True, timeout=30)
+    if result.returncode != 0:
+        return False, f"CSR generation failed: {result.stderr}"
+    result = subprocess.run(['openssl', 'x509', '-req', '-in', csr_path,
+                            '-CA', 'certs/ca_cert.pem', '-CAkey', 'certs/ca_key.pem',
+                            '-CAcreateserial', '-out', cert_path, '-days', '365'],
+                           capture_output=True, text=True, timeout=30)
+    if result.returncode != 0:
+        return False, f"Certificate signing failed: {result.stderr}"
+    if os.path.exists(csr_path):
+        os.remove(csr_path)
+    now = datetime.now(timezone.utc)
+    expires = now + timedelta(days=365)
+    config = load_base_station_config()
+    if eui in config.get("base_stations", {}):
+        config["base_stations"][eui]["cert_generated"] = now.strftime('%Y-%m-%dT%H:%M:%S')
+        config["base_stations"][eui]["cert_expires"] = expires.strftime('%Y-%m-%dT%H:%M:%S')
+        save_base_station_config(config)
+    return True, "Certificate generated successfully"
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'bssci-service-secret-key-change-me')
@@ -1127,7 +1210,7 @@ SECRET_KEY=your-secret-key-here"""
 @login_required
 @permission_required('can_manage_certificates')
 def certificates():
-    return render_template('certificates.html')
+    return redirect(url_for('base_stations'))
 
 @app.route('/logs')
 @login_required
@@ -1549,7 +1632,62 @@ def get_base_stations():
         
         result.sort(key=lambda x: (x["status"] != "connected", x["status"] != "connecting", x["eui"]))
         
+        current_statuses = {bs["eui"]: bs["status"] for bs in result}
+        _track_bs_status_changes(current_statuses)
+        
         return jsonify({"success": True, "base_stations": result})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/base-stations/certificates/status')
+@login_required
+@permission_required('can_manage_certificates')
+def get_bs_certificates_status():
+    """Get cert status for ALL base stations"""
+    try:
+        config = load_base_station_config()
+        bs_config = config.get("base_stations", {})
+        result = []
+        for eui_key, bs_data in bs_config.items():
+            eui_lower = eui_key.lower()
+            bs_cert_dir = os.path.join('certs', f'bs_{eui_lower}')
+            cert_path = os.path.join(bs_cert_dir, f'{eui_lower}_cert.pem')
+            cert_exists = os.path.exists(cert_path)
+            cert_expires = bs_data.get("cert_expires", "")
+            cert_generated = bs_data.get("cert_generated", "")
+            status = "missing"
+            if cert_exists and cert_expires:
+                try:
+                    exp_dt = datetime.strptime(cert_expires, '%Y-%m-%dT%H:%M:%S').replace(tzinfo=timezone.utc)
+                    now = datetime.now(timezone.utc)
+                    if exp_dt < now:
+                        status = "expired"
+                    elif (exp_dt - now).days < 30:
+                        status = "expiring_soon"
+                    else:
+                        status = "valid"
+                except:
+                    status = "valid" if cert_exists else "missing"
+            elif cert_exists:
+                status = "valid"
+            result.append({
+                "eui": eui_lower,
+                "name": bs_data.get("name", ""),
+                "cert_exists": cert_exists,
+                "cert_status": status,
+                "cert_generated": cert_generated,
+                "cert_expires": cert_expires
+            })
+        return jsonify({"success": True, "certificates": result})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/base-stations/uptime')
+@login_required
+def get_bs_uptime():
+    """Get uptime data for all base stations"""
+    try:
+        return jsonify({"success": True, "uptime_events": bs_uptime_events})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
@@ -1573,8 +1711,8 @@ def add_base_station():
         data = request.get_json()
         eui = data.get("eui", "").lower()
         
-        if not eui or len(eui) != 16:
-            return jsonify({"success": False, "error": "Invalid EUI"}), 400
+        if not eui or not _validate_eui(eui):
+            return jsonify({"success": False, "error": "Invalid EUI (must be 16 hex characters)"}), 400
         
         config = load_base_station_config()
         if eui in config.get("base_stations", {}):
@@ -1587,7 +1725,17 @@ def add_base_station():
         }
         save_base_station_config(config)
         
-        return jsonify({"success": True})
+        generate_cert = data.get("generate_cert", True)
+        cert_download_url = None
+        if generate_cert:
+            success, msg = _generate_bs_certificate(eui)
+            if success:
+                cert_download_url = f"/api/base-stations/{eui}/certificate/download"
+        
+        result = {"success": True}
+        if cert_download_url:
+            result["cert_download_url"] = cert_download_url
+        return jsonify(result)
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
@@ -2863,6 +3011,51 @@ def restore_certificates():
         return jsonify({'success': True, 'message': 'Certificates restored successfully from backup'})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)})
+
+@app.route('/api/base-stations/<eui>/certificate/generate', methods=['POST'])
+@login_required
+@permission_required('can_manage_certificates')
+def generate_bs_certificate(eui):
+    """Generate certificate pair for specific base station"""
+    try:
+        eui = eui.lower()
+        if not _validate_eui(eui):
+            return jsonify({'success': False, 'message': 'Invalid EUI format'}), 400
+        config = load_base_station_config()
+        if eui not in config.get("base_stations", {}):
+            return jsonify({'success': False, 'message': 'Base station not found'}), 404
+        success, msg = _generate_bs_certificate(eui)
+        if success:
+            return jsonify({'success': True, 'message': msg, 'download_url': f'/api/base-stations/{eui}/certificate/download'})
+        else:
+            return jsonify({'success': False, 'message': msg}), 500
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/base-stations/<eui>/certificate/download')
+@login_required
+@permission_required('can_manage_certificates')
+def download_bs_certificate(eui):
+    """Download ZIP with CA cert + BS cert + BS key"""
+    try:
+        eui = eui.lower()
+        if not _validate_eui(eui):
+            return jsonify({'success': False, 'message': 'Invalid EUI format'}), 400
+        bs_cert_dir = os.path.join('certs', f'bs_{eui}')
+        cert_path = os.path.join(bs_cert_dir, f'{eui}_cert.pem')
+        key_path = os.path.join(bs_cert_dir, f'{eui}_key.pem')
+        ca_path = 'certs/ca_cert.pem'
+        if not os.path.exists(cert_path) or not os.path.exists(key_path):
+            return jsonify({'success': False, 'message': 'Certificate not found for this base station'}), 404
+        temp_zip = tempfile.NamedTemporaryFile(delete=False, suffix='.zip')
+        with zipfile.ZipFile(temp_zip.name, 'w') as zipf:
+            if os.path.exists(ca_path):
+                zipf.write(ca_path, 'ca_cert.pem')
+            zipf.write(cert_path, f'{eui}_cert.pem')
+            zipf.write(key_path, f'{eui}_key.pem')
+        return send_file(temp_zip.name, as_attachment=True, download_name=f'bs_{eui}_certificates.zip')
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/api/container/restart', methods=['POST'])
 @login_required

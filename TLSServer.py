@@ -22,7 +22,7 @@ class TLSServer:
         mqtt_out_queue: asyncio.Queue[dict[str, str]],
         mqtt_in_queue: asyncio.Queue[dict[str, str]],
     ) -> None:
-        self.opID = -1
+        self.bs_op_ids: Dict[asyncio.streams.StreamWriter, int] = {}
         self.mqtt_out_queue = mqtt_out_queue
         self.mqtt_in_queue = mqtt_in_queue
         self.connected_base_stations: Dict[
@@ -140,6 +140,12 @@ class TLSServer:
         logger.info(f"   mqtt_out_queue ID: {id(self.mqtt_out_queue)}")
         logger.info(f"   mqtt_in_queue ID: {id(self.mqtt_in_queue)}")
 
+    def _get_next_op_id(self, writer: asyncio.streams.StreamWriter) -> int:
+        """Get the next sequential operation ID for a specific base station connection."""
+        op_id = self.bs_op_ids.get(writer, 1)
+        self.bs_op_ids[writer] = op_id + 1
+        return op_id
+
     def _get_local_time(self) -> str:
         """Get current time in configured timezone"""
         try:
@@ -204,11 +210,12 @@ class TLSServer:
     ) -> None:
         bs_eui = self.connected_base_stations.get(writer, "unknown")
         try:
+            op_id = self._get_next_op_id(writer)
             logger.info("📤 BSSCI ATTACH REQUEST INITIATED")
             logger.info("   =====================================")
             logger.info(f"   Sensor EUI: {sensor['eui']}")
             logger.info(f"   Target Base Station: {bs_eui}")
-            logger.info(f"   Operation ID: {self.opID}")
+            logger.info(f"   Operation ID: {op_id}")
             logger.info(f"   Timestamp: {self._get_local_time()}")
 
             # Comprehensive validation with detailed logging
@@ -290,7 +297,7 @@ class TLSServer:
                 }
 
                 # Build and encode the message
-                attach_message = messages.build_attach_request(normalized_sensor, self.opID)
+                attach_message = messages.build_attach_request(normalized_sensor, op_id)
                 logger.debug(f"   📝 Built attach message: {attach_message}")
 
                 msg_pack = encode_message(attach_message)
@@ -305,7 +312,7 @@ class TLSServer:
                 self.traffic_metrics['attach_requests'] += 1
 
                 # Track this attach request for correlation with response
-                self.pending_attach_requests[self.opID] = {
+                self.pending_attach_requests[op_id] = {
                     'sensor_eui': sensor['eui'],
                     'timestamp': asyncio.get_event_loop().time(),
                     'base_station': bs_eui,
@@ -313,12 +320,11 @@ class TLSServer:
                 }
 
                 logger.info(f"✅ BSSCI ATTACH REQUEST TRANSMITTED")
-                logger.info(f"   Operation ID {self.opID} sent to base station {bs_eui}")
+                logger.info(f"   Operation ID {op_id} sent to base station {bs_eui}")
                 logger.info(f"   Tracking request for correlation with response")
                 logger.info(f"   Awaiting response from base station...")
                 logger.info("   =====================================")
 
-                self.opID -= 1
             else:
                 logger.error(f"❌ ATTACH REQUEST VALIDATION FAILED")
                 logger.error(f"   Sensor EUI: {sensor.get('eui', 'unknown')}")
@@ -395,7 +401,8 @@ class TLSServer:
                 return False
             
             # Build and encode the detach message
-            detach_message = messages.build_detach_request(clean_eui, self.opID)
+            op_id = self._get_next_op_id(writer)
+            detach_message = messages.build_detach_request(clean_eui, op_id)
             logger.debug(f"   📝 Built detach message: {detach_message}")
 
             msg_pack = encode_message(detach_message)
@@ -407,7 +414,6 @@ class TLSServer:
             writer.write(full_message)
             await writer.drain()
             self.traffic_metrics['detach_requests'] += 1
-            self.opID -= 1
 
             # Remove from registered sensors
             eui_key = sensor_eui.upper()
@@ -690,13 +696,13 @@ class TLSServer:
                             bs_eui = self.connected_base_stations.get(writer, "unknown")
                             logger.info(f"   📊 Sending status request to {bs_eui}")
 
-                            status_message = messages.build_status_request(self.opID)
+                            op_id = self._get_next_op_id(writer)
+                            status_message = messages.build_status_request(op_id)
                             msg_pack = encode_message(status_message)
                             full_message = IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack
 
                             writer.write(full_message)
                             await writer.drain()
-                            self.opID += 1
                             self.bs_status_failures.pop(writer, None)
 
                         except Exception as e:
@@ -710,6 +716,7 @@ class TLSServer:
                                 if writer in self.connected_base_stations:
                                     self.connected_base_stations.pop(writer)
                                 self.bs_status_failures.pop(writer, None)
+                                self.bs_op_ids.pop(writer, None)
                                 try:
                                     writer.close()
                                 except:
@@ -816,10 +823,12 @@ class TLSServer:
                                 except Exception as e:
                                     logger.debug(f"   Could not close old writer: {e}")
                                 self.connected_base_stations.pop(old_writer, None)
+                                self.bs_op_ids.pop(old_writer, None)
                                 # Also remove from connecting if present there
                                 self.connecting_base_stations.pop(old_writer, None)
                             
                             self.connected_base_stations[writer] = bs_eui
+                            self.bs_op_ids[writer] = 1
                             connection_time = asyncio.get_event_loop().time() - connection_start_time
 
                             logger.info(f"✅ BSSCI CONNECTION ESTABLISHED with base station {bs_eui}")
@@ -1701,6 +1710,7 @@ class TLSServer:
             if writer in self.connecting_base_stations:
                 self.connecting_base_stations.pop(writer)
             self.bs_status_failures.pop(writer, None)
+            self.bs_op_ids.pop(writer, None)
 
     async def process_deduplication_buffer(self) -> None:
         """Processes the deduplication buffer, forwards best messages, and cleans up old entries."""
@@ -2039,8 +2049,7 @@ class TLSServer:
                 logger.warning(f"   ⚠️ Sending to base station {bs_eui} without confirmed VM support")
             
             try:
-                self.opID += 1
-                op_id = self.opID
+                op_id = self._get_next_op_id(writer)
                 
                 self.pending_vm_operations[op_id] = {
                     "operation": "activate",
@@ -2091,8 +2100,7 @@ class TLSServer:
                 logger.warning(f"   ⚠️ Sending to base station {bs_eui} without confirmed VM support")
             
             try:
-                self.opID += 1
-                op_id = self.opID
+                op_id = self._get_next_op_id(writer)
                 
                 self.pending_vm_operations[op_id] = {
                     "operation": "deactivate",
@@ -2143,8 +2151,7 @@ class TLSServer:
                 logger.warning(f"   ⚠️ Sending to base station {bs_eui} without confirmed VM support")
             
             try:
-                self.opID += 1
-                op_id = self.opID
+                op_id = self._get_next_op_id(writer)
                 
                 self.pending_vm_operations[op_id] = {
                     "operation": "status",
@@ -2238,8 +2245,7 @@ class TLSServer:
                 return False
         
         try:
-            self.opID += 1
-            op_id = self.opID
+            op_id = self._get_next_op_id(target_writer)
             
             self.pending_vm_operations[op_id] = {
                 "eui": sensor_eui,

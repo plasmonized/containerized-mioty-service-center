@@ -142,7 +142,7 @@ class TLSServer:
 
     def _get_next_op_id(self, writer: asyncio.streams.StreamWriter) -> int:
         """Get the next sequential operation ID for a specific base station connection."""
-        op_id = self.bs_op_ids.get(writer, 1)
+        op_id = self.bs_op_ids.get(writer, 0)
         self.bs_op_ids[writer] = op_id + 1
         return op_id
 
@@ -359,6 +359,10 @@ class TLSServer:
 
         for i, sensor in enumerate(self.sensor_config, 1):
             try:
+                if writer not in self.connected_base_stations:
+                    logger.warning(f"   ⚠️ Writer no longer in connected base stations - aborting batch attach for {bs_eui}")
+                    break
+
                 eui_upper = sensor['eui'].upper()
                 if eui_upper in self.registered_sensors:
                     reg_info = self.registered_sensors[eui_upper]
@@ -373,6 +377,11 @@ class TLSServer:
 
                 await asyncio.sleep(0.1)
 
+            except (ConnectionResetError, ConnectionError, BrokenPipeError, AttributeError) as e:
+                logger.warning(f"   🔌 Connection lost to {bs_eui} during batch attach - aborting remaining sensors")
+                logger.warning(f"     Last sensor attempted: {sensor.get('eui', 'unknown')}, error: {e}")
+                failed_attachments += len(self.sensor_config) - i
+                break
             except Exception as e:
                 failed_attachments += 1
                 logger.error(f"   ❌ Failed to attach sensor {sensor.get('eui', 'unknown')}: {e}")
@@ -828,7 +837,7 @@ class TLSServer:
                                 self.connecting_base_stations.pop(old_writer, None)
                             
                             self.connected_base_stations[writer] = bs_eui
-                            self.bs_op_ids[writer] = 1
+                            self.bs_op_ids[writer] = 0
                             connection_time = asyncio.get_event_loop().time() - connection_start_time
 
                             logger.info(f"✅ BSSCI CONNECTION ESTABLISHED with base station {bs_eui}")

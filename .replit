@@ -20,42 +20,6 @@ externalPort = 16018
 runButton = "Project"
 
 [[workflows.workflow]]
-name = "Run with Web UI"
-author = 45640243
-mode = "sequential"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python web_main.py"
-
-[[workflows.workflow]]
-name = "Full BSSCI Service"
-author = 45640243
-mode = "sequential"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python main.py"
-
-[[workflows.workflow]]
-name = "Run Web UI"
-author = 45640243
-mode = "sequential"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python web_main.py"
-
-[[workflows.workflow]]
-name = "Simple BSSCI Service"
-author = 45640243
-mode = "sequential"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python simple_main.py"
-
-[[workflows.workflow]]
 name = "BSSCI Service"
 author = 45640243
 mode = "sequential"
@@ -76,31 +40,6 @@ waitForPort = 5000
 
 [workflows.workflow.metadata]
 outputType = "webview"
-
-[[workflows.workflow]]
-name = "Sync BSSCI Service"
-author = 45640243
-mode = "sequential"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "pkill -f \"python.*sync_main.py\" || true"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "pkill -f \"python.*main.py\" || true"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "pkill -f \"python.*web_main.py\" || true"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "sleep 2"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python sync_main.py"
 
 [[workflows.workflow]]
 name = "BSSCI with Web UI"

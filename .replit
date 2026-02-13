@@ -29,19 +29,6 @@ task = "shell.exec"
 args = "python web_main.py"
 
 [[workflows.workflow]]
-name = "BSSCI Service"
-author = "agent"
-mode = "sequential"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python web_main.py"
-waitForPort = 5000
-
-[workflows.workflow.metadata]
-outputType = "webview"
-
-[[workflows.workflow]]
 name = "BSSCI with Web UI"
 author = 45640243
 mode = "sequential"

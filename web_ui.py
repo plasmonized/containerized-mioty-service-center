@@ -1585,6 +1585,7 @@ def get_base_stations():
         connecting_bs = {}
         bs_health = {}
         bs_sensors = {}
+        vm_capable_set = set()
         
         if tls_server_instance:
             status = tls_server_instance.get_base_station_status()
@@ -1596,6 +1597,8 @@ def get_base_stations():
                 connecting_bs[eui] = bs
             if hasattr(tls_server_instance, 'base_station_health'):
                 bs_health = tls_server_instance.base_station_health
+            if hasattr(tls_server_instance, 'vm_capable_base_stations'):
+                vm_capable_set = {e.lower() for e in tls_server_instance.vm_capable_base_stations}
             if hasattr(tls_server_instance, 'sensor_config'):
                 for sensor in tls_server_instance.sensor_config:
                     preferred = sensor.get('preferredDownlinkPath', {})
@@ -1627,6 +1630,7 @@ def get_base_stations():
                 "status": status,
                 "configured_ip": bs_data.get("ip", ""),
                 "health": health,
+                "vm_capable": eui_lower in vm_capable_set,
                 "connected_sensors": bs_sensors.get(eui_lower, 0)
             })
         

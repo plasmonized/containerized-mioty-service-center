@@ -1400,38 +1400,30 @@ class TLSServer:
                         code = message.get("code", -1)
                         bs_eui = self.connected_base_stations.get(writer, "unknown")
                         
-                        if op_id in self.pending_vm_operations:
-                            pending = self.pending_vm_operations.pop(op_id)
-                            mac_type = pending.get("mac_type", 0)
-                            
-                            if code == 0:
-                                logger.info(f"✅ VM ACTIVATE SUCCESS on base station {bs_eui}, macType={mac_type}")
-                                self._add_vm_log("vm.activateRsp received", f"SUCCESS macType={mac_type}", bs_eui)
-                                # Mark base station as VM-capable (confirmed by successful activation)
-                                self.vm_capable_base_stations.add(bs_eui)
-                                logger.info(f"   📡 Base station {bs_eui} confirmed VM-capable")
-                            else:
-                                # Error codes per BSSCI spec - don't remove VM-capability based on activate errors
-                                # The base station may still be VM-capable but macType already active or invalid
-                                logger.warning(f"❌ VM ACTIVATE response code={code} on base station {bs_eui}, macType={mac_type}")
-                                self._add_vm_log("vm.activateRsp received", f"code={code} macType={mac_type}", bs_eui)
-                            
-                            if self.mqtt_out_queue:
-                                await self.mqtt_out_queue.put({
-                                    "topic": f"bs/{bs_eui}/vm/activate",
-                                    "payload": json.dumps({
-                                        "action": "vm_activate_response",
-                                        "bs_eui": bs_eui,
-                                        "mac_type": mac_type,
-                                        "success": code == 0,
-                                        "code": code,
-                                        "timestamp": asyncio.get_event_loop().time()
-                                    })
-                                })
+                        pending = self.pending_vm_operations.pop(op_id, None)
+                        mac_type = pending.get("mac_type", 0) if pending else 0
+                        
+                        if code == 0:
+                            logger.info(f"✅ VM ACTIVATE SUCCESS on base station {bs_eui}, macType={mac_type}")
+                            self._add_vm_log("vm.activateRsp received", f"SUCCESS macType={mac_type}", bs_eui)
+                            self.vm_capable_base_stations.add(bs_eui)
+                            logger.info(f"   📡 Base station {bs_eui} confirmed VM-capable")
                         else:
-                            # opId not found - still log response
-                            logger.warning(f"⚠️ VM ACTIVATE response with unknown opId={op_id}, code={code}, bs={bs_eui}")
-                            self._add_vm_log("vm.activateRsp received", f"unknown opId, code={code}", bs_eui)
+                            logger.warning(f"❌ VM ACTIVATE response code={code} on base station {bs_eui}, macType={mac_type}")
+                            self._add_vm_log("vm.activateRsp received", f"code={code} macType={mac_type}", bs_eui)
+                        
+                        if self.mqtt_out_queue:
+                            await self.mqtt_out_queue.put({
+                                "topic": f"bs/{bs_eui}/vm/activate",
+                                "payload": json.dumps({
+                                    "action": "vm_activate_response",
+                                    "bs_eui": bs_eui,
+                                    "mac_type": mac_type,
+                                    "success": code == 0,
+                                    "code": code,
+                                    "timestamp": asyncio.get_event_loop().time()
+                                })
+                            })
                     
                     elif msg_type in ("vm.activateCmp", "vmActCmp"):
                         op_id = message.get("opId", "unknown")
@@ -1444,68 +1436,62 @@ class TLSServer:
                         code = message.get("code", -1)
                         bs_eui = self.connected_base_stations.get(writer, "unknown")
                         
-                        if op_id in self.pending_vm_operations:
-                            pending = self.pending_vm_operations.pop(op_id)
-                            mac_type = pending.get("mac_type", 0)
-                            
-                            if code == 0:
-                                logger.info(f"✅ VM DEACTIVATE SUCCESS on base station {bs_eui}, macType={mac_type}")
-                                self._add_vm_log("vm.deactivateRsp received", f"SUCCESS macType={mac_type}", bs_eui)
-                            else:
-                                logger.warning(f"❌ VM DEACTIVATE response code={code} on base station {bs_eui}, macType={mac_type}")
-                                self._add_vm_log("vm.deactivateRsp received", f"code={code} macType={mac_type}", bs_eui)
-                            
-                            if self.mqtt_out_queue:
-                                await self.mqtt_out_queue.put({
-                                    "topic": f"bs/{bs_eui}/vm/deactivate",
-                                    "payload": json.dumps({
-                                        "action": "vm_deactivate_response",
-                                        "bs_eui": bs_eui,
-                                        "mac_type": mac_type,
-                                        "success": code == 0,
-                                        "code": code,
-                                        "timestamp": asyncio.get_event_loop().time()
-                                    })
-                                })
+                        pending = self.pending_vm_operations.pop(op_id, None)
+                        mac_type = pending.get("mac_type", 0) if pending else 0
+                        
+                        if code == 0:
+                            logger.info(f"✅ VM DEACTIVATE SUCCESS on base station {bs_eui}, macType={mac_type}")
+                            self._add_vm_log("vm.deactivateRsp received", f"SUCCESS macType={mac_type}", bs_eui)
                         else:
-                            logger.warning(f"⚠️ VM DEACTIVATE response with unknown opId={op_id}, code={code}, bs={bs_eui}")
-                            self._add_vm_log("vm.deactivateRsp received", f"unknown opId, code={code}", bs_eui)
+                            logger.warning(f"❌ VM DEACTIVATE response code={code} on base station {bs_eui}, macType={mac_type}")
+                            self._add_vm_log("vm.deactivateRsp received", f"code={code} macType={mac_type}", bs_eui)
+                        
+                        if self.mqtt_out_queue:
+                            await self.mqtt_out_queue.put({
+                                "topic": f"bs/{bs_eui}/vm/deactivate",
+                                "payload": json.dumps({
+                                    "action": "vm_deactivate_response",
+                                    "bs_eui": bs_eui,
+                                    "mac_type": mac_type,
+                                    "success": code == 0,
+                                    "code": code,
+                                    "timestamp": asyncio.get_event_loop().time()
+                                })
+                            })
                     
                     elif msg_type == "vm.statusRsp":
                         op_id = message.get("opId", "unknown")
                         mac_types = message.get("macTypes", [])
+                        bs_eui = self.connected_base_stations.get(writer, "unknown")
                         
-                        if op_id in self.pending_vm_operations:
-                            pending = self.pending_vm_operations.pop(op_id)
-                            bs_eui = pending.get("bs_eui", self.connected_base_stations.get(writer, "unknown"))
-                            
-                            # Base station responded to VM status - mark as VM-capable
-                            self.vm_capable_base_stations.add(bs_eui)
-                            
-                            logger.info(f"═══════════════════════════════════════════════════════════")
-                            logger.info(f"📊 VM STATUS RESPONSE from base station {bs_eui}")
-                            logger.info(f"   Operation ID: {op_id}")
-                            logger.info(f"   📡 Base station {bs_eui} marked as VM-capable")
-                            if mac_types:
-                                logger.info(f"   Active MAC Types: {mac_types}")
-                                for mac_type in mac_types:
-                                    logger.info(f"      - MAC Type {mac_type}")
-                                self._add_vm_log("vm.statusRsp received", f"Active MAC Types: {mac_types}", bs_eui)
-                            else:
-                                logger.info(f"   No MAC Types active (VM reception not enabled)")
-                                self._add_vm_log("vm.statusRsp received", "No MAC Types active", bs_eui)
-                            logger.info(f"═══════════════════════════════════════════════════════════")
-                            
-                            if self.mqtt_out_queue:
-                                await self.mqtt_out_queue.put({
-                                    "topic": f"bs/{bs_eui}/vm/status",
-                                    "payload": json.dumps({
-                                        "action": "vm_status_response",
-                                        "bs_eui": bs_eui,
-                                        "mac_types": mac_types,
-                                        "timestamp": asyncio.get_event_loop().time()
-                                    })
+                        self.pending_vm_operations.pop(op_id, None)
+                        
+                        self.vm_capable_base_stations.add(bs_eui)
+                        
+                        logger.info(f"═══════════════════════════════════════════════════════════")
+                        logger.info(f"📊 VM STATUS RESPONSE from base station {bs_eui}")
+                        logger.info(f"   Operation ID: {op_id}")
+                        logger.info(f"   📡 Base station {bs_eui} marked as VM-capable")
+                        if mac_types:
+                            logger.info(f"   Active MAC Types: {mac_types}")
+                            for mac_type in mac_types:
+                                logger.info(f"      - MAC Type {mac_type}")
+                            self._add_vm_log("vm.statusRsp received", f"Active MAC Types: {mac_types}", bs_eui)
+                        else:
+                            logger.info(f"   No MAC Types active (VM reception not enabled)")
+                            self._add_vm_log("vm.statusRsp received", "No MAC Types active", bs_eui)
+                        logger.info(f"═══════════════════════════════════════════════════════════")
+                        
+                        if self.mqtt_out_queue:
+                            await self.mqtt_out_queue.put({
+                                "topic": f"bs/{bs_eui}/vm/status",
+                                "payload": json.dumps({
+                                    "action": "vm_status_response",
+                                    "bs_eui": bs_eui,
+                                    "mac_types": mac_types,
+                                    "timestamp": asyncio.get_event_loop().time()
                                 })
+                            })
                     
                     elif msg_type in ("vm.statusCmp", "vmStatusCmp"):
                         op_id = message.get("opId", "unknown")

@@ -2268,10 +2268,15 @@ def perform_update():
                     for dirname in dirs_to_update:
                         src_dir = os.path.join(source_dir, dirname)
                         if os.path.exists(src_dir):
-                            for item in os.listdir(src_dir):
-                                shutil.copy2(os.path.join(src_dir, item), 
-                                           os.path.join(dirname, item))
-                                updated_files.append(f'{dirname}/{item}')
+                            for root, subdirs, files in os.walk(src_dir):
+                                rel_root = os.path.relpath(root, source_dir)
+                                dest_root = os.path.join('.', rel_root)
+                                os.makedirs(dest_root, exist_ok=True)
+                                for item in files:
+                                    src_file = os.path.join(root, item)
+                                    dst_file = os.path.join(dest_root, item)
+                                    shutil.copy2(src_file, dst_file)
+                                    updated_files.append(os.path.join(rel_root, item))
                 
                 os.unlink(tmp_path)
                 shutil.rmtree(extract_dir, ignore_errors=True)

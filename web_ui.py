@@ -2093,8 +2093,19 @@ def parse_version(version_str):
     except:
         return (0,)
 
-def check_for_updates():
-    """Check if updates are available using GitHub API"""
+_update_cache = {
+    'result': None,
+    'timestamp': 0,
+    'ttl': 300
+}
+
+def check_for_updates(force=False):
+    """Check if updates are available using GitHub API (cached for 5 minutes)"""
+    import time as _time
+    now = _time.time()
+    if not force and _update_cache['result'] and (now - _update_cache['timestamp']) < _update_cache['ttl']:
+        return _update_cache['result']
+    
     GITHUB_REPO = "plasmonized/containerized-mioty-Service-Center"
     
     try:
@@ -2164,6 +2175,10 @@ def check_for_updates():
         
         if status_message:
             result['message'] = status_message
+        
+        import time as _time
+        _update_cache['result'] = result
+        _update_cache['timestamp'] = _time.time()
             
         return result
     except Exception as e:
@@ -2322,9 +2337,9 @@ def api_get_version():
 
 @app.route('/api/system/check-updates')
 def api_check_updates():
-    """Check for available updates"""
+    """Check for available updates (forces fresh GitHub check)"""
     try:
-        return jsonify(check_for_updates())
+        return jsonify(check_for_updates(force=True))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

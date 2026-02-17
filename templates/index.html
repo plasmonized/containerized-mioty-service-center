@@ -68,13 +68,6 @@ a.card-link {
     opacity: 0.8;
     margin-top: 0.5rem;
 }
-.eui-list {
-    font-size: 0.7rem;
-    opacity: 0.85;
-    margin-top: 0.5rem;
-    max-height: 60px;
-    overflow-y: auto;
-}
 .health-card {
     border-radius: 12px;
     border: 1px solid #dee2e6;
@@ -232,7 +225,6 @@ a.card-link {
                     </div>
                     <div class="status-value" id="bs-count">0</div>
                     <div class="status-label">Base Stations</div>
-                    <div class="eui-list" id="bs-euis"></div>
                 </div>
             </a>
         </div>
@@ -541,13 +533,6 @@ function updateDashboard() {
             const bsCount = data.base_stations ? data.base_stations.total_connected : 0;
             document.getElementById('bs-count').textContent = bsCount;
             
-            const euiList = document.getElementById('bs-euis');
-            if (data.base_stations && data.base_stations.connected && data.base_stations.connected.length > 0) {
-                euiList.innerHTML = data.base_stations.connected.map(bs => bs.eui.substring(0, 12) + '...').join('<br>');
-            } else {
-                euiList.innerHTML = 'Keine verbunden';
-            }
-            
             let bsHealth = 'inactive';
             let bsHealthText = 'Keine';
             if (bsCount >= 3) { bsHealth = 'excellent'; bsHealthText = bsCount + ' online'; }
@@ -556,27 +541,14 @@ function updateDashboard() {
             document.getElementById('health-bs-value').textContent = bsHealthText;
             
             const totalSensors = data.tls_server ? (data.tls_server.total_sensors || 0) : 0;
-            const registeredSensors = data.tls_server ? (data.tls_server.registered_sensors || 0) : 0;
-            document.getElementById('sensor-count').textContent = registeredSensors;
             document.getElementById('sensor-detail').textContent = totalSensors + ' konfiguriert';
-            
-            let sensorHealth = 'inactive';
-            let sensorHealthText = 'Keine';
-            const sensorRatio = totalSensors > 0 ? registeredSensors / totalSensors : 0;
-            if (sensorRatio >= 0.8) { sensorHealth = 'excellent'; sensorHealthText = Math.round(sensorRatio * 100) + '%'; }
-            else if (sensorRatio >= 0.5) { sensorHealth = 'good'; sensorHealthText = Math.round(sensorRatio * 100) + '%'; }
-            else if (sensorRatio > 0) { sensorHealth = 'warning'; sensorHealthText = Math.round(sensorRatio * 100) + '%'; }
-            document.getElementById('health-sensors').className = 'health-dot ' + sensorHealth;
-            document.getElementById('health-sensors-value').textContent = sensorHealthText;
-            
-            document.getElementById('active-sensors-today').textContent = registeredSensors;
         })
         .catch(error => console.error('Error fetching status:', error));
     
-    fetch('/api/vm/status')
+    fetch('/api/vm/capable')
         .then(response => response.json())
         .then(data => {
-            const vmCapable = data.vm_capable_base_stations ? data.vm_capable_base_stations.length : 0;
+            const vmCapable = data.vm_capable ? data.vm_capable.length : 0;
             const gaugeVm = document.getElementById('gauge-vm');
             gaugeVm.textContent = vmCapable;
             gaugeVm.style.background = vmCapable >= 2 ? '#28a745' : vmCapable >= 1 ? '#ffc107' : '#6c757d';
@@ -590,18 +562,34 @@ function updateDashboard() {
         })
         .catch(error => console.error('Error fetching VM status:', error));
     
-    fetch('/api/traffic/stats')
+    fetch('/api/traffic/metrics')
         .then(response => response.json())
         .then(data => {
-            document.getElementById('total-messages').textContent = data.total_messages || 0;
-            const packetsPerHour = Math.round((data.total_messages || 0) / 24);
+            const totalMessages = data.metrics ? data.metrics.messages_in : 0;
+            document.getElementById('total-messages').textContent = totalMessages;
+            const packetsPerHour = Math.round(totalMessages / Math.max(1, 24));
             const gaugePackets = document.getElementById('gauge-packets');
             gaugePackets.textContent = packetsPerHour;
             gaugePackets.style.background = packetsPerHour > 100 ? '#28a745' : packetsPerHour > 10 ? '#ffc107' : '#6c757d';
+
+            const sensorsActive = data.sensors_active || 0;
+            const sensorsRegistered = data.sensors_registered || 0;
+            document.getElementById('sensor-count').textContent = sensorsRegistered;
+            document.getElementById('active-sensors-today').textContent = sensorsActive;
+
+            const totalSensors = parseInt(document.getElementById('sensor-detail').textContent) || 0;
+            const sensorRatio = totalSensors > 0 ? sensorsActive / totalSensors : 0;
+            let sensorHealth = 'inactive';
+            let sensorHealthText = 'Keine';
+            if (sensorRatio >= 0.8) { sensorHealth = 'excellent'; sensorHealthText = Math.round(sensorRatio * 100) + '%'; }
+            else if (sensorRatio >= 0.5) { sensorHealth = 'good'; sensorHealthText = Math.round(sensorRatio * 100) + '%'; }
+            else if (sensorRatio > 0) { sensorHealth = 'warning'; sensorHealthText = Math.round(sensorRatio * 100) + '%'; }
+            document.getElementById('health-sensors').className = 'health-dot ' + sensorHealth;
+            document.getElementById('health-sensors-value').textContent = sensorHealthText;
         })
         .catch(error => console.error('Error fetching traffic:', error));
     
-    fetch('/api/health/stats')
+    fetch('/api/health')
         .then(response => response.json())
         .then(data => {
             if (data.sensors && data.sensors.length > 0) {

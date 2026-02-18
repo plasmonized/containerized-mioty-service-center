@@ -82,6 +82,13 @@ class TLSServer:
         self.snr_rssi_history: list = []
         self._last_snr_history_update = 0
 
+        # Per-sensor heartbeat tracking for online/offline status
+        # eui -> {avg_interval, last_seen, state, offline_since, warning_active, message_timestamps, last_state_change}
+        self.sensor_heartbeat: Dict[str, Dict[str, Any]] = {}
+        self.HEARTBEAT_OFFLINE_MULTIPLIER = 4
+        self.HEARTBEAT_DEFAULT_INTERVAL = 600
+        self.HEARTBEAT_CHECK_INTERVAL = 30
+
         # Auto-detach variables
         # eui -> timestamp of last message
         self.sensor_last_seen: Dict[str, float] = {}
@@ -128,6 +135,9 @@ class TLSServer:
         # Start auto-detach monitoring if enabled
         if getattr(bssci_config, 'AUTO_DETACH_ENABLED', True):
             asyncio.create_task(self.auto_detach_monitor())
+
+        # Start heartbeat monitor for online/offline tracking
+        asyncio.create_task(self.heartbeat_monitor())
 
         try:
             with open(sensor_config_file, "r") as f:
@@ -1141,6 +1151,8 @@ class TLSServer:
                         
                         # Update network topology (track ALL receiving base stations, before dedup)
                         eui_upper = eui.upper()
+                        current_time = datetime.now(timezone.utc).timestamp()
+                        self._update_sensor_heartbeat(eui_upper, current_time)
                         rssi = message.get('rssi', 0)
                         current_time = asyncio.get_event_loop().time()
                         
@@ -1363,7 +1375,7 @@ class TLSServer:
                         )
                         await writer.drain()
                         # Update last seen timestamp for auto-detach functionality
-                        self.sensor_last_seen[eui.upper()] = asyncio.get_event_loop().time()
+                        self.sensor_last_seen[eui.upper()] = datetime.now(timezone.utc).timestamp()
 
                         # Reset warning flag if sensor becomes active again
                         if eui.upper() in self.sensor_warning_sent:
@@ -1595,7 +1607,7 @@ class TLSServer:
                         meter_id = meter_info['meter_id'] if meter_info else None
                         identifier = eui.upper() if eui else (meter_id or f"vm_{op_id}")
                         if eui:
-                            self.sensor_last_seen[eui.upper()] = asyncio.get_event_loop().time()
+                            self.sensor_last_seen[eui.upper()] = datetime.now(timezone.utc).timestamp()
                         
                         # Increment VM message counter
                         self.traffic_metrics['vm_messages'] += 1
@@ -1791,54 +1803,151 @@ class TLSServer:
                      logger.warning(f"   🧹 Cleaning up old unduplicated message from buffer: {key}")
                      del self.deduplication_buffer[key]
 
+    def _update_sensor_heartbeat(self, eui_upper: str, current_time: float) -> None:
+        """Update heartbeat tracking when a sensor sends data"""
+        if eui_upper not in self.sensor_heartbeat:
+            self.sensor_heartbeat[eui_upper] = {
+                'avg_interval': self.HEARTBEAT_DEFAULT_INTERVAL,
+                'last_seen': current_time,
+                'state': 'online',
+                'offline_since': None,
+                'warning_active': False,
+                'message_timestamps': [current_time],
+                'last_state_change': current_time
+            }
+            return
+
+        hb = self.sensor_heartbeat[eui_upper]
+        was_offline = hb.get('state') == 'offline'
+
+        hb['message_timestamps'].append(current_time)
+        if len(hb['message_timestamps']) > 10:
+            hb['message_timestamps'] = hb['message_timestamps'][-10:]
+
+        timestamps = hb['message_timestamps']
+        if len(timestamps) >= 2:
+            intervals = [timestamps[i] - timestamps[i-1] for i in range(1, len(timestamps))]
+            hb['avg_interval'] = sum(intervals) / len(intervals)
+
+        hb['last_seen'] = current_time
+        hb['state'] = 'online'
+        hb['offline_since'] = None
+
+        if was_offline:
+            hb['warning_active'] = False
+            hb['last_state_change'] = current_time
+            logger.info(f"💚 SENSOR ONLINE: {eui_upper} is back online (avg interval: {hb['avg_interval']:.0f}s)")
+
+    def get_sensor_online_count(self) -> int:
+        return sum(1 for s in self.sensor_heartbeat.values() if s.get('state') == 'online')
+
+    def get_sensor_status_summary(self) -> dict:
+        online = sum(1 for s in self.sensor_heartbeat.values() if s.get('state') == 'online')
+        offline = sum(1 for s in self.sensor_heartbeat.values() if s.get('state') == 'offline')
+        return {'online': online, 'offline': offline, 'total_tracked': online + offline}
+
+    async def heartbeat_monitor(self) -> None:
+        """Monitor sensor heartbeats and mark offline when no data received within expected interval"""
+        logger.info(f"💓 HEARTBEAT MONITOR STARTED (check every {self.HEARTBEAT_CHECK_INTERVAL}s, offline after {self.HEARTBEAT_OFFLINE_MULTIPLIER}x avg interval)")
+
+        try:
+            while True:
+                await asyncio.sleep(self.HEARTBEAT_CHECK_INTERVAL)
+                current_time = datetime.now(timezone.utc).timestamp()
+
+                for eui, hb in list(self.sensor_heartbeat.items()):
+                    if hb.get('state') != 'online':
+                        continue
+
+                    avg_interval = hb.get('avg_interval', self.HEARTBEAT_DEFAULT_INTERVAL)
+                    timeout = max(avg_interval * self.HEARTBEAT_OFFLINE_MULTIPLIER, 120)
+                    time_since_last = current_time - hb.get('last_seen', 0)
+
+                    if time_since_last > timeout:
+                        hb['state'] = 'offline'
+                        hb['offline_since'] = current_time
+                        hb['last_state_change'] = current_time
+                        hb['warning_active'] = True
+
+                        logger.warning(f"🔴 SENSOR OFFLINE: {eui} (no data for {time_since_last:.0f}s, threshold {timeout:.0f}s, avg interval {avg_interval:.0f}s)")
+
+                        if self.mqtt_out_queue:
+                            warning_payload = {
+                                "action": "sensor_offline",
+                                "sensor_eui": eui,
+                                "avg_interval": round(avg_interval, 1),
+                                "last_seen": hb.get('last_seen', 0),
+                                "offline_since": current_time,
+                                "timeout_used": round(timeout, 1),
+                                "timestamp": current_time
+                            }
+                            try:
+                                await self.mqtt_out_queue.put({
+                                    "topic": f"{bssci_config.BASE_TOPIC}warnings/sensor_offline",
+                                    "payload": json.dumps(warning_payload)
+                                })
+                            except Exception as e:
+                                logger.error(f"❌ Failed to send offline MQTT warning for {eui}: {e}")
+
+                for eui_key, sensor_info in list(self.registered_sensors.items()):
+                    if eui_key.endswith('_failure') or not sensor_info.get('registered', False):
+                        continue
+                    eui_upper = eui_key.upper()
+                    if eui_upper not in self.sensor_heartbeat and eui_upper in self.sensor_last_seen:
+                        self.sensor_heartbeat[eui_upper] = {
+                            'avg_interval': self.HEARTBEAT_DEFAULT_INTERVAL,
+                            'last_seen': self.sensor_last_seen[eui_upper],
+                            'state': 'online',
+                            'offline_since': None,
+                            'warning_active': False,
+                            'message_timestamps': [self.sensor_last_seen[eui_upper]],
+                            'last_state_change': self.sensor_last_seen[eui_upper]
+                        }
+
+        except asyncio.CancelledError:
+            logger.info(f"💓 HEARTBEAT MONITOR CANCELLED")
+            raise
+        except Exception as e:
+            logger.error(f"❌ HEARTBEAT MONITOR ERROR: {e}")
+            raise
+
     async def auto_detach_monitor(self) -> None:
-        """Monitor sensors for auto-detach based on inactivity"""
+        """Monitor sensors for auto-detach based on inactivity using heartbeat system"""
         logger.info(f"🕐 AUTO-DETACH MONITOR STARTED")
         logger.info(f"   Auto-detach timeout: {getattr(bssci_config, 'AUTO_DETACH_TIMEOUT', 259200)} seconds ({getattr(bssci_config, 'AUTO_DETACH_TIMEOUT', 259200) / 3600:.1f} hours)")
-        logger.info(f"   Warning timeout: {getattr(bssci_config, 'AUTO_DETACH_WARNING_TIMEOUT', 129600)} seconds ({getattr(bssci_config, 'AUTO_DETACH_WARNING_TIMEOUT', 129600) / 3600:.1f} hours)")
         logger.info(f"   Check interval: {getattr(bssci_config, 'AUTO_DETACH_CHECK_INTERVAL', 3600)} seconds")
 
         try:
             while True:
                 await asyncio.sleep(getattr(bssci_config, 'AUTO_DETACH_CHECK_INTERVAL', 3600))
-                current_time = asyncio.get_event_loop().time()
+                current_time = datetime.now(timezone.utc).timestamp()
 
                 auto_detach_timeout = getattr(bssci_config, 'AUTO_DETACH_TIMEOUT', 259200)
-                warning_timeout = getattr(bssci_config, 'AUTO_DETACH_WARNING_TIMEOUT', 129600)
 
                 sensors_to_detach = []
-                sensors_to_warn = []
 
-                # Check all registered sensors
                 for eui_key, sensor_info in list(self.registered_sensors.items()):
                     if eui_key.endswith('_failure') or not sensor_info.get('registered', False):
                         continue
 
-                    last_seen = self.sensor_last_seen.get(eui_key, sensor_info.get('timestamp', 0))
-                    time_since_last_seen = current_time - last_seen
+                    eui_upper = eui_key.upper()
+                    hb = self.sensor_heartbeat.get(eui_upper, {})
 
-                    # Check for auto-detach
-                    if time_since_last_seen > auto_detach_timeout:
-                        sensors_to_detach.append((eui_key, time_since_last_seen))
+                    if hb.get('state') == 'offline' and hb.get('offline_since'):
+                        offline_duration = current_time - hb['offline_since']
+                        if offline_duration > auto_detach_timeout:
+                            sensors_to_detach.append((eui_key, offline_duration))
+                    elif not hb:
+                        last_seen = self.sensor_last_seen.get(eui_key, sensor_info.get('timestamp', 0))
+                        time_since_last_seen = current_time - last_seen
+                        if time_since_last_seen > auto_detach_timeout:
+                            sensors_to_detach.append((eui_key, time_since_last_seen))
 
-                    # Check for warning (only if not already sent and not scheduled for detach)
-                    elif (time_since_last_seen > warning_timeout and
-                          not self.sensor_warning_sent.get(eui_key, False) and
-                          eui_key not in [s[0] for s in sensors_to_detach]):
-                        sensors_to_warn.append((eui_key, time_since_last_seen))
-
-                # Process warnings
-                for eui_key, inactive_time in sensors_to_warn:
-                    await self.send_inactivity_warning(eui_key, inactive_time, warning_timeout, auto_detach_timeout)
-                    self.sensor_warning_sent[eui_key] = True
-
-                # Process auto-detaches
                 for eui_key, inactive_time in sensors_to_detach:
                     await self.auto_detach_inactive_sensor(eui_key, inactive_time)
 
-                if sensors_to_detach or sensors_to_warn:
+                if sensors_to_detach:
                     logger.info(f"🕐 AUTO-DETACH MONITOR CYCLE COMPLETE")
-                    logger.info(f"   Warnings sent: {len(sensors_to_warn)}")
                     logger.info(f"   Sensors auto-detached: {len(sensors_to_detach)}")
                 elif len(self.registered_sensors) > 0:
                     logger.debug(f"🕐 AUTO-DETACH MONITOR: All {len(self.registered_sensors)} sensors within activity thresholds")
@@ -2288,7 +2397,7 @@ class TLSServer:
                 'messages_out': self.traffic_metrics['messages_out'],
                 'messages_dropped': self.traffic_metrics['messages_dropped'],
                 'sensors_registered': len(self.registered_sensors),
-                'sensors_active': len(self.active_sensors_hourly),
+                'sensors_active': self.get_sensor_online_count(),
                 'base_stations': len(self.connected_base_stations),
                 'oms_meters': len(self.oms_meters)
             })
@@ -2303,7 +2412,8 @@ class TLSServer:
             'history': list(self.traffic_history),
             'connections': len(self.connected_base_stations),
             'sensors_registered': len(self.registered_sensors),
-            'sensors_active': len(self.active_sensors_hourly)
+            'sensors_active': self.get_sensor_online_count(),
+            'sensor_status': self.get_sensor_status_summary()
         }
     
     def reset_traffic_metrics(self) -> None:
@@ -2721,7 +2831,7 @@ class TLSServer:
     def get_sensor_registration_status(self) -> Dict[str, Dict[str, Any]]:
         """Get registration status of all sensors"""
         status = {}
-        current_time = asyncio.get_event_loop().time()
+        current_time = datetime.now(timezone.utc).timestamp()
 
         for sensor in self.sensor_config:
             eui = sensor['eui'].upper()

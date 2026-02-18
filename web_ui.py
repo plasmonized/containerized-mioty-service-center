@@ -776,8 +776,20 @@ def get_sensor_details(eui):
             'snr_history': stats.get('snr_history', [])[-50:],
             'rssi_history': stats.get('rssi_history', [])[-50:],
             'registration': registration,
-            'downlink_path': downlink_path
+            'downlink_path': downlink_path,
+            'heartbeat': {}
         }
+        
+        if tls_server and hasattr(tls_server, 'sensor_heartbeat'):
+            hb = tls_server.sensor_heartbeat.get(eui_upper, {})
+            if hb:
+                response['heartbeat'] = {
+                    'state': hb.get('state', 'unknown'),
+                    'avg_interval': round(hb.get('avg_interval', 0), 1),
+                    'offline_since': hb.get('offline_since'),
+                    'warning_active': hb.get('warning_active', False),
+                    'last_seen': hb.get('last_seen')
+                }
         
         return jsonify(response)
     except Exception as e:
@@ -1282,7 +1294,7 @@ def get_health_stats():
                 result["system"]["uptime"] = int(datetime.now(timezone.utc).timestamp() - start_time)
             
             result["system"]["total_sensors"] = len(tls_server_instance.sensor_config)
-            result["system"]["active_sensors"] = len(tls_server_instance.active_sensors_hourly)
+            result["system"]["active_sensors"] = tls_server_instance.get_sensor_online_count()
             result["system"]["total_base_stations"] = len(tls_server_instance.connected_base_stations) + len(tls_server_instance.connecting_base_stations)
             result["system"]["connected_base_stations"] = len(tls_server_instance.connected_base_stations)
             
@@ -2142,11 +2154,35 @@ def get_commit_log(limit=5):
         return [{'hash': 'error', 'message': f'Unable to get history: {str(e)}'}]
 
 def parse_version(version_str):
-    """Parse version string to comparable tuple"""
+    """Parse version string to comparable tuple.
+    Stable releases sort higher than pre-releases of the same base version.
+    e.g. v1.672 > v1.672-beta1 > v1.671 > v1.671-beta2 > v1.671-beta1
+    Handles suffixes like v1.658a (treated as v1.658 patch) and v1.672-beta1.
+    Returns tuple like (1, 672, 1000, 0) for stable or (1, 672, 0, 1) for beta1"""
     try:
-        v = version_str.lstrip('v').split('-')[0]
-        parts = v.replace('.', ' ').split()
-        return tuple(int(p) for p in parts if p.isdigit())
+        import re
+        v = version_str.lstrip('v')
+        parts = v.split('-', 1)
+        base = parts[0]
+        base_segments = base.replace('.', ' ').split()
+        base_nums = []
+        for seg in base_segments:
+            m = re.match(r'^(\d+)', seg)
+            if m:
+                base_nums.append(int(m.group(1)))
+        base_parts = tuple(base_nums) if base_nums else (0,)
+        has_letter_suffix = bool(re.search(r'[a-zA-Z]', base))
+        if len(parts) > 1:
+            suffix = parts[1].lower()
+            m = re.search(r'(\d+)', suffix)
+            suffix_num = int(m.group(1)) if m else 1
+            return base_parts + (0, suffix_num)
+        elif has_letter_suffix:
+            letter = re.search(r'[a-zA-Z]+', base)
+            letter_val = ord(letter.group(0)[0].lower()) - ord('a') + 1 if letter else 1
+            return base_parts + (500, letter_val)
+        else:
+            return base_parts + (1000, 0)
     except:
         return (0,)
 
@@ -2289,23 +2325,28 @@ def perform_update():
         
         if os.path.exists('.git'):
             try:
-                subprocess.run(['git', 'reset', '--hard', 'HEAD'], capture_output=True, timeout=30)
-                subprocess.run(['git', 'checkout', 'main'], capture_output=True, timeout=30)
-                subprocess.run(['git', 'fetch', '--tags', 'origin'], capture_output=True, text=True, timeout=60)
+                subprocess.run(['git', 'fetch', '--tags', '--force', 'origin'], capture_output=True, text=True, timeout=60)
                 if channel == 'beta':
                     remote, _ = get_remote_version('beta')
                     if remote.startswith('v') and 'unavailable' not in remote:
-                        result = subprocess.run(['git', 'merge', remote, '--ff-only'], 
+                        subprocess.run(['git', 'reset', '--hard', 'HEAD'], capture_output=True, timeout=30)
+                        result = subprocess.run(['git', 'checkout', remote], 
                                               capture_output=True, text=True, timeout=60)
-                        if result.returncode != 0:
-                            result = subprocess.run(['git', 'pull', 'origin', 'main'], 
-                                                  capture_output=True, text=True, timeout=60)
+                        if result.returncode == 0:
+                            return {
+                                'success': True, 
+                                'message': f'Update completed successfully via git (beta: {remote})',
+                                'backup_dir': backup_result['backup_dir'],
+                                'git_output': result.stdout
+                            }
+                        else:
+                            logger.error(f"Git checkout {remote} failed: {result.stderr}")
                     else:
-                        result = subprocess.run(['git', 'pull', 'origin', 'main'], 
-                                              capture_output=True, text=True, timeout=60)
-                else:
-                    result = subprocess.run(['git', 'pull', 'origin', 'main'], 
-                                          capture_output=True, text=True, timeout=60)
+                        logger.warning(f"Beta remote version not usable: {remote}")
+                subprocess.run(['git', 'reset', '--hard', 'HEAD'], capture_output=True, timeout=30)
+                subprocess.run(['git', 'checkout', 'main'], capture_output=True, timeout=30)
+                result = subprocess.run(['git', 'pull', 'origin', 'main'], 
+                                      capture_output=True, text=True, timeout=60)
                 if result.returncode == 0:
                     return {
                         'success': True, 
@@ -2314,7 +2355,7 @@ def perform_update():
                         'git_output': result.stdout
                     }
             except Exception as e:
-                logger.error(f"Git pull failed, trying ZIP download: {e}")
+                logger.error(f"Git update failed, trying ZIP download: {e}")
         
         import urllib.request
         import ssl
@@ -2325,15 +2366,10 @@ def perform_update():
         
         if channel == 'beta':
             try:
-                releases_url = f"https://api.github.com/repos/{GITHUB_REPO}/releases"
-                req = urllib.request.Request(releases_url, headers={'User-Agent': 'BSSCI-Service-Center'})
-                with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
-                    releases = json.loads(response.read().decode())
-                    if releases and len(releases) > 0:
-                        tag_name = releases[0].get('tag_name', '')
-                        if tag_name:
-                            zip_url = f"https://github.com/{GITHUB_REPO}/archive/refs/tags/{tag_name}.zip"
-                            return _download_and_extract_zip(zip_url, ctx, backup_result, f'beta tag {tag_name}')
+                remote, _ = get_remote_version('beta')
+                if remote.startswith('v') and 'unavailable' not in remote:
+                    zip_url = f"https://github.com/{GITHUB_REPO}/archive/refs/tags/{remote}.zip"
+                    return _download_and_extract_zip(zip_url, ctx, backup_result, f'beta tag {remote}')
             except Exception as e:
                 logger.error(f"Beta channel ZIP download failed: {e}")
 
@@ -2580,7 +2616,8 @@ def get_bssci_service_status():
             },
             'total_sensors': total_sensors,
             'registered_sensors': registered_sensors,
-            'pending_requests': 0  # Avoid accessing asyncio objects
+            'pending_requests': 0,
+            'sensor_status': tls_server.get_sensor_status_summary() if hasattr(tls_server, 'get_sensor_status_summary') else {'online': 0, 'offline': 0, 'total_tracked': 0}
         }
         
         return response

@@ -2325,23 +2325,28 @@ def perform_update():
         
         if os.path.exists('.git'):
             try:
-                subprocess.run(['git', 'reset', '--hard', 'HEAD'], capture_output=True, timeout=30)
-                subprocess.run(['git', 'checkout', 'main'], capture_output=True, timeout=30)
-                subprocess.run(['git', 'fetch', '--tags', 'origin'], capture_output=True, text=True, timeout=60)
+                subprocess.run(['git', 'fetch', '--tags', '--force', 'origin'], capture_output=True, text=True, timeout=60)
                 if channel == 'beta':
                     remote, _ = get_remote_version('beta')
                     if remote.startswith('v') and 'unavailable' not in remote:
-                        result = subprocess.run(['git', 'merge', remote, '--ff-only'], 
+                        subprocess.run(['git', 'reset', '--hard', 'HEAD'], capture_output=True, timeout=30)
+                        result = subprocess.run(['git', 'checkout', remote], 
                                               capture_output=True, text=True, timeout=60)
-                        if result.returncode != 0:
-                            result = subprocess.run(['git', 'pull', 'origin', 'main'], 
-                                                  capture_output=True, text=True, timeout=60)
+                        if result.returncode == 0:
+                            return {
+                                'success': True, 
+                                'message': f'Update completed successfully via git (beta: {remote})',
+                                'backup_dir': backup_result['backup_dir'],
+                                'git_output': result.stdout
+                            }
+                        else:
+                            logger.error(f"Git checkout {remote} failed: {result.stderr}")
                     else:
-                        result = subprocess.run(['git', 'pull', 'origin', 'main'], 
-                                              capture_output=True, text=True, timeout=60)
-                else:
-                    result = subprocess.run(['git', 'pull', 'origin', 'main'], 
-                                          capture_output=True, text=True, timeout=60)
+                        logger.warning(f"Beta remote version not usable: {remote}")
+                subprocess.run(['git', 'reset', '--hard', 'HEAD'], capture_output=True, timeout=30)
+                subprocess.run(['git', 'checkout', 'main'], capture_output=True, timeout=30)
+                result = subprocess.run(['git', 'pull', 'origin', 'main'], 
+                                      capture_output=True, text=True, timeout=60)
                 if result.returncode == 0:
                     return {
                         'success': True, 
@@ -2350,7 +2355,7 @@ def perform_update():
                         'git_output': result.stdout
                     }
             except Exception as e:
-                logger.error(f"Git pull failed, trying ZIP download: {e}")
+                logger.error(f"Git update failed, trying ZIP download: {e}")
         
         import urllib.request
         import ssl
@@ -2361,15 +2366,10 @@ def perform_update():
         
         if channel == 'beta':
             try:
-                releases_url = f"https://api.github.com/repos/{GITHUB_REPO}/releases"
-                req = urllib.request.Request(releases_url, headers={'User-Agent': 'BSSCI-Service-Center'})
-                with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
-                    releases = json.loads(response.read().decode())
-                    if releases and len(releases) > 0:
-                        tag_name = releases[0].get('tag_name', '')
-                        if tag_name:
-                            zip_url = f"https://github.com/{GITHUB_REPO}/archive/refs/tags/{tag_name}.zip"
-                            return _download_and_extract_zip(zip_url, ctx, backup_result, f'beta tag {tag_name}')
+                remote, _ = get_remote_version('beta')
+                if remote.startswith('v') and 'unavailable' not in remote:
+                    zip_url = f"https://github.com/{GITHUB_REPO}/archive/refs/tags/{remote}.zip"
+                    return _download_and_extract_zip(zip_url, ctx, backup_result, f'beta tag {remote}')
             except Exception as e:
                 logger.error(f"Beta channel ZIP download failed: {e}")
 

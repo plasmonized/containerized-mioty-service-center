@@ -1985,17 +1985,39 @@ def get_remote_version(channel='stable'):
         
         if channel == 'beta':
             try:
-                releases_url = f"https://api.github.com/repos/{GITHUB_REPO}/releases"
+                best_version = None
+                best_tag = None
+                best_prerelease = False
+
+                releases_url = f"https://api.github.com/repos/{GITHUB_REPO}/releases?per_page=30"
                 req = urllib.request.Request(releases_url, headers={'User-Agent': 'BSSCI-Service-Center'})
                 with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
                     releases = json.loads(response.read().decode())
-                    if releases and len(releases) > 0:
-                        latest = releases[0]
-                        tag_name = latest.get('tag_name', '')
-                        is_prerelease = latest.get('prerelease', False)
-                        if tag_name:
-                            version = tag_name if tag_name.startswith('v') else f"v{tag_name}"
-                            return (version, is_prerelease)
+                    for rel in releases:
+                        tag = rel.get('tag_name', '')
+                        if tag:
+                            ver = parse_version(tag)
+                            if best_version is None or ver > best_version:
+                                best_version = ver
+                                best_tag = tag
+                                best_prerelease = rel.get('prerelease', False)
+
+                tags_url = f"https://api.github.com/repos/{GITHUB_REPO}/tags?per_page=30"
+                req = urllib.request.Request(tags_url, headers={'User-Agent': 'BSSCI-Service-Center'})
+                with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
+                    tags = json.loads(response.read().decode())
+                    for tag_obj in tags:
+                        tag = tag_obj.get('name', '')
+                        if tag:
+                            ver = parse_version(tag)
+                            if best_version is None or ver > best_version:
+                                best_version = ver
+                                best_tag = tag
+                                best_prerelease = 'beta' in tag.lower() or 'rc' in tag.lower() or 'alpha' in tag.lower()
+
+                if best_tag:
+                    version = best_tag if best_tag.startswith('v') else f"v{best_tag}"
+                    return (version, best_prerelease)
             except:
                 pass
         else:

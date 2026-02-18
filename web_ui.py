@@ -2484,37 +2484,44 @@ def get_bssci_service_status():
         # Get base station status safely without asyncio operations
         bs_status = {'total_connected': 0, 'total_connecting': 0, 'connected': [], 'connecting': []}
         try:
-            # Thread-safe access to base station collections
-            connected_count = 0
-            connecting_count = 0
             connected_stations = []
             connecting_stations = []
+            unique_connected_euis = set()
+            unique_connecting_euis = set()
             
             if hasattr(tls_server, 'connected_base_stations'):
                 connected_dict = getattr(tls_server, 'connected_base_stations', {})
-                connected_count = len(connected_dict)
                 for writer, bs_eui in list(connected_dict.items()):
-                    connected_stations.append({
-                        "eui": bs_eui.upper(),
-                        "address": "connected",
-                        "status": "connected"
-                    })
+                    eui_upper = bs_eui.upper()
+                    if eui_upper not in unique_connected_euis:
+                        unique_connected_euis.add(eui_upper)
+                        connected_stations.append({
+                            "eui": eui_upper,
+                            "address": "connected",
+                            "status": "connected"
+                        })
             
             if hasattr(tls_server, 'connecting_base_stations'):
                 connecting_dict = getattr(tls_server, 'connecting_base_stations', {})
-                connecting_count = len(connecting_dict)
                 for writer, bs_eui in list(connecting_dict.items()):
-                    connecting_stations.append({
-                        "eui": bs_eui.upper(),
-                        "address": "connecting", 
-                        "status": "connecting"
-                    })
+                    eui_upper = bs_eui.upper()
+                    if eui_upper not in unique_connecting_euis and eui_upper not in unique_connected_euis:
+                        unique_connecting_euis.add(eui_upper)
+                        connecting_stations.append({
+                            "eui": eui_upper,
+                            "address": "connecting", 
+                            "status": "connecting"
+                        })
+            
+            connected_count = len(unique_connected_euis)
+            connecting_count = len(unique_connecting_euis)
                 
             total_configured_bs = 0
             try:
                 bs_config = load_base_station_config().get("base_stations", {})
-                all_bs = set(bs_config.keys())
-                all_bs.update(bs_eui.upper() for _, bs_eui in list(connected_dict.items()))
+                all_bs = set(k.upper() for k in bs_config.keys())
+                all_bs.update(unique_connected_euis)
+                all_bs.update(unique_connecting_euis)
                 total_configured_bs = len(all_bs)
             except:
                 total_configured_bs = connected_count

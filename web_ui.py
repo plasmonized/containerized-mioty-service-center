@@ -2330,7 +2330,8 @@ def perform_update():
                     remote, _ = get_remote_version('beta')
                     if remote.startswith('v') and 'unavailable' not in remote:
                         subprocess.run(['git', 'reset', '--hard', 'HEAD'], capture_output=True, timeout=30)
-                        result = subprocess.run(['git', 'checkout', remote], 
+                        subprocess.run(['git', 'clean', '-fd'], capture_output=True, timeout=30)
+                        result = subprocess.run(['git', 'checkout', '--force', remote], 
                                               capture_output=True, text=True, timeout=60)
                         if result.returncode == 0:
                             return {
@@ -2340,20 +2341,22 @@ def perform_update():
                                 'git_output': result.stdout
                             }
                         else:
-                            logger.error(f"Git checkout {remote} failed: {result.stderr}")
+                            logger.error(f"Git checkout {remote} failed: {result.stderr}, trying ZIP fallback")
+                            raise Exception(f"Git checkout {remote} failed, using ZIP fallback")
                     else:
                         logger.warning(f"Beta remote version not usable: {remote}")
-                subprocess.run(['git', 'reset', '--hard', 'HEAD'], capture_output=True, timeout=30)
-                subprocess.run(['git', 'checkout', 'main'], capture_output=True, timeout=30)
-                result = subprocess.run(['git', 'pull', 'origin', 'main'], 
-                                      capture_output=True, text=True, timeout=60)
-                if result.returncode == 0:
-                    return {
-                        'success': True, 
-                        'message': f'Update completed successfully via git ({channel} channel)',
-                        'backup_dir': backup_result['backup_dir'],
-                        'git_output': result.stdout
-                    }
+                else:
+                    subprocess.run(['git', 'reset', '--hard', 'HEAD'], capture_output=True, timeout=30)
+                    subprocess.run(['git', 'checkout', 'main'], capture_output=True, timeout=30)
+                    result = subprocess.run(['git', 'pull', 'origin', 'main'], 
+                                          capture_output=True, text=True, timeout=60)
+                    if result.returncode == 0:
+                        return {
+                            'success': True, 
+                            'message': f'Update completed successfully via git ({channel} channel)',
+                            'backup_dir': backup_result['backup_dir'],
+                            'git_output': result.stdout
+                        }
             except Exception as e:
                 logger.error(f"Git update failed, trying ZIP download: {e}")
         

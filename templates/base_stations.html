@@ -322,7 +322,7 @@ function loadBaseStations() {
             ).join('') || '-';
 
             const vmBadge = bs.vm_capable
-                ? '<img src="/static/img/mbus_wireless_logo.png" alt="M-Bus Wireless" title="VM-fähig (Variable MAC)" style="height: 22px; vertical-align: middle;">'
+                ? '<span class="badge bg-success" title="VM-fähig (Variable MAC)"><i class="fas fa-check"></i> VM</span>'
                 : '<span class="text-muted">-</span>';
 
             const cert = certMap[bs.eui];

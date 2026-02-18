@@ -375,7 +375,7 @@ a.card-link {
                         </div>
                         <div class="gauge-item">
                             <div class="gauge-circle" id="gauge-vm" style="background: #6c757d;">0</div>
-                            <div class="gauge-label">VM-fähig</div>
+                            <div class="gauge-label">OMS Meter</div>
                         </div>
                     </div>
                     <hr>
@@ -549,10 +549,6 @@ function updateDashboard() {
         .then(response => response.json())
         .then(data => {
             const vmCapable = data.vm_capable ? data.vm_capable.length : 0;
-            const gaugeVm = document.getElementById('gauge-vm');
-            gaugeVm.textContent = vmCapable;
-            gaugeVm.style.background = vmCapable >= 2 ? '#28a745' : vmCapable >= 1 ? '#ffc107' : '#6c757d';
-            
             let vmHealth = 'inactive';
             let vmHealthText = 'Keine';
             if (vmCapable >= 2) { vmHealth = 'excellent'; vmHealthText = vmCapable + ' BS'; }
@@ -561,6 +557,17 @@ function updateDashboard() {
             document.getElementById('health-vm-value').textContent = vmHealthText;
         })
         .catch(error => console.error('Error fetching VM status:', error));
+    
+    fetch('/api/oms/meters')
+        .then(response => response.json())
+        .then(data => {
+            const meterCount = data.total_meters || 0;
+            const gaugeVm = document.getElementById('gauge-vm');
+            gaugeVm.textContent = meterCount;
+            gaugeVm.style.background = meterCount >= 5 ? '#28a745' : meterCount >= 1 ? '#ffc107' : '#6c757d';
+            
+        })
+        .catch(error => console.error('Error fetching OMS meters:', error));
     
     fetch('/api/traffic/metrics')
         .then(response => response.json())
@@ -573,8 +580,7 @@ function updateDashboard() {
             gaugePackets.style.background = packetsPerHour > 100 ? '#28a745' : packetsPerHour > 10 ? '#ffc107' : '#6c757d';
 
             const sensorsActive = data.sensors_active || 0;
-            const sensorsRegistered = data.sensors_registered || 0;
-            document.getElementById('sensor-count').textContent = sensorsRegistered;
+            document.getElementById('sensor-count').textContent = sensorsActive;
             document.getElementById('active-sensors-today').textContent = sensorsActive;
 
             const totalSensors = parseInt(document.getElementById('sensor-detail').textContent) || 0;

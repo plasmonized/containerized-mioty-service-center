@@ -776,8 +776,20 @@ def get_sensor_details(eui):
             'snr_history': stats.get('snr_history', [])[-50:],
             'rssi_history': stats.get('rssi_history', [])[-50:],
             'registration': registration,
-            'downlink_path': downlink_path
+            'downlink_path': downlink_path,
+            'heartbeat': {}
         }
+        
+        if tls_server and hasattr(tls_server, 'sensor_heartbeat'):
+            hb = tls_server.sensor_heartbeat.get(eui_upper, {})
+            if hb:
+                response['heartbeat'] = {
+                    'state': hb.get('state', 'unknown'),
+                    'avg_interval': round(hb.get('avg_interval', 0), 1),
+                    'offline_since': hb.get('offline_since'),
+                    'warning_active': hb.get('warning_active', False),
+                    'last_seen': hb.get('last_seen')
+                }
         
         return jsonify(response)
     except Exception as e:
@@ -1282,7 +1294,7 @@ def get_health_stats():
                 result["system"]["uptime"] = int(datetime.now(timezone.utc).timestamp() - start_time)
             
             result["system"]["total_sensors"] = len(tls_server_instance.sensor_config)
-            result["system"]["active_sensors"] = len(tls_server_instance.active_sensors_hourly)
+            result["system"]["active_sensors"] = tls_server_instance.get_sensor_online_count()
             result["system"]["total_base_stations"] = len(tls_server_instance.connected_base_stations) + len(tls_server_instance.connecting_base_stations)
             result["system"]["connected_base_stations"] = len(tls_server_instance.connected_base_stations)
             
@@ -2580,7 +2592,8 @@ def get_bssci_service_status():
             },
             'total_sensors': total_sensors,
             'registered_sensors': registered_sensors,
-            'pending_requests': 0  # Avoid accessing asyncio objects
+            'pending_requests': 0,
+            'sensor_status': tls_server.get_sensor_status_summary() if hasattr(tls_server, 'get_sensor_status_summary') else {'online': 0, 'offline': 0, 'total_tracked': 0}
         }
         
         return response

@@ -75,7 +75,7 @@ Three user roles - Admin (full access), User (sensor/BS management), Viewer (rea
 
 - Custom SVG icons (base station tower, sensor with radio waves), clickable cards, visual health indicators
 - Orange/white color scheme matching mioty branding
-- Active sensors count (sensors that sent data this hour), configured sensors total
+- Online sensors count (heartbeat-based, persistent - no hourly reset), configured sensors total
 - Network topology mini-preview (Cytoscape.js)
 - System health: packet loss detection, base station health charts (CPU/Memory/Duty Cycle), signal score distribution
 - Traffic visualization with 12-hour history, active sensor tracking, message statistics
@@ -93,6 +93,8 @@ Three user roles - Admin (full access), User (sensor/BS management), Viewer (rea
 
 ## Recent Changes
 
+- **v1.672 - Heartbeat-Based Sensor Tracking**: Replaced hourly-reset active sensor count with persistent heartbeat-based online/offline tracking. Each sensor's avg send interval is calculated from last 10 messages. Sensor marked offline after 4x avg interval without data. Auto-detach warning now triggered by offline transition (not fixed 36h). Auto-detach uses offline_since + configured timeout. MQTT warning published on offline transition. Dashboard shows "Sensoren online" instead of hourly "aktiv" count. Fixed BS count deduplication (was counting writer objects, showing 5/10 instead of 5/5). Fixed beta channel config persistence (UPDATE_CHANNEL in bssci_config.py + direct module update after save). Beta version detection now scans both /releases and /tags APIs.
+- **v1.671 - Base Station Connection Status**: Enhanced BS card to show "x/y connected" ratio with dynamic coloring.
 - **v1.670 - Beta Channel & OMS Fixes**: Added Beta Channel toggle in config page for pre-release updates. When enabled, update checker includes GitHub pre-releases. Beta versions shown with BETA badge. Fixed OMS meter count on dashboard (was using wrong API endpoint). Added OMS meters as separate trend line (purple) in Traffic chart.
 - **v1.669 - Active Sensor Count Fix**: Dashboard sensor card (blue field) now correctly shows active sensors (sent data this hour) instead of registered/configured count. Consistent with System Status percentage and Network Statistics count.
 - **v1.668 - Dashboard Corrections**: Fixed 5 dashboard bugs: incorrect API endpoints, sensor count accuracy, replaced VM-capable with OMS meter count in network statistics, removed cluttered EUI list from base stations card, VM Sub-Channel shown separately in system status.

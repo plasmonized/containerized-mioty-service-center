@@ -2289,7 +2289,8 @@ class TLSServer:
                 'messages_dropped': self.traffic_metrics['messages_dropped'],
                 'sensors_registered': len(self.registered_sensors),
                 'sensors_active': len(self.active_sensors_hourly),
-                'base_stations': len(self.connected_base_stations)
+                'base_stations': len(self.connected_base_stations),
+                'oms_meters': len(self.oms_meters)
             })
             # Keep only last 720 entries (12 hours)
             if len(self.traffic_history) > 720:

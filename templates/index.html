@@ -289,8 +289,13 @@ a.card-link {
                     </div>
                     <div class="health-indicator">
                         <div class="health-dot" id="health-vm"></div>
-                        <span class="health-label">OMS Meter</span>
+                        <span class="health-label">VM Sub-Channel</span>
                         <span class="health-value" id="health-vm-value">--</span>
+                    </div>
+                    <div class="health-indicator">
+                        <div class="health-dot" id="health-oms"></div>
+                        <span class="health-label">OMS Meter</span>
+                        <span class="health-value" id="health-oms-value">--</span>
                     </div>
                 </div>
             </div>
@@ -545,6 +550,19 @@ function updateDashboard() {
         })
         .catch(error => console.error('Error fetching status:', error));
     
+    fetch('/api/vm/capable')
+        .then(response => response.json())
+        .then(data => {
+            const vmCapable = data.vm_capable ? data.vm_capable.length : 0;
+            let vmHealth = 'inactive';
+            let vmHealthText = 'Keine';
+            if (vmCapable >= 2) { vmHealth = 'excellent'; vmHealthText = vmCapable + ' BS'; }
+            else if (vmCapable >= 1) { vmHealth = 'good'; vmHealthText = vmCapable + ' BS'; }
+            document.getElementById('health-vm').className = 'health-dot ' + vmHealth;
+            document.getElementById('health-vm-value').textContent = vmHealthText;
+        })
+        .catch(error => console.error('Error fetching VM status:', error));
+    
     fetch('/api/oms/meters')
         .then(response => response.json())
         .then(data => {
@@ -553,12 +571,12 @@ function updateDashboard() {
             gaugeVm.textContent = meterCount;
             gaugeVm.style.background = meterCount >= 5 ? '#28a745' : meterCount >= 1 ? '#ffc107' : '#6c757d';
             
-            let vmHealth = 'inactive';
-            let vmHealthText = 'Keine';
-            if (meterCount >= 5) { vmHealth = 'excellent'; vmHealthText = meterCount + ' Meter'; }
-            else if (meterCount >= 1) { vmHealth = 'good'; vmHealthText = meterCount + ' Meter'; }
-            document.getElementById('health-vm').className = 'health-dot ' + vmHealth;
-            document.getElementById('health-vm-value').textContent = vmHealthText;
+            let omsHealth = 'inactive';
+            let omsHealthText = 'Keine';
+            if (meterCount >= 5) { omsHealth = 'excellent'; omsHealthText = meterCount + ' Meter'; }
+            else if (meterCount >= 1) { omsHealth = 'good'; omsHealthText = meterCount + ' Meter'; }
+            document.getElementById('health-oms').className = 'health-dot ' + omsHealth;
+            document.getElementById('health-oms-value').textContent = omsHealthText;
         })
         .catch(error => console.error('Error fetching OMS meters:', error));
     

@@ -2157,18 +2157,30 @@ def parse_version(version_str):
     """Parse version string to comparable tuple.
     Stable releases sort higher than pre-releases of the same base version.
     e.g. v1.672 > v1.672-beta1 > v1.671 > v1.671-beta2 > v1.671-beta1
+    Handles suffixes like v1.658a (treated as v1.658 patch) and v1.672-beta1.
     Returns tuple like (1, 672, 1000, 0) for stable or (1, 672, 0, 1) for beta1"""
     try:
+        import re
         v = version_str.lstrip('v')
         parts = v.split('-', 1)
         base = parts[0]
-        base_parts = tuple(int(p) for p in base.replace('.', ' ').split() if p.isdigit())
+        base_segments = base.replace('.', ' ').split()
+        base_nums = []
+        for seg in base_segments:
+            m = re.match(r'^(\d+)', seg)
+            if m:
+                base_nums.append(int(m.group(1)))
+        base_parts = tuple(base_nums) if base_nums else (0,)
+        has_letter_suffix = bool(re.search(r'[a-zA-Z]', base))
         if len(parts) > 1:
             suffix = parts[1].lower()
-            import re
             m = re.search(r'(\d+)', suffix)
             suffix_num = int(m.group(1)) if m else 1
             return base_parts + (0, suffix_num)
+        elif has_letter_suffix:
+            letter = re.search(r'[a-zA-Z]+', base)
+            letter_val = ord(letter.group(0)[0].lower()) - ord('a') + 1 if letter else 1
+            return base_parts + (500, letter_val)
         else:
             return base_parts + (1000, 0)
     except:

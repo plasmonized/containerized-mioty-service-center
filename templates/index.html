@@ -580,8 +580,7 @@ function updateDashboard() {
             gaugePackets.style.background = packetsPerHour > 100 ? '#28a745' : packetsPerHour > 10 ? '#ffc107' : '#6c757d';
 
             const sensorsActive = data.sensors_active || 0;
-            const sensorsRegistered = data.sensors_registered || 0;
-            document.getElementById('sensor-count').textContent = sensorsRegistered;
+            document.getElementById('sensor-count').textContent = sensorsActive;
             document.getElementById('active-sensors-today').textContent = sensorsActive;
 
             const totalSensors = parseInt(document.getElementById('sensor-detail').textContent) || 0;

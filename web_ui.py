@@ -2488,11 +2488,21 @@ def get_bssci_service_status():
                         "status": "connecting"
                     })
                 
+            total_configured_bs = 0
+            try:
+                bs_config = load_base_station_config().get("base_stations", {})
+                all_bs = set(bs_config.keys())
+                all_bs.update(bs_eui.upper() for _, bs_eui in list(connected_dict.items()))
+                total_configured_bs = len(all_bs)
+            except:
+                total_configured_bs = connected_count
+
             bs_status = {
                 "connected": connected_stations,
                 "connecting": connecting_stations,
                 "total_connected": connected_count,
-                "total_connecting": connecting_count
+                "total_connecting": connecting_count,
+                "total_configured": total_configured_bs
             }
         except Exception as e:
             print(f"Error getting base station status: {e}")

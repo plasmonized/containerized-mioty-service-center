@@ -37,6 +37,10 @@ a.card-link {
     background: linear-gradient(135deg, #dc3545 0%, #e83e8c 100%);
     color: white;
 }
+.status-card.warning {
+    background: linear-gradient(135deg, #fd7e14 0%, #ffc107 100%);
+    color: white;
+}
 .status-card.primary {
     background: linear-gradient(135deg, #fd7e14 0%, #ffc107 100%);
     color: white;
@@ -225,6 +229,7 @@ a.card-link {
                     </div>
                     <div class="status-value" id="bs-count">0</div>
                     <div class="status-label">Base Stations</div>
+                    <div class="status-detail" id="bs-detail">0 konfiguriert</div>
                 </div>
             </a>
         </div>
@@ -530,13 +535,27 @@ function updateDashboard() {
             document.getElementById('health-mqtt').className = 'health-dot ' + (mqttActive ? 'excellent' : 'danger');
             document.getElementById('health-mqtt-value').textContent = mqttActive ? 'Verbunden' : 'Getrennt';
             
-            const bsCount = data.base_stations ? data.base_stations.total_connected : 0;
-            document.getElementById('bs-count').textContent = bsCount;
+            const bsConnected = data.base_stations ? data.base_stations.total_connected : 0;
+            const bsConfigured = data.base_stations ? (data.base_stations.total_configured || bsConnected) : 0;
+            document.getElementById('bs-count').textContent = bsConnected + '/' + bsConfigured;
+            document.getElementById('bs-detail').textContent = bsConnected + ' verbunden';
+            
+            const bsCard = document.getElementById('bs-card');
+            if (bsConfigured === 0) {
+                bsCard.className = 'status-card primary';
+            } else if (bsConnected === 0) {
+                bsCard.className = 'status-card danger';
+            } else if (bsConnected < bsConfigured) {
+                bsCard.className = 'status-card warning';
+            } else {
+                bsCard.className = 'status-card success';
+            }
             
             let bsHealth = 'inactive';
             let bsHealthText = 'Keine';
-            if (bsCount >= 3) { bsHealth = 'excellent'; bsHealthText = bsCount + ' online'; }
-            else if (bsCount >= 1) { bsHealth = 'good'; bsHealthText = bsCount + ' online'; }
+            if (bsConfigured > 0 && bsConnected >= bsConfigured) { bsHealth = 'excellent'; bsHealthText = bsConnected + '/' + bsConfigured + ' online'; }
+            else if (bsConnected >= 1) { bsHealth = 'good'; bsHealthText = bsConnected + '/' + bsConfigured + ' online'; }
+            else if (bsConfigured > 0) { bsHealth = 'warning'; bsHealthText = '0/' + bsConfigured + ' online'; }
             document.getElementById('health-bs').className = 'health-dot ' + bsHealth;
             document.getElementById('health-bs-value').textContent = bsHealthText;
             

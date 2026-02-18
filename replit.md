@@ -93,6 +93,7 @@ Three user roles - Admin (full access), User (sensor/BS management), Viewer (rea
 
 ## Recent Changes
 
+- **v1.670 - Beta Channel & OMS Fixes**: Added Beta Channel toggle in config page for pre-release updates. When enabled, update checker includes GitHub pre-releases. Beta versions shown with BETA badge. Fixed OMS meter count on dashboard (was using wrong API endpoint). Added OMS meters as separate trend line (purple) in Traffic chart.
 - **v1.669 - Active Sensor Count Fix**: Dashboard sensor card (blue field) now correctly shows active sensors (sent data this hour) instead of registered/configured count. Consistent with System Status percentage and Network Statistics count.
 - **v1.668 - Dashboard Corrections**: Fixed 5 dashboard bugs: incorrect API endpoints, sensor count accuracy, replaced VM-capable with OMS meter count in network statistics, removed cluttered EUI list from base stations card, VM Sub-Channel shown separately in system status.
 - **v1.667 - VM Detection Fix**: Fixed pending_vm_operations collision causing only 1 of 3 VM-capable BS to be detected. VM response handlers now use writer connection identification. Added VM-capable badge in base stations table.

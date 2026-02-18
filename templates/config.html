@@ -112,6 +112,14 @@
                                 <p class="text-muted">Loading version information...</p>
                             </div>
                             
+                            <div class="form-check mb-3">
+                                <input class="form-check-input" type="checkbox" id="UPDATE_CHANNEL" {% if config.UPDATE_CHANNEL == 'beta' %}checked{% endif %}>
+                                <label class="form-check-label" for="UPDATE_CHANNEL">
+                                    <i class="fas fa-flask"></i> Beta Channel
+                                </label>
+                                <div class="form-text">Receive pre-release updates with newest features (may be less stable)</div>
+                            </div>
+
                             <div class="mb-3">
                                 <button type="button" class="btn btn-info btn-sm" onclick="checkForUpdates()">
                                     <i class="fas fa-sync-alt"></i> Check for Updates
@@ -169,7 +177,8 @@ function saveConfig() {
         AUTO_DETACH_TIMEOUT: parseInt(document.getElementById('AUTO_DETACH_TIMEOUT').value) * 3600,
         AUTO_DETACH_WARNING_TIMEOUT: parseInt(document.getElementById('AUTO_DETACH_WARNING_TIMEOUT').value) * 3600,
         AUTO_DETACH_CHECK_INTERVAL: parseInt(document.getElementById('AUTO_DETACH_CHECK_INTERVAL').value) * 3600,
-        TIMEZONE: document.getElementById('TIMEZONE').value
+        TIMEZONE: document.getElementById('TIMEZONE').value,
+        UPDATE_CHANNEL: document.getElementById('UPDATE_CHANNEL').checked ? 'beta' : 'stable'
     };
 
     fetch('/api/config', {
@@ -300,14 +309,16 @@ function displayVersionInfo(data) {
     const statusClass = data.updates_available ? 'text-warning' : 'text-success';
     const statusText = data.updates_available ? 'Update Available!' : 'Up to Date';
     const updateIcon = data.updates_available ? '🔄' : '✅';
+    const betaBadge = data.is_prerelease ? ' <span class="badge bg-warning text-dark">BETA</span>' : '';
+    const channelBadge = data.channel === 'beta' ? ' <span class="badge bg-info">Beta Channel</span>' : '';
     
     statusDiv.innerHTML = `
         <div class="d-flex justify-content-between align-items-center mb-2">
-            <strong class="${statusClass}">${updateIcon} ${statusText}</strong>
+            <strong class="${statusClass}">${updateIcon} ${statusText}</strong>${channelBadge}
         </div>
         <div class="small text-muted">
             <div><strong>Current:</strong> ${data.current_version}</div>
-            <div><strong>Latest:</strong> ${data.remote_version}</div>
+            <div><strong>Latest:</strong> ${data.remote_version}${betaBadge}</div>
         </div>
     `;
     

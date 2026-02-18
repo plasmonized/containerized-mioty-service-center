@@ -2154,11 +2154,23 @@ def get_commit_log(limit=5):
         return [{'hash': 'error', 'message': f'Unable to get history: {str(e)}'}]
 
 def parse_version(version_str):
-    """Parse version string to comparable tuple"""
+    """Parse version string to comparable tuple.
+    Stable releases sort higher than pre-releases of the same base version.
+    e.g. v1.672 > v1.672-beta1 > v1.671 > v1.671-beta2 > v1.671-beta1
+    Returns tuple like (1, 672, 1000, 0) for stable or (1, 672, 0, 1) for beta1"""
     try:
-        v = version_str.lstrip('v').split('-')[0]
-        parts = v.replace('.', ' ').split()
-        return tuple(int(p) for p in parts if p.isdigit())
+        v = version_str.lstrip('v')
+        parts = v.split('-', 1)
+        base = parts[0]
+        base_parts = tuple(int(p) for p in base.replace('.', ' ').split() if p.isdigit())
+        if len(parts) > 1:
+            suffix = parts[1].lower()
+            import re
+            m = re.search(r'(\d+)', suffix)
+            suffix_num = int(m.group(1)) if m else 1
+            return base_parts + (0, suffix_num)
+        else:
+            return base_parts + (1000, 0)
     except:
         return (0,)
 

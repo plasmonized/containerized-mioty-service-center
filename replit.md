@@ -14,7 +14,7 @@ Preferred communication style: Simple, everyday language.
 
 The system follows a multi-layered architecture with clear separation of concerns:
 
-**TLS Server Layer**: Implements the BSSCI protocol for secure communication with mioty base stations using TLS encryption. Handles base station connections, sensor attachment/detachment requests, and real-time data collection.
+**TLS Server Layer**: Implements the BSSCI protocol for secure communication with mioty base stations using TLS encryption. Handles base station connections, sensor attachment/detachment requests, and real-time data collection. Per-BS operation ID management with negative opIds for SC-initiated operations per BSSCI convention.
 
 **MQTT Interface Layer**: Provides bidirectional communication with external systems through MQTT topics. Publishes sensor data and base station status while subscribing to configuration updates and commands.
 
@@ -32,7 +32,7 @@ The system uses asynchronous queue-based communication between components:
 
 ### Certificate Management
 
-SSL/TLS infrastructure using CA-signed certificates for secure base station authentication. The system supports certificate generation, validation, and management through the web interface.
+SSL/TLS infrastructure using CA-signed certificates for secure base station authentication. Per-BS certificate generation (stored in `certs/bs_{eui}/`), auto-cert onboarding flow with ZIP download, CA management through web interface.
 
 ### Configuration Management
 
@@ -51,25 +51,54 @@ JSON-based sensor configuration with support for:
 - Short address allocation
 - Bidirectional communication flags
 - Dynamic attach/detach operations
+- Bulk CSV/TXT import/export with flexible delimiter detection
+
+### OMS / Wireless M-Bus Meter Support
+
+Full EN 13757 compliant wMBUS frame parsing with:
+- 120+ manufacturer database from m-bus.de, automatic 3-letter IEC code decoding
+- Device type mapping and dedicated OMS management page
+- Automatic wMBUS frame-start detection by scanning for valid C-field (0x44/0x46/0x48)
+- Handles BSSCI/VM wrapper bytes that some base stations prepend
+- Meters publish to MQTT under `ep/oms_{manufacturer}_{serial}/ul` with decoded OMS metadata
+- OMS identifier format: `oms_{3-letter-code}_{serial_number}` (e.g., oms_DME_63874728)
+
+### Variable MAC (VM) Sub-Channel
+
+Full ETSI TS 103357 compliant VM sub-channel support for metering devices. VM response handlers identify base stations via writer connection (not opId lookup) to avoid key collisions with per-BS counters.
+
+### User Authentication & Access Control
+
+Three user roles - Admin (full access), User (sensor/BS management), Viewer (read-only dashboards). Login required for all pages, API endpoints protected with permission decorators. Users managed via users.json file.
+
+## Dashboard
+
+- Custom SVG icons (base station tower, sensor with radio waves), clickable cards, visual health indicators
+- Orange/white color scheme matching mioty branding
+- Active sensors count (sensors that sent data this hour), configured sensors total
+- Network topology mini-preview (Cytoscape.js)
+- System health: packet loss detection, base station health charts (CPU/Memory/Duty Cycle), signal score distribution
+- Traffic visualization with 12-hour history, active sensor tracking, message statistics
+- Sensor detail view: per-sensor SNR/RSSI statistics (min/avg/max), gateway coverage
+- Coverage map with persistent floorplan storage (coverage_positions.json, coverage_floorplan.txt)
+
+## BSSCI Protocol Details
+
+- BS-initiated operations use positive opIds (0, 1, 2...)
+- SC-initiated operations use negative opIds (-1, -2, -3...)
+- Per-BS sequential opId counters, initialized on connect, cleaned up on disconnect
+- Connection validity check in batch attach loop - aborts on connection loss
+- 3-failure threshold for BS status requests
+- Skip-attach for already-registered sensors on BS reconnect
 
 ## Recent Changes
 
-- **v1.665 - OpID 0-Index & Attach Abort Fix**: Fixed opId starting value from 1 to 0 (BSSCI protocol uses 0-indexed operation IDs). Added connection validity check in batch attach loop - now aborts immediately on connection loss instead of cascading errors for every remaining sensor. Connection-related exceptions (ConnectionResetError, BrokenPipeError) break the loop cleanly. **Updated**: SC-initiated operations now correctly use negative opIds (-1, -2, -3...) per BSSCI convention (BS uses positive/0, SC uses negative). This was the root cause of "invalid op id" errors on non-Diehl base stations.
-- **v1.664 - Per-BS Operation ID Fix**: Replaced global opID counter with per-BS sequential counters. Each BS connection gets its own opID sequence, properly initialized on connect and cleaned up on disconnect. Fixed inconsistent opID direction (attach decremented, status incremented) - all now increment consistently.
-- **v1.663 - Unified Base Station & Certificate Management**: Merged Base Stations and Certificates pages into single tabbed interface. Per-BS certificate generation (stored in `certs/bs_{eui}/`), auto-cert onboarding flow with ZIP download, Certificate overview tab with CA management, uptime tracking with horizontal bar chart (Chart.js). Removed standalone Certificates nav tab. 3-failure threshold for BS status requests, skip-attach for already-registered sensors on BS reconnect.
-- **v1.660 - Robust wMBUS Frame Parser**: Automatic wMBUS frame-start detection by scanning for valid C-field (0x44/0x46/0x48). Handles BSSCI/VM wrapper bytes that some base stations prepend. Fixes incorrect manufacturer/device type parsing for certain meter telegrams.
-- **OMS/Wireless M-Bus Meter Support**: Full EN 13757 compliant wMBUS frame parsing with 120+ manufacturer database, automatic 3-letter IEC code decoding, device type mapping, and dedicated OMS management page. Meters publish to MQTT under `ep/oms_{manufacturer}_{serial}/ul` with unified payload format including decoded OMS metadata block.
-- **Dashboard Redesign**: Custom SVG icons (base station tower, sensor with radio waves), clickable cards, visual health indicators, network topology mini-preview. Orange/white color scheme matching mioty branding.
-- **User Authentication & Role-Based Access Control**: Three user roles - Admin (full access), User (sensor/BS management), Viewer (read-only dashboards). Login required for all pages, API endpoints protected with permission decorators. Users managed via users.json file.
-- **Persistent Coverage Map Storage**: Floorplan images, device positions, and zoom levels stored server-side. Files: coverage_positions.json and coverage_floorplan.txt.
-- **Sensor Detail Dashboard**: Click any sensor EUI for detailed statistics including Device Health, Transmission Details, SNR/RSSI statistics (min/avg/max), and gateway coverage.
-- **Network Topology Visualization**: Interactive Cytoscape.js graph showing base stations and sensors with primary/secondary routes.
-- **System Health Dashboard**: Packet loss detection, base station health charts (CPU/Memory/Duty Cycle), per-sensor statistics, signal score distribution.
-- **Base Station Management Page**: Dedicated page with name, tags, IP, health data, and connected sensor counts.
-- **Variable MAC (VM)**: Full ETSI TS 103357 compliant VM sub-channel support for metering devices.
-- **Traffic Dashboard**: Real-time visualization with 12-hour history, active sensor tracking, message statistics.
-- **Bulk Import/Export**: CSV/TXT sensor import/export with flexible delimiter detection.
-- **Update System**: GitHub API-based update checking, Docker live-updates, automatic backups.
+- **v1.669 - Active Sensor Count Fix**: Dashboard sensor card (blue field) now correctly shows active sensors (sent data this hour) instead of registered/configured count. Consistent with System Status percentage and Network Statistics count.
+- **v1.668 - Dashboard Corrections**: Fixed 5 dashboard bugs: incorrect API endpoints, sensor count accuracy, replaced VM-capable with OMS meter count in network statistics, removed cluttered EUI list from base stations card, VM Sub-Channel shown separately in system status.
+- **v1.667 - VM Detection Fix**: Fixed pending_vm_operations collision causing only 1 of 3 VM-capable BS to be detected. VM response handlers now use writer connection identification. Added VM-capable badge in base stations table.
+- **v1.666 - Update System & Rate Limit Fixes**: Fixed directory handling in GitHub updates (os.walk), 5-minute cache for version checks against API rate limits, manual refresh with force=True.
+- **v1.665 - OpID 0-Index & Attach Abort Fix**: opId starts at 0, SC uses negative opIds per BSSCI convention, connection loss aborts batch attach cleanly.
+- **v1.664 - Per-BS Operation ID Fix**: Per-BS sequential opId counters replacing global counter, consistent increment direction.
 
 ## External Dependencies
 
@@ -86,3 +115,5 @@ JSON-based sensor configuration with support for:
 **Environment Configuration**: dotenv support for configuration management with fallback defaults.
 
 **Logging Infrastructure**: Structured logging with timezone support and multiple output targets.
+
+**Update System**: GitHub API-based update checking with 5-minute cache, Docker live-updates, automatic backups.

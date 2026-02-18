@@ -1089,7 +1089,8 @@ def config():
             'AUTO_DETACH_TIMEOUT': getattr(bssci_config, 'AUTO_DETACH_TIMEOUT', 259200),
             'AUTO_DETACH_WARNING_TIMEOUT': getattr(bssci_config, 'AUTO_DETACH_WARNING_TIMEOUT', 129600),
             'AUTO_DETACH_CHECK_INTERVAL': getattr(bssci_config, 'AUTO_DETACH_CHECK_INTERVAL', 3600),
-            'TIMEZONE': getattr(bssci_config, 'TIMEZONE', 'Europe/Berlin')
+            'TIMEZONE': getattr(bssci_config, 'TIMEZONE', 'Europe/Berlin'),
+            'UPDATE_CHANNEL': getattr(bssci_config, 'UPDATE_CHANNEL', 'stable')
         }
         return render_template('config.html', config=config_data)
     except Exception as e:
@@ -1109,7 +1110,8 @@ def config():
             'AUTO_DETACH_TIMEOUT': 259200,
             'AUTO_DETACH_WARNING_TIMEOUT': 129600,
             'AUTO_DETACH_CHECK_INTERVAL': 3600,
-            'TIMEZONE': 'Europe/Berlin'
+            'TIMEZONE': 'Europe/Berlin',
+            'UPDATE_CHANNEL': 'stable'
         }
         return render_template('config.html', config=default_config)
 
@@ -1166,6 +1168,9 @@ AUTO_DETACH_CHECK_INTERVAL={auto_detach_check_interval}
 
 # Timezone Configuration
 TIMEZONE={data.get('TIMEZONE', 'Europe/Berlin')}
+
+# Update Channel Configuration
+UPDATE_CHANNEL={data.get('UPDATE_CHANNEL', 'stable')}
 
 # Logging Configuration
 LOG_LEVEL=INFO
@@ -1967,8 +1972,9 @@ def get_current_version():
         print(f"Error getting current version: {e}")
         return "version-unknown"
 
-def get_remote_version():
-    """Get latest remote version - checks releases first, then commits"""
+def get_remote_version(channel='stable'):
+    """Get latest remote version - checks releases first, then commits.
+    Returns a tuple (version_string, is_prerelease)."""
     GITHUB_REPO = "plasmonized/containerized-mioty-Service-Center"
     
     try:
@@ -1977,17 +1983,33 @@ def get_remote_version():
         
         ctx = ssl.create_default_context()
         
-        # First: Try to get latest release/tag
-        try:
-            releases_url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
-            req = urllib.request.Request(releases_url, headers={'User-Agent': 'BSSCI-Service-Center'})
-            with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
-                data = json.loads(response.read().decode())
-                tag_name = data.get('tag_name', '')
-                if tag_name:
-                    return tag_name if tag_name.startswith('v') else f"v{tag_name}"
-        except:
-            pass
+        if channel == 'beta':
+            try:
+                releases_url = f"https://api.github.com/repos/{GITHUB_REPO}/releases"
+                req = urllib.request.Request(releases_url, headers={'User-Agent': 'BSSCI-Service-Center'})
+                with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
+                    releases = json.loads(response.read().decode())
+                    if releases and len(releases) > 0:
+                        latest = releases[0]
+                        tag_name = latest.get('tag_name', '')
+                        is_prerelease = latest.get('prerelease', False)
+                        if tag_name:
+                            version = tag_name if tag_name.startswith('v') else f"v{tag_name}"
+                            return (version, is_prerelease)
+            except:
+                pass
+        else:
+            try:
+                releases_url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+                req = urllib.request.Request(releases_url, headers={'User-Agent': 'BSSCI-Service-Center'})
+                with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
+                    data = json.loads(response.read().decode())
+                    tag_name = data.get('tag_name', '')
+                    if tag_name:
+                        version = tag_name if tag_name.startswith('v') else f"v{tag_name}"
+                        return (version, False)
+            except:
+                pass
         
         # Fallback: Try to get latest tag
         try:
@@ -1998,7 +2020,8 @@ def get_remote_version():
                 if tags and len(tags) > 0:
                     tag_name = tags[0].get('name', '')
                     if tag_name:
-                        return tag_name if tag_name.startswith('v') else f"v{tag_name}"
+                        version = tag_name if tag_name.startswith('v') else f"v{tag_name}"
+                        return (version, False)
         except:
             pass
         
@@ -2011,7 +2034,7 @@ def get_remote_version():
                 data = json.loads(response.read().decode())
                 commit_hash = data.get('sha', '')[:7]
                 commit_date = data.get('commit', {}).get('committer', {}).get('date', '')[:10]
-                return f"commit-{commit_hash} ({commit_date})"
+                return (f"commit-{commit_hash} ({commit_date})", False)
         except Exception as api_error:
             logger.error(f"GitHub API error: {api_error}")
         
@@ -2030,14 +2053,14 @@ def get_remote_version():
             result = subprocess.run(['git', 'rev-parse', '--short', 'origin/main'], 
                                   capture_output=True, text=True, timeout=10)
             if result.returncode == 0:
-                return f"commit-{result.stdout.strip()}"
+                return (f"commit-{result.stdout.strip()}", False)
         except:
             pass
         
-        return "remote-unavailable"
+        return ("remote-unavailable", False)
     except Exception as e:
         print(f"Error getting remote version: {e}")
-        return "remote-check-unavailable"
+        return ("remote-check-unavailable", False)
 
 def get_commit_log(limit=5):
     """Get recent commit log - works with or without Git"""
@@ -2109,8 +2132,13 @@ def check_for_updates(force=False):
     GITHUB_REPO = "plasmonized/containerized-mioty-Service-Center"
     
     try:
+        try:
+            channel = getattr(bssci_config, 'UPDATE_CHANNEL', 'stable')
+        except:
+            channel = 'stable'
+
         current = get_current_version()
-        remote = get_remote_version()
+        remote, is_prerelease = get_remote_version(channel)
         
         updates_available = False
         status_message = None
@@ -2119,24 +2147,20 @@ def check_for_updates(force=False):
             updates_available = False
             status_message = 'Cannot connect to GitHub to check for updates'
         elif current.startswith('v') and remote.startswith('v'):
-            # Both are version numbers - compare them
             current_ver = parse_version(current)
             remote_ver = parse_version(remote)
             if remote_ver > current_ver:
                 updates_available = True
                 status_message = f'Update available: {current} → {remote}'
         elif "commit-" in current and "commit-" in remote:
-            # Both are commit hashes
             current_hash = current.split("commit-")[1].split()[0][:7]
             remote_hash = remote.split("commit-")[1].split()[0][:7]
             if current_hash != remote_hash:
                 updates_available = True
         elif current.startswith("local-") or current.startswith("v"):
-            # Local installation or version, but remote is commit-based
             updates_available = True
             status_message = 'Update available'
         
-        # Get recent commits via GitHub API
         recent_commits = []
         try:
             import urllib.request
@@ -2154,7 +2178,6 @@ def check_for_updates(force=False):
                         'message': commit['commit']['message'].split('\n')[0][:60]
                     })
                 
-                # If we got commits but remote was unavailable, use first commit as remote version
                 if commits_data and remote in ['remote-unavailable', 'remote-check-unavailable']:
                     first_commit = commits_data[0]
                     remote_hash = first_commit['sha'][:7]
@@ -2170,6 +2193,8 @@ def check_for_updates(force=False):
             'remote_version': remote,
             'updates_available': updates_available,
             'recent_commits': recent_commits,
+            'channel': channel,
+            'is_prerelease': is_prerelease,
             'status': 'success'
         }
         
@@ -2219,28 +2244,44 @@ def perform_update():
     GITHUB_REPO = "plasmonized/containerized-mioty-Service-Center"
     
     try:
-        # Create backup first
+        try:
+            channel = getattr(bssci_config, 'UPDATE_CHANNEL', 'stable')
+        except:
+            channel = 'stable'
+
         backup_result = create_backup()
         if not backup_result['success']:
             return {'success': False, 'error': f"Backup failed: {backup_result['error']}"}
         
-        # First try git pull if we have a git repo
         if os.path.exists('.git'):
             try:
                 subprocess.run(['git', 'reset', '--hard', 'HEAD'], capture_output=True, timeout=30)
-                result = subprocess.run(['git', 'pull', 'origin', 'main'], 
-                                      capture_output=True, text=True, timeout=60)
+                subprocess.run(['git', 'checkout', 'main'], capture_output=True, timeout=30)
+                subprocess.run(['git', 'fetch', '--tags', 'origin'], capture_output=True, text=True, timeout=60)
+                if channel == 'beta':
+                    remote, _ = get_remote_version('beta')
+                    if remote.startswith('v') and 'unavailable' not in remote:
+                        result = subprocess.run(['git', 'merge', remote, '--ff-only'], 
+                                              capture_output=True, text=True, timeout=60)
+                        if result.returncode != 0:
+                            result = subprocess.run(['git', 'pull', 'origin', 'main'], 
+                                                  capture_output=True, text=True, timeout=60)
+                    else:
+                        result = subprocess.run(['git', 'pull', 'origin', 'main'], 
+                                              capture_output=True, text=True, timeout=60)
+                else:
+                    result = subprocess.run(['git', 'pull', 'origin', 'main'], 
+                                          capture_output=True, text=True, timeout=60)
                 if result.returncode == 0:
                     return {
                         'success': True, 
-                        'message': 'Update completed successfully via git',
+                        'message': f'Update completed successfully via git ({channel} channel)',
                         'backup_dir': backup_result['backup_dir'],
                         'git_output': result.stdout
                     }
             except Exception as e:
                 logger.error(f"Git pull failed, trying ZIP download: {e}")
         
-        # Fallback: Download ZIP from GitHub
         import urllib.request
         import ssl
         import zipfile
@@ -2248,60 +2289,24 @@ def perform_update():
         
         ctx = ssl.create_default_context()
         
-        # Try main branch first, then master
+        if channel == 'beta':
+            try:
+                releases_url = f"https://api.github.com/repos/{GITHUB_REPO}/releases"
+                req = urllib.request.Request(releases_url, headers={'User-Agent': 'BSSCI-Service-Center'})
+                with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
+                    releases = json.loads(response.read().decode())
+                    if releases and len(releases) > 0:
+                        tag_name = releases[0].get('tag_name', '')
+                        if tag_name:
+                            zip_url = f"https://github.com/{GITHUB_REPO}/archive/refs/tags/{tag_name}.zip"
+                            return _download_and_extract_zip(zip_url, ctx, backup_result, f'beta tag {tag_name}')
+            except Exception as e:
+                logger.error(f"Beta channel ZIP download failed: {e}")
+
         for branch in ['main', 'master']:
             zip_url = f"https://github.com/{GITHUB_REPO}/archive/refs/heads/{branch}.zip"
-            
             try:
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp_file:
-                    tmp_path = tmp_file.name
-                    req = urllib.request.Request(zip_url, headers={'User-Agent': 'BSSCI-Service-Center'})
-                    
-                    with urllib.request.urlopen(req, timeout=60, context=ctx) as response:
-                        tmp_file.write(response.read())
-                
-                # Extract ZIP
-                extract_dir = tempfile.mkdtemp()
-                with zipfile.ZipFile(tmp_path, 'r') as zip_ref:
-                    zip_ref.extractall(extract_dir)
-                
-                extracted_folders = os.listdir(extract_dir)
-                if extracted_folders:
-                    source_dir = os.path.join(extract_dir, extracted_folders[0])
-                    
-                    files_to_update = ['web_ui.py', 'TLSServer.py', 'main.py', 'web_main.py', 
-                                     'mqtt_interface.py', 'messages.py', 'requirements.txt', 'VERSION']
-                    dirs_to_update = ['templates', 'static']
-                    
-                    updated_files = []
-                    for filename in files_to_update:
-                        src = os.path.join(source_dir, filename)
-                        if os.path.exists(src):
-                            shutil.copy2(src, filename)
-                            updated_files.append(filename)
-                    
-                    for dirname in dirs_to_update:
-                        src_dir = os.path.join(source_dir, dirname)
-                        if os.path.exists(src_dir):
-                            for root, subdirs, files in os.walk(src_dir):
-                                rel_root = os.path.relpath(root, source_dir)
-                                dest_root = os.path.join('.', rel_root)
-                                os.makedirs(dest_root, exist_ok=True)
-                                for item in files:
-                                    src_file = os.path.join(root, item)
-                                    dst_file = os.path.join(dest_root, item)
-                                    shutil.copy2(src_file, dst_file)
-                                    updated_files.append(os.path.join(rel_root, item))
-                
-                os.unlink(tmp_path)
-                shutil.rmtree(extract_dir, ignore_errors=True)
-                
-                return {
-                    'success': True, 
-                    'message': f'Update completed via GitHub ({branch} branch)',
-                    'backup_dir': backup_result['backup_dir'],
-                    'updated_files': updated_files
-                }
+                return _download_and_extract_zip(zip_url, ctx, backup_result, f'{branch} branch')
             except urllib.error.HTTPError as e:
                 if e.code == 404:
                     logger.warning(f"Branch {branch} not found, trying next...")
@@ -2324,6 +2329,60 @@ def perform_update():
                 'error': 'Permission denied - files are read-only. For Docker: rebuild container with "docker-compose up -d --build"'
             }
         return {'success': False, 'error': str(e)}
+
+def _download_and_extract_zip(zip_url, ctx, backup_result, source_label):
+    """Helper to download and extract a ZIP update from a URL"""
+    import urllib.request
+    import tempfile
+    
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp_file:
+        tmp_path = tmp_file.name
+        req = urllib.request.Request(zip_url, headers={'User-Agent': 'BSSCI-Service-Center'})
+        
+        with urllib.request.urlopen(req, timeout=60, context=ctx) as response:
+            tmp_file.write(response.read())
+    
+    extract_dir = tempfile.mkdtemp()
+    with zipfile.ZipFile(tmp_path, 'r') as zip_ref:
+        zip_ref.extractall(extract_dir)
+    
+    extracted_folders = os.listdir(extract_dir)
+    updated_files = []
+    if extracted_folders:
+        source_dir = os.path.join(extract_dir, extracted_folders[0])
+        
+        files_to_update = ['web_ui.py', 'TLSServer.py', 'main.py', 'web_main.py', 
+                         'mqtt_interface.py', 'messages.py', 'requirements.txt', 'VERSION']
+        dirs_to_update = ['templates', 'static']
+        
+        for filename in files_to_update:
+            src = os.path.join(source_dir, filename)
+            if os.path.exists(src):
+                shutil.copy2(src, filename)
+                updated_files.append(filename)
+        
+        for dirname in dirs_to_update:
+            src_dir = os.path.join(source_dir, dirname)
+            if os.path.exists(src_dir):
+                for root, subdirs, files in os.walk(src_dir):
+                    rel_root = os.path.relpath(root, source_dir)
+                    dest_root = os.path.join('.', rel_root)
+                    os.makedirs(dest_root, exist_ok=True)
+                    for item in files:
+                        src_file = os.path.join(root, item)
+                        dst_file = os.path.join(dest_root, item)
+                        shutil.copy2(src_file, dst_file)
+                        updated_files.append(os.path.join(rel_root, item))
+    
+    os.unlink(tmp_path)
+    shutil.rmtree(extract_dir, ignore_errors=True)
+    
+    return {
+        'success': True, 
+        'message': f'Update completed via GitHub ({source_label})',
+        'backup_dir': backup_result['backup_dir'],
+        'updated_files': updated_files
+    }
 
 @app.route('/api/system/version')
 def api_get_version():

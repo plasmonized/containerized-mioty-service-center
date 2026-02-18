@@ -69,7 +69,7 @@
     <div class="col-md-6">
         <div class="card">
             <div class="card-header">
-                <h5 class="mb-0">Sensors & Base Stations (12h)</h5>
+                <h5 class="mb-0">Sensors, OMS Meters & Base Stations (12h)</h5>
             </div>
             <div class="card-body">
                 <canvas id="connectionsChart" height="200"></canvas>
@@ -274,6 +274,14 @@ function initCharts() {
                 fill: false,
                 yAxisID: 'y'
             }, {
+                label: 'OMS Meters',
+                data: [],
+                borderColor: '#9b59b6',
+                backgroundColor: 'rgba(155, 89, 182, 0.1)',
+                tension: 0.4,
+                fill: false,
+                yAxisID: 'y'
+            }, {
                 label: 'Base Stations',
                 data: [],
                 borderColor: '#ff8c00',
@@ -328,6 +336,7 @@ function updateCharts(history) {
     const dropped = history.map(h => h.messages_dropped || 0);
     const sensorsRegistered = history.map(h => h.sensors_registered || h.sensors || 0);
     const sensorsActive = history.map(h => h.sensors_active || 0);
+    const omsMeters = history.map(h => h.oms_meters || 0);
     const baseStations = history.map(h => h.base_stations || 0);
     
     messageChart.data.labels = labels;
@@ -339,7 +348,8 @@ function updateCharts(history) {
     connectionsChart.data.labels = labels;
     connectionsChart.data.datasets[0].data = sensorsRegistered;
     connectionsChart.data.datasets[1].data = sensorsActive;
-    connectionsChart.data.datasets[2].data = baseStations;
+    connectionsChart.data.datasets[2].data = omsMeters;
+    connectionsChart.data.datasets[3].data = baseStations;
     connectionsChart.update('none');
 }
 

@@ -558,7 +558,7 @@ function updateDashboard() {
         })
         .catch(error => console.error('Error fetching VM status:', error));
     
-    fetch('/api/oms/meters')
+    fetch('/api/oms/stats')
         .then(response => response.json())
         .then(data => {
             const meterCount = data.total_meters || 0;

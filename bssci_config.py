@@ -31,3 +31,6 @@ AUTO_DETACH_CHECK_INTERVAL = int(os.getenv("AUTO_DETACH_CHECK_INTERVAL", "3600")
 
 # Timezone Configuration
 TIMEZONE = os.getenv("TIMEZONE", "Europe/Berlin")  # Default to Europe/Berlin (CET/CEST)
+
+# Update Channel Configuration
+UPDATE_CHANNEL = os.getenv("UPDATE_CHANNEL", "stable")

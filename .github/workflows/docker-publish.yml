@@ -33,7 +33,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Check Docker Hub credentials
+        id: dockerhub
+        run: |
+          if [ -n "$DOCKERHUB_USERNAME" ] && [ -n "$DOCKERHUB_TOKEN" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - name: Log in to Docker Hub
+        if: steps.dockerhub.outputs.available == 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY_DOCKER }}
@@ -46,7 +59,7 @@ jobs:
         with:
           images: |
             ${{ env.REGISTRY_GHCR }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME_BASE }}
-            ${{ env.REGISTRY_DOCKER }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME_BASE }}
+            ${{ steps.dockerhub.outputs.available == 'true' && format('{0}/{1}/{2}', env.REGISTRY_DOCKER, secrets.DOCKERHUB_USERNAME, env.IMAGE_NAME_BASE) || '' }}
           tags: |
             type=ref,event=branch
             type=ref,event=tag

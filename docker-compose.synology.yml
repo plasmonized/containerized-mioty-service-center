@@ -17,7 +17,6 @@ services:
     restart: unless-stopped
     environment:
       - PYTHONUNBUFFERED=1
-      - SYNOLOGY_DOCKER=1
       - PUID=1000
       - PGID=1000
       - BASE_STATION_CONFIG_FILE=/app/data/base_stations.json

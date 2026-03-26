@@ -95,12 +95,6 @@ else
         chmod 644 /app/config/coverage_floorplan.txt
     fi
 
-    # bssci_config.py: allow user to override the bundled module via config/
-    if [ -f /app/config/bssci_config.py ]; then
-        echo "Using custom bssci_config.py from config/ directory..."
-        ln -sf /app/config/bssci_config.py /app/bssci_config.py
-    fi
-
     # --- Populate /app/data with defaults on first run ---
 
     if [ ! -f /app/data/base_stations.json ]; then
@@ -109,12 +103,6 @@ else
         chmod 644 /app/data/base_stations.json
     fi
 
-    # --- Create symlinks so app can reach config files via its expected paths ---
-    # The Python app opens these files using relative paths inside /app.
-    # Symlinking them keeps all persistent state in the mounted config/ directory.
-    for cfg_file in .env endpoints.json users.json coverage_positions.json coverage_floorplan.txt; do
-        ln -sf "/app/config/${cfg_file}" "/app/${cfg_file}"
-    done
 fi
 
 # Generate self-signed certificates if they don't exist

@@ -19,13 +19,15 @@ COPY . .
 # Create necessary directories
 RUN mkdir -p certs logs
 
-# Set proper permissions for configuration files
+# Set proper permissions for configuration files and entrypoint
 RUN chmod 644 bssci_config.py endpoints.json && \
     chown root:root bssci_config.py endpoints.json && \
-    touch .env && chmod 666 .env
+    touch .env && chmod 666 .env && \
+    chmod +x docker-entrypoint.sh
 
 # Expose ports
 EXPOSE 16018 5000
 
-# Default command
+# Run the entrypoint script which generates certificates and then launches the app
+ENTRYPOINT ["./docker-entrypoint.sh"]
 CMD ["python", "web_main.py"]

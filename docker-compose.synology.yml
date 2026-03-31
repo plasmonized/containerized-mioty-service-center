@@ -10,7 +10,7 @@ services:
       - "5056:5000"    # Web UI port
     volumes:
       # Use Synology-compatible volume mounts
-      - ./certs:/app/certs:ro
+      - ./certs:/app/certs:rw
       - ./logs:/app/logs:rw
       - ./data:/app/data:rw
       # Copy config files to container-writable locations

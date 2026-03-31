@@ -50,7 +50,7 @@ GID=1000          # Group ID for file permissions
 
 The following directories are mounted as volumes:
 
-- `./certs` - SSL certificates (read-only)
+- `./certs` - SSL certificates (writable so the container can auto-generate them if missing)
 - `./endpoints.json` - Sensor configuration
 - `./bssci_config.py` - Service configuration
 - `./logs` - Application logs

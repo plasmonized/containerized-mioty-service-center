@@ -12,7 +12,7 @@ services:
       - "16019:16018"  # TLS Server port
       - "5056:5000"    # Web UI port
     volumes:
-      - ./certs:/app/certs:ro
+      - ./certs:/app/certs:rw
       - ./endpoints.json:/app/endpoints.json:rw
       - ./bssci_config.py:/app/bssci_config.py:rw
       - ./.env:/app/.env:rw

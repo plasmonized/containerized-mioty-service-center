@@ -627,8 +627,43 @@ The main dashboard provides a redesigned real-time system overview with mioty br
 
 #### Certificate Files Required
 - `ca_cert.pem`: Certificate Authority certificate
+- `ca_key.pem`: Certificate Authority private key
 - `service_center_cert.pem`: Service center certificate
 - `service_center_key.pem`: Service center private key
+
+#### Base Station Certificates
+
+Every base station requires its own client certificate signed by the shared CA for mutual TLS authentication. The Service Center manages these automatically:
+
+- **Auto-generation**: A certificate is created when a base station is added (default behaviour).
+- **Manual generation** via Web UI (Base Stations page) or REST API:
+  ```http
+  POST /api/base-stations/<eui>/certificate/generate
+  ```
+- **Download** the certificate bundle (key + cert ZIP) for provisioning:
+  ```http
+  GET /api/base-stations/<eui>/certificate/download
+  ```
+- **Status overview** for all base station certificates:
+  ```http
+  GET /api/base-stations/certificates/status
+  ```
+
+Each base station stores its certificate files in a dedicated subdirectory, so any number of base stations are supported without conflicts:
+
+```
+certs/
+├── ca_cert.pem                       # shared CA
+├── ca_key.pem
+├── service_center_cert.pem
+├── service_center_key.pem
+├── bs_aabbccddeeff0011/              # Base Station 1
+│   ├── aabbccddeeff0011_cert.pem
+│   └── aabbccddeeff0011_key.pem
+└── bs_1122334455667788/              # Base Station 2
+    ├── 1122334455667788_cert.pem
+    └── 1122334455667788_key.pem
+```
 
 ## API Reference
 

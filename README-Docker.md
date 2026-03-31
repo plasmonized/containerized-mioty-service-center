@@ -61,12 +61,45 @@ The container will automatically generate self-signed SSL certificates if none a
 
 For production, provide your own certificates:
 
-```bash
+```
 certs/
 ├── ca_cert.pem
+├── ca_key.pem
 ├── service_center_cert.pem
 └── service_center_key.pem
 ```
+
+#### Base Station Certificates
+
+Each base station requires its own client certificate signed by the shared CA. The Service Center manages these automatically:
+
+- **Auto-generation on add**: When a base station is added via the Web UI or `POST /api/base-stations`, a certificate is generated automatically (default: `generate_cert=true`).
+- **Manual generation**: Trigger certificate generation at any time via the Web UI (Base Stations page) or the API:
+  ```http
+  POST /api/base-stations/<eui>/certificate/generate
+  ```
+- **Download**: Retrieve the certificate bundle (key + cert) as a ZIP file:
+  ```http
+  GET /api/base-stations/<eui>/certificate/download
+  ```
+
+Each base station gets its own subdirectory under `./certs`, so multiple base stations are fully supported without conflicts:
+
+```
+certs/
+├── ca_cert.pem                       # shared CA
+├── ca_key.pem
+├── service_center_cert.pem
+├── service_center_key.pem
+├── bs_aabbccddeeff0011/              # Base Station 1
+│   ├── aabbccddeeff0011_cert.pem
+│   └── aabbccddeeff0011_key.pem
+└── bs_1122334455667788/              # Base Station 2
+    ├── 1122334455667788_cert.pem
+    └── 1122334455667788_key.pem
+```
+
+Because `./certs` is mounted as a writable volume (`:rw`), all generated certificates are persisted on the host and survive container restarts.
 
 ## Management Commands
 

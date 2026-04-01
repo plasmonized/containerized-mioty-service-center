@@ -2,8 +2,7 @@ import os
 from dotenv import load_dotenv
 
 # Load environment variables: prefer .env (mounted volume), fall back to .env
-if not load_dotenv('.env'):
-    load_dotenv()
+load_dotenv()
 
 LISTEN_HOST = os.getenv("LISTEN_HOST", "0.0.0.0")
 LISTEN_PORT = int(os.getenv("LISTEN_PORT", "16018"))

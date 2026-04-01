@@ -28,3 +28,7 @@ EXPOSE 16018 5000
 
 # Default command
 CMD ["python", "web_main.py"]
+CMD ["python", "web_main.py"]
+CMD ["python", "web_main.py"]
+CMD ["python", "web_main.py"]
+CMD ["python", "web_main.py"]

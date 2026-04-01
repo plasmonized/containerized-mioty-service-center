@@ -9,18 +9,6 @@ from main import main as bssci_main
 # Configure logging with timezone
 from datetime import datetime, timezone, timedelta
 
-# Check for Synology Docker mode
-if os.getenv('SYNOLOGY_DOCKER') == '1':
-    print("=" * 50)
-    print("SYNOLOGY DOCKER MODE DETECTED")
-    print("=" * 50)
-    print("Configuration files have been copied to writable container locations.")
-    print("Changes made via web UI will be container-local only.")
-    print("To persist changes, backup config files after making changes:")
-    print("  docker cp bssci-service-center:/app/bssci_config.py ./bssci_config.py")
-    print("  docker cp bssci-service-center:/app/endpoints.json ./endpoints.json")
-    print("=" * 50)
-
 class TimezoneFormatter(logging.Formatter):
     def __init__(self, fmt, datefmt=None):
         super().__init__(fmt, datefmt)
@@ -56,29 +44,30 @@ logger = logging.getLogger(__name__)
 tls_server_instance = None
 
 def fix_env_file_permissions():
-    """Ensure .env file has proper permissions for configuration updates"""
-    env_file = '.env'
+    """Ensure config/.env file has proper permissions for configuration updates"""
+    env_file = 'config/.env'
     try:
         if os.path.exists(env_file):
             # Check if file is writable
             if not os.access(env_file, os.W_OK):
-                logger.info("🔧 Fixing .env file permissions...")
+                logger.info("🔧 Fixing config/.env file permissions...")
                 # Try to make it writable
                 current_mode = os.stat(env_file).st_mode
                 os.chmod(env_file, current_mode | 0o666)
-                logger.info("✅ .env file permissions fixed")
+                logger.info("✅ config/.env file permissions fixed")
             else:
-                logger.info("✅ .env file permissions OK")
+                logger.info("✅ config/.env file permissions OK")
         else:
-            # Create .env file if it doesn't exist
-            logger.info("📁 Creating .env file...")
+            # Create config/.env file if it doesn't exist
+            logger.info("📁 Creating config/.env file...")
+            os.makedirs('config', exist_ok=True)
             with open(env_file, 'a'):
                 pass
             os.chmod(env_file, 0o666)
-            logger.info("✅ .env file created with proper permissions")
+            logger.info("✅ config/.env file created with proper permissions")
     except Exception as e:
-        logger.warning(f"⚠️  Warning: Could not fix .env permissions: {e}")
-        logger.warning("   Configuration updates may fail in some environments")
+        logger.warning(f"⚠️  Warning: Could not fix config/.env permissions: {e}")
+        logger.warning("   Configuration updates may fail if the config/ volume is not writable")
 
 def run_web_ui():
     """Run the Flask web UI in a separate thread"""

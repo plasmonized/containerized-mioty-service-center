@@ -1,0 +1,26 @@
+{
+  "positions": {
+    "bs_70B3D59CD00009F6": {
+      "deviceType": "bs",
+      "eui": "70B3D59CD00009F6",
+      "type": "floorplan",
+      "x": 4046.1206896551726,
+      "y": 536.4722521551724
+    },
+    "sensor_TEST1234567890AB": {
+      "type": "floorplan",
+      "x": 4818.1061946902655,
+      "y": 2067.375,
+      "deviceType": "sensor",
+      "eui": "TEST1234567890AB"
+    },
+    "sensor_TEST1234567890GH": {
+      "deviceType": "sensor",
+      "eui": "TEST1234567890GH",
+      "type": "floorplan",
+      "x": 1078.9655172413793,
+      "y": 914.1101831896552
+    }
+  },
+  "floorplanZoom": 0.12639821029082773
+}

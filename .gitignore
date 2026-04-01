@@ -4,3 +4,6 @@ attached_assets/*
 .env
 /logs/
 /base_stations.json
+dist/
+docs/.vitepress/cache/
+node_modules/

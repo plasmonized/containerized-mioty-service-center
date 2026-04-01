@@ -22,5 +22,5 @@ RUN mkdir -p certs logs config data \
 # Expose ports
 EXPOSE 16018 5000
 
-ENTRYPOINT ["/app/docker-entrypoint.sh"]
+ENTRYPOINT ["./docker-entrypoint.sh"]
 CMD ["python", "web_main.py"]

@@ -44,4 +44,4 @@ services:
 
 networks:
   bssci-network:
-    driver: bridge
+    driver: bridge  

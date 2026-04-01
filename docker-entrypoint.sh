@@ -84,3 +84,25 @@ else
         touch /app/.env 2>/dev/null || true
         chmod 644 /app/bssci_config.py /app/endpoints.json 2>/dev/null || true
         chmod 666 /app/.env 2>/dev/null || true
+    fi
+fi
+
+# Generate self-signed certificates if they don't exist
+CERT_DIR="$APP_DIR/certs"
+mkdir -p $CERT_DIR
+
+if [ ! -f "$CERT_DIR/ca_cert.pem" ] || [ ! -f "$CERT_DIR/service_center_cert.pem" ] || [ ! -f "$CERT_DIR/service_center_key.pem" ]; then
+    echo "Generating SSL certificates in $CERT_DIR..."
+    
+    openssl genrsa -out $CERT_DIR/ca_key.pem 4096
+    openssl req -new -x509 -days 365 -key $CERT_DIR/ca_key.pem -out $CERT_DIR/ca_cert.pem -subj "/C=US/ST=State/L=City/O=Organization/CN=BSSCI-CA"
+    openssl genrsa -out $CERT_DIR/service_center_key.pem 4096
+    openssl req -new -key $CERT_DIR/service_center_key.pem -out $CERT_DIR/service_center.csr -subj "/C=US/ST=State/L=City/O=Organization/CN=BSSCI-ServiceCenter"
+    openssl x509 -req -in $CERT_DIR/service_center.csr -CA $CERT_DIR/ca_cert.pem -CAkey $CERT_DIR/ca_key.pem -CAcreateserial -out $CERT_DIR/service_center_cert.pem -days 365
+    rm $CERT_DIR/service_center.csr
+    
+    echo "SSL certificates generated successfully"
+fi
+
+echo "Starting BSSCI Service Center..."
+exec "$@"        

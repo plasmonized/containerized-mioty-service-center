@@ -1,3 +1,4 @@
+
 #!/bin/bash
 set -e
 
@@ -7,10 +8,10 @@ echo "=== BSSCI Service Center Startup ==="
 if [ "$ENABLE_LIVE_UPDATE" = "1" ]; then
     echo "Live Update Mode ENABLED"
     APP_DIR="/app-data"
-
+    
     # Create writable app directory if it doesn't exist
     mkdir -p $APP_DIR
-
+    
     # Copy application files on first run or if VERSION changed
     if [ ! -f "$APP_DIR/web_main.py" ]; then
         echo "First run: Copying application files to writable volume..."
@@ -27,15 +28,15 @@ if [ "$ENABLE_LIVE_UPDATE" = "1" ]; then
             fi
         fi
     fi
-
+    
     # Ensure directories exist
     mkdir -p $APP_DIR/logs $APP_DIR/certs $APP_DIR/data
-
+    
     # Copy certs from mounted volume if available
     if [ -d "/certs" ] && [ "$(ls -A /certs 2>/dev/null)" ]; then
         cp -r /certs/* $APP_DIR/certs/ 2>/dev/null || true
     fi
-
+    
     # Copy config from mounted volume if available
     if [ -f "/config/endpoints.json" ]; then
         cp /config/endpoints.json $APP_DIR/endpoints.json 2>/dev/null || true
@@ -46,7 +47,7 @@ if [ "$ENABLE_LIVE_UPDATE" = "1" ]; then
     if [ -f "/config/.env" ]; then
         cp /config/.env $APP_DIR/.env 2>/dev/null || true
     fi
-
+    
     cd $APP_DIR
     echo "Working directory: $APP_DIR (writable)"
 else
@@ -105,4 +106,4 @@ if [ ! -f "$CERT_DIR/ca_cert.pem" ] || [ ! -f "$CERT_DIR/service_center_cert.pem
 fi
 
 echo "Starting BSSCI Service Center..."
-exec "$@"        
+exec "$@"

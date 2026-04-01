@@ -1210,8 +1210,7 @@ SECRET_KEY=your-secret-key-here"""
         
         # Reload environment variables
         from dotenv import load_dotenv
-        if not load_dotenv('.env', override=True):
-            load_dotenv(override=True)
+        load_dotenv(override=True)
             
         # Force reload of the bssci_config module to pick up new .env values
         import importlib

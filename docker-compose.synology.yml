@@ -44,4 +44,3 @@ services:
 
 networks:
   bssci-network:
-    driver: bridge

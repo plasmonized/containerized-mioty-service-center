@@ -1196,7 +1196,7 @@ SECRET_KEY=your-secret-key-here"""
             with open('.env', 'w') as f:
                 f.write(env_content)
         except PermissionError as pe:
-            # Try alternative approach for Docker environments
+            # Try alternative approach for Docker/Synology environments
             try:
                 import tempfile
                 import shutil

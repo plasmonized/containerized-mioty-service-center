@@ -212,7 +212,7 @@ The BSSCI Service Center has been tested and verified with the following base st
 
 ## Configuration
 
-### Environment Variables (config/.env)
+### Environment Variables (.env)
 
 ```bash
 # TLS Server Configuration
@@ -236,7 +236,7 @@ AUTO_DETACH_WARNING_TIMEOUT=129600  # 36 hours in seconds
 AUTO_DETACH_CHECK_INTERVAL=3600     # Check every hour
 
 # Application Configuration
-SENSOR_CONFIG_FILE=config/endpoints.json
+SENSOR_CONFIG_FILE=endpoints.json
 STATUS_INTERVAL=300
 DEDUPLICATION_DELAY=2.0
 ```

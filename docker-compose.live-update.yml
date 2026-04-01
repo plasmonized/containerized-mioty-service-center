@@ -17,7 +17,7 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - ENABLE_LIVE_UPDATE=1
-      - BASE_STATION_CONFIG_FILE=/app-data/base_stations.json
+      - BASE_STATION_CONFIG_FILE=/app-data/data/base_stations.json
     networks:
       - bssci-network
     logging:

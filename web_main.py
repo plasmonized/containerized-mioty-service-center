@@ -9,6 +9,18 @@ from main import main as bssci_main
 # Configure logging with timezone
 from datetime import datetime, timezone, timedelta
 
+# Check for Synology Docker mode
+if os.getenv('SYNOLOGY_DOCKER') == '1':
+    print("=" * 50)
+    print("SYNOLOGY DOCKER MODE DETECTED")
+    print("=" * 50)
+    print("Configuration files have been copied to writable container locations.")
+    print("Changes made via web UI will be container-local only.")
+    print("To persist changes, backup config files after making changes:")
+    print("  docker cp bssci-service-center:/app/bssci_config.py ./bssci_config.py")
+    print("  docker cp bssci-service-center:/app/endpoints.json ./endpoints.json")
+    print("=" * 50)
+
 class TimezoneFormatter(logging.Formatter):
     def __init__(self, fmt, datefmt=None):
         super().__init__(fmt, datefmt)
@@ -60,14 +72,13 @@ def fix_env_file_permissions():
         else:
             # Create .env file if it doesn't exist
             logger.info("📁 Creating .env file...")
-            os.makedirs('config', exist_ok=True)
             with open(env_file, 'a'):
                 pass
             os.chmod(env_file, 0o666)
             logger.info("✅ .env file created with proper permissions")
     except Exception as e:
         logger.warning(f"⚠️  Warning: Could not fix .env permissions: {e}")
-        logger.warning("   Configuration updates may fail if the volume is not writable")
+        logger.warning("   Configuration updates may fail in some environments")
 
 def run_web_ui():
     """Run the Flask web UI in a separate thread"""

@@ -629,3 +629,629 @@ The main dashboard provides a redesigned real-time system overview with mioty br
 - `ca_cert.pem`: Certificate Authority certificate
 - `service_center_cert.pem`: Service center certificate
 - `service_center_key.pem`: Service center private key
+
+## API Reference
+
+### Sensor Operations
+
+#### Get All Sensors
+```http
+GET /api/sensors
+```
+
+Returns complete sensor status including registration, activity, and warning information.
+
+#### Add/Update Sensor
+```http
+POST /api/sensors
+Content-Type: application/json
+
+{
+  "eui": "FCA84A0300001234",
+  "nwKey": "0011223344556677889AABBCCDDEEFF00", 
+  "shortAddr": "1234",
+  "bidi": false
+}
+```
+
+#### Delete Sensor
+```http
+DELETE /api/sensors/{eui}
+```
+
+#### Detach Single Sensor
+```http
+POST /api/sensors/{eui}/detach
+```
+
+Detaches the sensor from all connected base stations.
+
+#### Clear All Sensors
+```http
+POST /api/sensors/clear
+```
+
+Performs bulk detachment and clears all sensor configurations.
+
+#### Export Sensors to CSV
+```http
+GET /api/sensors/export
+```
+
+Downloads all sensor configurations as CSV file with columns: eui, nwKey, shortAddr, bidi.
+
+#### Import Sensors from CSV/TXT
+```http
+POST /api/sensors/import
+Content-Type: multipart/form-data
+
+file: <csv or txt file>
+```
+
+Imports sensors from CSV or TXT file. Supports comma, semicolon, and tab delimiters. Automatically detects header row.
+
+### Variable MAC (VM) Operations
+
+#### Activate VM Sub-Channel
+```http
+POST /api/vm/activate
+Content-Type: application/json
+
+{
+  "eui": "FCA84A0300001234"
+}
+```
+
+#### Deactivate VM Sub-Channel
+```http
+POST /api/vm/deactivate
+Content-Type: application/json
+
+{
+  "eui": "FCA84A0300001234"
+}
+```
+
+#### Get VM Status
+```http
+GET /api/vm/status
+```
+
+Returns status of all active VM sub-channels.
+
+#### Send VM Downlink Data
+```http
+POST /api/vm/dlData
+Content-Type: application/json
+
+{
+  "eui": "FCA84A0300001234",
+  "payload": "48656C6C6F"
+}
+```
+
+### Traffic Monitoring
+
+#### Get Traffic Metrics
+```http
+GET /api/traffic/metrics
+```
+
+Returns real-time traffic statistics including:
+- Messages in/out counts
+- Dropped messages (deduplication)
+- Bytes transferred
+- VM message counts
+- Operation counts (attach, detach, status)
+- 60-minute history for charting
+
+#### Reset Traffic Metrics
+```http
+POST /api/traffic/reset
+```
+
+Resets all traffic counters to zero.
+
+### System Status
+
+#### Service Status
+```http
+GET /api/bssci/status
+```
+
+Returns comprehensive system status including:
+- Service running state
+- Base station connections
+- Sensor registration statistics
+- MQTT connectivity
+- TLS server status
+
+#### Base Station Status
+```http
+GET /api/base_stations
+```
+
+Returns detailed information about connected and connecting base stations.
+
+### Configuration Management
+
+#### Get Configuration
+```http
+GET /config
+```
+
+#### Update Configuration  
+```http
+POST /api/config
+Content-Type: application/json
+
+{
+  "MQTT_BROKER": "your-broker.com",
+  "AUTO_DETACH_ENABLED": true,
+  "AUTO_DETACH_TIMEOUT": 259200,
+  "AUTO_DETACH_WARNING_TIMEOUT": 129600
+}
+```
+
+## Advanced Features
+
+### Message Deduplication
+
+The system implements sophisticated message deduplication for multi-base station deployments:
+
+#### How It Works
+1. **Message Reception**: Same sensor message received from multiple base stations
+2. **Quality Comparison**: SNR values compared between base stations  
+3. **Best Path Selection**: Message with highest SNR is selected for publication
+4. **Preferred Path Update**: System learns optimal routing for each sensor
+5. **Duplicate Filtering**: Lower quality duplicates are discarded
+
+#### Configuration
+- **Deduplication Delay**: `DEDUPLICATION_DELAY = 2.0` seconds
+- **Buffer Management**: Automatic cleanup of processed messages
+- **Statistics Tracking**: Real-time duplicate rate monitoring
+
+#### Statistics Available
+- Total messages received
+- Duplicate messages filtered  
+- Messages published
+- Duplication rate percentage
+
+### Preferred Downlink Path Management
+
+The system automatically tracks the best communication path for each sensor:
+
+#### Signal Quality Tracking
+- **SNR Monitoring**: Tracks Signal-to-Noise Ratio for each sensor-base station pair
+- **Dynamic Updates**: Continuously updates preferred path based on signal quality
+- **Path Persistence**: Stores preferred paths in sensor configuration
+- **Multi-Base Station Support**: Handles sensors communicating through multiple base stations
+
+#### Path Selection Algorithm
+1. Message received with SNR measurement
+2. Compare with current preferred path SNR
+3. Update preferred path if new SNR is better
+4. Save configuration with updated preferred path
+5. Use preferred path for future downlink messages
+
+### Queue Management System
+
+#### Asynchronous Queue Architecture
+- **MQTT Output Queue**: Messages to be published to MQTT broker
+- **MQTT Input Queue**: Configuration and command messages from MQTT
+- **Queue Monitoring**: Real-time queue size monitoring and statistics
+- **Health Checking**: Automatic detection and recovery from queue issues
+
+#### Queue Statistics
+- Queue sizes and utilization
+- Message processing rates
+- Error rates and recovery statistics
+- Performance metrics and bottleneck detection
+
+### Security Features
+
+#### SSL/TLS Security
+- **Mutual Authentication**: Base stations must present valid certificates
+- **Certificate Validation**: Full chain validation with CA verification
+- **Secure Channels**: All communication encrypted with TLS 1.2+
+- **Certificate Management**: Web-based certificate upload, generation, and backup
+
+#### User Authentication & Role-Based Access Control
+
+The system implements a comprehensive authentication and authorization system:
+- **Three User Roles**:
+  - **Admin**: Full access to all features including user management, configuration, and system updates
+  - **User**: Can manage sensors and base stations, view dashboards and logs
+  - **Viewer**: Read-only access to dashboards, sensor data, and monitoring pages
+- **Login Required**: All pages require authentication; unauthenticated requests redirect to login page
+- **API Protection**: All API endpoints protected with permission decorators based on user role
+- **User Management**: Users configured via `users.json` file with role assignments
+
+#### Access Control
+- **Web Interface Security**: Session-based access control with role-based permissions
+- **API Protection**: Request validation, sanitization, and role-based permission decorators
+- **Certificate-Based Auth**: Base station authentication via client certificates
+- **MQTT Security**: Username/password authentication for MQTT broker
+
+## Troubleshooting
+
+### Common Issues
+
+#### Base Station Connection Issues
+
+**Problem**: Base stations cannot connect to TLS server
+
+**Solutions**:
+1. **Certificate Issues**:
+   ```bash
+   # Check certificate validity
+   openssl x509 -in certs/service_center_cert.pem -text -noout
+   
+   # Verify CA certificate
+   openssl verify -CAfile certs/ca_cert.pem certs/service_center_cert.pem
+   ```
+
+2. **Network Connectivity**:
+   ```bash
+   # Check if port is accessible
+   telnet <service-center-ip> 16018
+   
+   # Verify firewall settings
+   netstat -tlnp | grep 16018
+   ```
+
+3. **SSL Configuration**:
+   - Ensure base station has correct CA certificate
+   - Verify base station client certificate is signed by same CA
+   - Check certificate expiration dates
+
+#### MQTT Connectivity Issues
+
+**Problem**: MQTT broker connection failures
+
+**Solutions**:
+1. **Authentication Issues**:
+   - Verify MQTT_USERNAME and MQTT_PASSWORD in configuration
+   - Check broker access control lists (ACLs)
+   - Test credentials with mosquitto_pub/sub
+
+2. **Network Issues**:
+   ```bash
+   # Test MQTT connectivity
+   mosquitto_pub -h <broker-host> -p <port> -u <username> -P <password> -t "test" -m "hello"
+   ```
+
+3. **Topic Permissions**:
+   - Ensure user has publish/subscribe permissions for all required topics
+   - Check broker topic filter configurations
+
+#### Sensor Registration Problems
+
+**Problem**: Sensors not registering properly
+
+**Solutions**:
+1. **Configuration Validation**:
+   - Verify EUI format (16 hex characters)
+   - Check network key format (32 hex characters)  
+   - Validate short address (4 hex characters)
+   - Ensure sensor configuration is saved in endpoints.json
+
+2. **Base Station Issues**:
+   - Verify base station is connected to service center
+   - Check base station sensor capacity
+   - Review base station logs for errors
+
+3. **Protocol Issues**:
+   - Monitor TLS server logs for BSSCI protocol errors
+   - Verify BSSCI protocol version compatibility
+   - Check for network timeout issues
+
+#### Auto-Detach Issues
+
+**Problem**: Sensors being detached unexpectedly
+
+**Solutions**:
+1. **Timeout Configuration**:
+   - Review AUTO_DETACH_TIMEOUT setting (default 72 hours)
+   - Check AUTO_DETACH_WARNING_TIMEOUT (default 36 hours)
+   - Verify sensor communication frequency
+
+2. **Activity Tracking**:
+   - Monitor sensor last-seen timestamps in web interface
+   - Check for network issues preventing sensor communication
+   - Verify sensor transmission schedules
+
+3. **Disable Auto-Detach**:
+   ```python
+   # In bssci_config.py or via web interface
+   AUTO_DETACH_ENABLED = False
+   ```
+
+### Debugging Tools
+
+#### Log Analysis
+```bash
+# View real-time logs
+tail -f logs/bssci_service.log
+
+# Filter by log level
+grep "ERROR" logs/bssci_service.log
+
+# Search for specific sensor
+grep "FCA84A0300001234" logs/bssci_service.log
+
+# Monitor auto-detach activity
+grep "AUTO-DETACH" logs/bssci_service.log
+```
+
+#### MQTT Debugging
+```bash
+# Monitor all MQTT traffic
+mosquitto_sub -h <broker> -u <user> -P <pass> -t "#" -v
+
+# Test sensor commands
+mosquitto_pub -h <broker> -u <user> -P <pass> -t "EP/FCA84A0300001234/cmd/" -m "status"
+
+# Monitor specific sensor
+mosquitto_sub -h <broker> -u <user> -P <pass> -t "mioty/ep/FCA84A0300001234/#" -v
+```
+
+#### Web Interface Debugging
+- Use browser developer tools to monitor API calls
+- Check network tab for failed requests
+- Review console for JavaScript errors
+- Monitor WebSocket connections if applicable
+
+### Performance Monitoring
+
+#### System Metrics
+- Monitor CPU and memory usage
+- Check network bandwidth utilization
+- Review disk space for log files
+- Track message processing rates
+
+#### Queue Monitoring
+```bash
+# Monitor queue sizes via web interface
+curl http://localhost:5000/api/bssci/status | jq '.queue_statistics'
+```
+
+#### Base Station Load
+- Monitor base station connection counts
+- Track sensor registration distribution
+- Review base station CPU/memory from status reports
+- Analyze duty cycle and uptime statistics
+
+## Data Flow Details
+
+### Sensor Data Flow
+```
+Sensor → Base Station → Service Center → MQTT → Your Application
+```
+
+1. **Sensor Transmission**: Sensor sends data via mioty radio protocol
+2. **Base Station Reception**: Base station receives and processes sensor data
+3. **TLS Forwarding**: Base station forwards data to service center via secure TLS
+4. **Deduplication**: Service center processes and deduplicates messages
+5. **MQTT Publication**: Deduplicated data published to MQTT broker
+6. **Application Consumption**: Your application receives data from MQTT topics
+
+### Configuration Flow  
+```
+Web UI/MQTT → Service Center → Base Station → Sensor
+```
+
+1. **Configuration Input**: Via web interface or MQTT topic
+2. **Validation**: Service center validates configuration parameters
+3. **Storage**: Configuration saved to endpoints.json
+4. **Propagation**: Attach requests sent to connected base stations
+5. **Registration**: Base stations register sensors with provided configuration
+6. **Confirmation**: Registration status reported back to service center
+
+### Command Flow
+```
+MQTT/Web UI → Service Center → Base Station → Sensor
+```
+
+1. **Command Reception**: Commands received via MQTT or web interface
+2. **Processing**: Service center processes and validates commands
+3. **Execution**: Appropriate BSSCI protocol messages sent to base stations
+4. **Response**: Base stations respond with execution status
+5. **Notification**: Status updates sent via MQTT and web interface
+
+## Deployment Options
+
+### Development Mode
+```bash
+python web_main.py
+```
+- Includes web interface on port 5000
+- Detailed logging and debugging
+- Auto-reload on configuration changes
+
+### Production Mode  
+```bash
+python main.py
+```
+- Service only (no web interface)
+- Optimized logging
+- Production-ready performance
+
+### Docker Deployment
+
+#### Standard Deployment
+```bash
+docker-compose up -d --build
+```
+- Containerized deployment
+- Automatic certificate generation
+- Volume persistence for configuration and logs
+
+#### Docker Compose Configuration
+```yaml
+version: '3.8'
+
+services:
+  bssci-service-center:
+    build: .
+    container_name: bssci-service-center
+    user: "0:0"  # Run as root for write permissions
+    init: true
+    ports:
+      - "16019:16018"  # TLS Server port
+      - "5056:5000"    # Web UI port
+    volumes:
+      - ./certs:/app/certs:ro
+      - ./endpoints.json:/app/endpoints.json:rw
+      - ./bssci_config.py:/app/bssci_config.py:rw
+      - ./.env:/app/.env:rw
+      - ./base_stations.json:/app/data/base_stations.json:rw
+      - ./logs:/app/logs
+      - ./VERSION:/app/VERSION:rw  # Required for persistent updates
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
+      - BASE_STATION_CONFIG_FILE=/app/data/base_stations.json
+```
+
+#### Live-Update Mode (Synology/Docker)
+For installations where you want to update via the web UI without rebuilding the container:
+
+```bash
+docker-compose -f docker-compose.live-update.yml up -d --build
+```
+
+**Important for Live-Updates:**
+- Mount `VERSION` file as volume for persistent version tracking
+- Set `user: "0:0"` for write permissions on mounted files
+- After updates, restart container: `docker-compose restart`
+
+#### Synology NAS Setup
+```bash
+# Set file permissions
+chmod 666 /volume1/docker/bssci/endpoints.json
+chmod 666 /volume1/docker/bssci/VERSION
+chmod 666 /volume1/docker/bssci/.env
+```
+
+## Monitoring and Alerting
+
+### Log Monitoring
+- **Structured Logging**: JSON-formatted logs with timezone support
+- **Log Levels**: DEBUG, INFO, WARNING, ERROR with appropriate filtering
+- **Component Identification**: Clear logger names for each system component
+- **Performance Metrics**: Message processing times and queue statistics
+
+### Health Checks
+- **Service Health**: Regular health check endpoints
+- **Component Status**: Individual component status monitoring  
+- **Connection Monitoring**: Base station and MQTT broker connectivity
+- **Auto-Recovery**: Automatic reconnection and error recovery
+
+### Alerting Integration
+- **MQTT Notifications**: Real-time alerts via MQTT topics
+- **Web Interface Alerts**: Visual notifications in management interface
+- **Log-Based Monitoring**: Integration with log monitoring systems
+- **Custom Alerting**: Extensible notification system for integration
+
+## Integration Examples
+
+### Python Application Integration
+```python
+import paho.mqtt.client as mqtt
+import json
+
+def on_message(client, userdata, message):
+    topic = message.topic
+    payload = json.loads(message.payload.decode())
+    
+    if "/ul" in topic:
+        # Handle sensor data
+        sensor_eui = topic.split('/')[2]
+        sensor_data = payload['data']
+        print(f"Data from {sensor_eui}: {sensor_data}")
+    
+    elif "/warning" in topic:
+        # Handle inactivity warnings
+        sensor_eui = payload['sensor_eui'] 
+        hours_inactive = payload['inactive_hours']
+        print(f"Warning: Sensor {sensor_eui} inactive for {hours_inactive} hours")
+    
+    elif "/status" in topic and payload.get('action') == 'auto_detached':
+        # Handle auto-detach notifications
+        sensor_eui = payload['sensor_eui']
+        print(f"Alert: Sensor {sensor_eui} was auto-detached due to inactivity")
+
+client = mqtt.Client()
+client.on_message = on_message
+client.connect("broker-host", 1883, 60)
+client.subscribe("mioty/ep/+/ul")        # Sensor data
+client.subscribe("mioty/ep/+/warning")   # Inactivity warnings  
+client.subscribe("mioty/ep/+/status")    # Status updates
+client.loop_forever()
+```
+
+### Remote Sensor Management
+```python
+import paho.mqtt.publish as publish
+
+def detach_sensor(sensor_eui):
+    """Remotely detach a sensor"""
+    topic = f"EP/{sensor_eui}/cmd/"
+    payload = "detach"
+    publish.single(topic, payload, hostname="broker-host")
+
+def attach_sensor(sensor_eui):
+    """Remotely attach a sensor"""
+    topic = f"EP/{sensor_eui}/cmd/"
+    payload = "attach" 
+    publish.single(topic, payload, hostname="broker-host")
+
+def get_sensor_status(sensor_eui):
+    """Request sensor status"""
+    topic = f"EP/{sensor_eui}/cmd/"
+    payload = "status"
+    publish.single(topic, payload, hostname="broker-host")
+```
+
+## Best Practices
+
+### Configuration Management
+- **Regular Backups**: Backup endpoints.json and certificates regularly
+- **Version Control**: Track configuration changes with version control
+- **Validation**: Always validate configuration before applying
+- **Testing**: Test configuration changes in development environment first
+
+### Security
+- **Certificate Rotation**: Regularly update SSL certificates
+- **Access Control**: Limit access to management interfaces
+- **Audit Logging**: Monitor all configuration and operational changes
+- **Network Security**: Use firewalls and VPNs for production deployments
+
+### Performance Optimization
+- **Queue Monitoring**: Monitor queue sizes and processing rates
+- **Resource Usage**: Track CPU, memory, and network utilization  
+- **Base Station Distribution**: Balance sensor load across base stations
+- **Database Optimization**: Regular cleanup of old logs and data
+
+### Operational Procedures
+- **Health Monitoring**: Implement comprehensive health checking
+- **Alert Management**: Set up appropriate alerting for critical issues
+- **Backup Procedures**: Regular backup of configuration and certificates
+- **Disaster Recovery**: Documented procedures for service recovery
+
+## License
+
+This project is licensed under the terms specified in the LICENSE file.
+
+## Support
+
+For technical support and questions:
+- Check the troubleshooting section above
+- Review system logs for error details
+- Use the web interface diagnostic tools
+- Monitor MQTT topics for real-time system status
+
+---
+
+*BSSCI Service Center v1.660 - Professional IoT Device Management Platform*

@@ -12,15 +12,10 @@ services:
       - "16019:16018"  # TLS Server port
       - "5056:5000"    # Web UI port
     volumes:
-      - ./certs:/app/certs:rw
-      - ./endpoints.json:/app/endpoints.json:rw
-      - ./bssci_config.py:/app/bssci_config.py:rw
-      - ./.env:/app/.env:rw
-      - ./base_stations.json:/app/data/base_stations.json:rw
-      - ./logs:/app/logs
-      - ./coverage_positions.json:/app/coverage_positions.json:rw
-      - ./coverage_floorplan.txt:/app/coverage_floorplan.txt:rw
-      - ./users.json:/app/users.json:rw
+      - ./certs:/app/certs:rw             # TLS certificates (writable for auto-generation)
+      - ./config:/app/config:rw           # Configuration files
+      - ./data:/app/data:rw               # Application data
+      - ./logs:/app/logs:rw               # Log files
     restart: unless-stopped
     environment:
       - PYTHONUNBUFFERED=1

@@ -134,7 +134,7 @@ def build_vm_status_request(opID: int) -> dict[str, object]:
     }
 
 
-def build_vm_status_response(opID: int, mac_types: list = None) -> dict[str, object]:
+def build_vm_status_response(opID: int, mac_types: list | None = None) -> dict[str, object]:
     """Build VM sub-channel status response
 
     Per BSSCI VM specification:
@@ -160,7 +160,7 @@ def build_vm_dl_data(
     ul_rssi: float = 0,
     carr_off_range: int = 5,
     carr_space: int = 1,
-    ul_crc: list = None,
+    ul_crc: list | None = None,
     tsi: int = 128,
     sync_burst: bool = False,
     dual_chan: bool = False,

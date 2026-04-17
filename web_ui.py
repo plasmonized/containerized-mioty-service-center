@@ -23,7 +23,7 @@ tls_server_instance = None
 
 # Uptime tracking
 bs_uptime_events = {}
-_last_known_bs_status = {}
+_last_known_bs_status: dict[str, dict[str, str | int]] = {}
 
 
 def record_bs_event(eui, event_type):

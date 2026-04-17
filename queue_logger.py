@@ -15,7 +15,7 @@ class QueueLogger:
         self.original_get = queue_instance.get
         self.daily_counter = 1  # Daily counter that resets
         self.last_reset_date = datetime.now().date()
-        self.stats = {
+        self.stats: dict[str, int | float | None] = {
             "put_count": 0,
             "get_count": 0,
             "current_size": 0,
@@ -26,8 +26,8 @@ class QueueLogger:
         }
 
         # Monkey patch the queue methods
-        queue_instance.put = self._logged_put
-        queue_instance.get = self._logged_get
+        queue_instance.put = self._logged_put  # type: ignore[method-assign]
+        queue_instance.get = self._logged_get  # type: ignore[method-assign]
 
         logger.info(f"🔍 Queue Logger initialized for '{queue_name}' (Daily Counter: {self.daily_counter})")
         logger.info(f"   ✅ Queue '{queue_name}' logging enabled (Daily Counter: {self.daily_counter})")

@@ -70,8 +70,8 @@ class TLSServer:
         self.sensor_packet_stats: dict[str, dict[str, Any]] = {}
 
         # SNR/RSSI history for graphs (last 288 data points, 5 min intervals = 24 hours)
-        self.snr_rssi_history: list = []
-        self._last_snr_history_update = 0
+        self.snr_rssi_history: list[dict[str, float]] = []
+        self._last_snr_history_update = 0.0
 
         # Per-sensor heartbeat tracking for online/offline status
         # eui -> {avg_interval, last_seen, state, offline_since, warning_active, message_timestamps, last_state_change}
@@ -2156,7 +2156,7 @@ class TLSServer:
 
     # ==================== Variable MAC (VM) Sub-Channel Methods ====================
 
-    def _add_vm_log(self, event: str, details: str, bs_eui: str = None) -> None:
+    def _add_vm_log(self, event: str, details: str, bs_eui: str | None = None) -> None:
         """Add an entry to the VM log"""
         log_entry = {"timestamp": datetime.now(UTC).isoformat(), "event": event, "details": details, "bs_eui": bs_eui}
         self.vm_log.append(log_entry)
@@ -2380,6 +2380,8 @@ class TLSServer:
 
         vm_info = self.vm_active_sensors[sensor_eui]
         preferred_bs = vm_info.get("bs_eui")
+        mac_type = vm_info.get("mac_type", 0)
+        user_data = list(data)  # Convert bytes to list of integers
 
         # Find the writer for the preferred base station
         target_writer = None
@@ -2405,7 +2407,7 @@ class TLSServer:
                 "timestamp": asyncio.get_event_loop().time(),
             }
 
-            msg_pack = encode_message(messages.build_vm_dl_data(sensor_eui, op_id, data, port))
+            msg_pack = encode_message(messages.build_vm_dl_data(op_id, mac_type, user_data, port))
             target_writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
             await target_writer.drain()
 

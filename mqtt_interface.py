@@ -240,7 +240,7 @@ class MQTTClient:
                         or "not currently connected" in str(e).lower()
                     ):
                         logger.error("   CONNECTION ERROR - TRIGGERING RECONNECTION")
-                        await self.mqtt_out_queue.put(msg)  # Put message back
+                        await self.mqtt_out_queue.put(msg)  # type: ignore[arg-type]
                         raise
                     # For other errors, continue
                     logger.error("   NON-CONNECTION ERROR - Continuing...")

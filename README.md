@@ -1237,6 +1237,28 @@ def get_sensor_status(sensor_eui):
 - **Backup Procedures**: Regular backup of configuration and certificates
 - **Disaster Recovery**: Documented procedures for service recovery
 
+## Documentation
+
+The documentation is built with [VitePress](https://vitepress.dev) and supports [Mermaid](https://mermaid.js.org) diagrams.
+
+### Build Documentation
+
+```bash
+# Install dependencies
+npm install
+
+# Development server (live reload)
+npm run docs:dev
+
+# Build static documentation
+npm run docs:build
+
+# Preview built documentation
+npm run docs:preview
+```
+
+The built documentation is output to the `dist/` directory.
+
 ## License
 
 This project is licensed under the terms specified in the LICENSE file.

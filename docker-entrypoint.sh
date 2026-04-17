@@ -54,38 +54,55 @@ else
     echo "Standard Mode (read-only, Live Updates DISABLED)"
     echo "Set ENABLE_LIVE_UPDATE=1 to enable in-app updates"
     APP_DIR="/app"
-    
-    # Ensure proper permissions on log directory
-    mkdir -p /app/logs
+
+    # Ensure required directories exist
+    mkdir -p /app/config /app/data /app/logs /app/certs
     chmod 755 /app/logs
 
-    # Ensure certificates directory exists
-    mkdir -p /app/certs
+    # --- Populate /app/config with defaults on first run ---
 
-    # Handle Synology Docker setup
-    if [ "$SYNOLOGY_DOCKER" = "1" ]; then
-        echo "Synology Docker mode detected - copying config files to writable locations"
-        
-        if [ -f "/tmp/host_bssci_config.py" ]; then
-            cp /tmp/host_bssci_config.py /app/bssci_config.py
-        fi
-        
-        if [ -f "/tmp/host_endpoints.json" ]; then
-            cp /tmp/host_endpoints.json /app/endpoints.json
-        fi
-        
-        if [ -f "/tmp/host_.env" ]; then
-            cp /tmp/host_.env /app/.env
-        fi
-        
-        touch /app/.env 2>/dev/null || true
-        chmod 644 /app/bssci_config.py /app/endpoints.json 2>/dev/null || true
-        chmod 666 /app/.env 2>/dev/null || true
-    else
-        touch /app/.env 2>/dev/null || true
-        chmod 644 /app/bssci_config.py /app/endpoints.json 2>/dev/null || true
-        chmod 666 /app/.env 2>/dev/null || true
+    # .env: copy from bundled example if not present
+    if [ ! -f /app/config/.env ]; then
+        echo "Creating default config/.env from .env.example..."
+        cp /app/.env.example /app/config/.env 2>/dev/null || touch /app/config/.env
+        chmod 666 /app/config/.env
     fi
+
+    # endpoints.json
+    if [ ! -f /app/config/endpoints.json ]; then
+        echo "Creating default config/endpoints.json..."
+        cp /app/endpoints.json /app/config/endpoints.json 2>/dev/null || echo '[]' > /app/config/endpoints.json
+        chmod 644 /app/config/endpoints.json
+    fi
+
+    # users.json
+    if [ ! -f /app/config/users.json ]; then
+        echo "Creating default config/users.json..."
+        cp /app/users.json /app/config/users.json 2>/dev/null || echo '{"users":{}}' > /app/config/users.json
+        chmod 644 /app/config/users.json
+    fi
+
+    # coverage_positions.json
+    if [ ! -f /app/config/coverage_positions.json ]; then
+        echo "Creating default config/coverage_positions.json..."
+        echo '{}' > /app/config/coverage_positions.json
+        chmod 644 /app/config/coverage_positions.json
+    fi
+
+    # coverage_floorplan.txt
+    if [ ! -f /app/config/coverage_floorplan.txt ]; then
+        touch /app/config/coverage_floorplan.txt
+        chmod 644 /app/config/coverage_floorplan.txt
+    fi
+
+    # --- Populate /app/data with defaults on first run ---
+
+    if [ ! -f /app/data/base_stations.json ]; then
+        echo "Creating default data/base_stations.json..."
+        echo '{"base_stations":{}}' > /app/data/base_stations.json
+        chmod 644 /app/data/base_stations.json
+    fi
+
 fi
 
 # Generate self-signed certificates if they don't exist

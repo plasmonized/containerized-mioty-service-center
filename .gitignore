@@ -2,8 +2,9 @@ certs/*
 _pycache_
 attached_assets/*
 .env
-/logs/
-/base_stations.json
+logs/
+base_stations.json
+
 dist/
 docs/.vitepress/cache/
 node_modules/

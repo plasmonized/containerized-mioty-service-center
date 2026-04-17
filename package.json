@@ -1,0 +1,31 @@
+{
+  "name": "containerized-mioty-service-center-docs",
+  "version": "1.0.0",
+  "description": "The BSSCI Service Center is a comprehensive IoT device management system that provides secure communication between mioty sensors, base stations, and MQTT brokers. It implements the BSSCI (Base Station Service Center Interface) protocol with advanced features for sensor lifecycle management, automatic detachment, and real-time monitoring.",
+  "main": "index.js",
+  "scripts": {
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/plasmonized/containerized-mioty-Service-Center.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/plasmonized/containerized-mioty-Service-Center/issues"
+  },
+  "homepage": "https://github.com/plasmonized/containerized-mioty-Service-Center#readme",
+  "dependencies": {
+    "vitepress": "^1.6.4",
+    "vue": "^3.5.30"
+  },
+  "devDependencies": {
+    "mermaid": "^11.13.0",
+    "vitepress-plugin-mermaid": "^2.0.17"
+  }
+}

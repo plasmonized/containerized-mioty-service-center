@@ -1,16 +1,16 @@
 import asyncio
 import logging
+import os
 import threading
 import time
-import os
-from web_ui import app
-from main import main as bssci_main
 
 # Configure logging with timezone
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta, timezone
+
+from web_ui import app
 
 # Check for Synology Docker mode
-if os.getenv('SYNOLOGY_DOCKER') == '1':
+if os.getenv("SYNOLOGY_DOCKER") == "1":
     print("=" * 50)
     print("SYNOLOGY DOCKER MODE DETECTED")
     print("=" * 50)
@@ -21,6 +21,7 @@ if os.getenv('SYNOLOGY_DOCKER') == '1':
     print("  docker cp bssci-service-center:/app/endpoints.json ./endpoints.json")
     print("=" * 50)
 
+
 class TimezoneFormatter(logging.Formatter):
     def __init__(self, fmt, datefmt=None):
         super().__init__(fmt, datefmt)
@@ -29,24 +30,19 @@ class TimezoneFormatter(logging.Formatter):
 
     def formatTime(self, record, datefmt=None):
         # Convert UTC timestamp to local timezone
-        utc_time = datetime.fromtimestamp(record.created, tz=timezone.utc)
+        utc_time = datetime.fromtimestamp(record.created, tz=UTC)
         local_time = utc_time.astimezone(self.timezone)
         if datefmt:
             return local_time.strftime(datefmt)
         else:
-            return local_time.strftime('%Y-%m-%d %H:%M:%S')
+            return local_time.strftime("%Y-%m-%d %H:%M:%S")
+
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
 # Apply timezone formatter to all handlers
-timezone_formatter = TimezoneFormatter(
-    '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    '%Y-%m-%d %H:%M:%S'
-)
+timezone_formatter = TimezoneFormatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s", "%Y-%m-%d %H:%M:%S")
 for handler in logging.root.handlers:
     handler.setFormatter(timezone_formatter)
 
@@ -55,9 +51,10 @@ logger = logging.getLogger(__name__)
 # Global reference for TLS server instance
 tls_server_instance = None
 
+
 def fix_env_file_permissions():
     """Ensure .env file has proper permissions for configuration updates"""
-    env_file = '.env'
+    env_file = ".env"
     try:
         if os.path.exists(env_file):
             # Check if file is writable
@@ -72,7 +69,7 @@ def fix_env_file_permissions():
         else:
             # Create .env file if it doesn't exist
             logger.info("📁 Creating .env file...")
-            with open(env_file, 'a'):
+            with open(env_file, "a"):
                 pass
             os.chmod(env_file, 0o666)
             logger.info("✅ .env file created with proper permissions")
@@ -80,21 +77,26 @@ def fix_env_file_permissions():
         logger.warning(f"⚠️  Warning: Could not fix .env permissions: {e}")
         logger.warning("   Configuration updates may fail in some environments")
 
+
 def run_web_ui():
     """Run the Flask web UI in a separate thread"""
     logger.info("Starting Web UI on port 5000")
-    app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
+    app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)
+
 
 def run_bssci_service():
     """Run the BSSCI service"""
     logger.info("Starting BSSCI Service")
     import main
+
     asyncio.run(main.main())
+
 
 def get_tls_server():
     """Get the TLS server instance"""
     global tls_server_instance
     return tls_server_instance
+
 
 def set_tls_server(server):
     """Set the TLS server instance"""
@@ -104,10 +106,11 @@ def set_tls_server(server):
     # Make it available to web_ui - this is critical for web interface functionality
     try:
         import web_ui
+
         web_ui.set_tls_server(tls_server_instance)
-        logger.info(f"✅ TLS server instance passed to web UI successfully")
+        logger.info("✅ TLS server instance passed to web UI successfully")
         logger.info(f"   TLS server ID: {id(tls_server_instance)}")
-        if hasattr(tls_server_instance, 'connected_base_stations'):
+        if hasattr(tls_server_instance, "connected_base_stations"):
             logger.info(f"   Connected base stations count: {len(tls_server_instance.connected_base_stations)}")
     except ImportError as e:
         logger.error(f"❌ Failed to import web_ui: {e}")

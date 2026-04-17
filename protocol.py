@@ -34,6 +34,7 @@ def decode_message(data: bytes) -> dict[str, Any]:
         print(f"[ERROR] Error decoding message: {e}")
         return {}
 
+
 def encode_message(data: dict[str, Any]) -> bytes:
     encoded_message = bytes(msgpack.packb(data))
     return encoded_message

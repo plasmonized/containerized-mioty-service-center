@@ -1,5 +1,7 @@
 certs/*
 _pycache_
+*.pyc
+*.pyo
 attached_assets/*
 .env
 logs/

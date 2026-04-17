@@ -11,6 +11,11 @@ dependencies = [
     "msgpack>=1.1.1",
 ]
 
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["main*", "web_main*", "mqtt_interface*", "messages*", "protocol*", "queue_logger*", "TLSServer*", "bssci_config*", "web_ui*"]
+exclude = ["tests*", "logs*", "certs*", "static*", "templates*", "attached_assets*", ".config*"]
+
 [tool.ruff]
 line-length = 120
 target-version = "py312"

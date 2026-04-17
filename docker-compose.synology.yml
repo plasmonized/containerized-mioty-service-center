@@ -9,14 +9,20 @@ services:
       - "16019:16018"  # TLS Server port
       - "5056:5000"    # Web UI port
     volumes:
-      # Consolidated volume structure (Synology-compatible)
-      - ./certs:/app/certs:ro             # TLS certificates (read-only)
-      - ./config:/app/config:rw           # Configuration files
-      - ./data:/app/data:rw               # Application data
-      - ./logs:/app/logs:rw               # Log files
+      # Use Synology-compatible volume mounts
+      - ./certs:/app/certs:rw             # TLS certificates (writable for auto-generation)
+      - ./logs:/app/logs:rw
+      - ./data:/app/data:rw
+      # Copy config files to container-writable locations
+      - ./endpoints.json:/tmp/host_endpoints.json:ro
+      - ./bssci_config.py:/tmp/host_bssci_config.py:ro
+      - ./coverage_positions.json:/app/coverage_positions.json:rw
+      - ./coverage_floorplan.txt:/app/coverage_floorplan.txt:rw
+      - ./users.json:/app/users.json:rw
     restart: unless-stopped
     environment:
       - PYTHONUNBUFFERED=1
+      - SYNOLOGY_DOCKER=1
       - PUID=1000
       - PGID=1000
       - BASE_STATION_CONFIG_FILE=/app/data/base_stations.json
@@ -38,4 +44,4 @@ services:
 
 networks:
   bssci-network:
-    driver: bridge
+    driver: bridge  

@@ -1,9 +1,8 @@
 import os
 from dotenv import load_dotenv
 
-# Load environment variables: prefer config/.env (mounted volume), fall back to .env
-if not load_dotenv('config/.env'):
-    load_dotenv()
+# Load environment variables from .env file
+load_dotenv()
 
 LISTEN_HOST = os.getenv("LISTEN_HOST", "0.0.0.0")
 LISTEN_PORT = int(os.getenv("LISTEN_PORT", "16018"))
@@ -19,8 +18,8 @@ MQTT_USERNAME = os.getenv("MQTT_USERNAME", "")
 MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "")
 BASE_TOPIC = os.getenv("BASE_TOPIC", "bssci/")
 
-SENSOR_CONFIG_FILE = os.getenv("SENSOR_CONFIG_FILE", "config/endpoints.json")
-BASE_STATION_CONFIG_FILE = os.getenv("BASE_STATION_CONFIG_FILE", "data/base_stations.json")
+SENSOR_CONFIG_FILE = os.getenv("SENSOR_CONFIG_FILE", "endpoints.json")
+BASE_STATION_CONFIG_FILE = os.getenv("BASE_STATION_CONFIG_FILE", "base_stations.json")
 STATUS_INTERVAL = int(os.getenv("STATUS_INTERVAL", "30"))
 DEDUPLICATION_DELAY = float(os.getenv("DEDUPLICATION_DELAY", "2.0"))
 

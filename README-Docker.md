@@ -39,29 +39,21 @@ The service will be available at:
 
 ### Environment Variables
 
-Set these in your environment or `docker-compose.yml`:
+Set these in your environment or `.env` file:
 
 ```bash
 UID=1000          # User ID for file permissions
 GID=1000          # Group ID for file permissions
 ```
 
-The application configuration lives in `config/.env`. On first run this file is
-auto-generated from the bundled `.env.example`. Edit it afterwards to set your
-MQTT broker, credentials, and other settings.
-
 ### Volumes
 
 The following directories are mounted as volumes:
 
-| Host directory | Container path | Mode | Contents |
-|----------------|----------------|------|----------|
-| `./certs`  | `/app/certs`  | read-only  | SSL certificates |
-| `./config` | `/app/config` | read-write | `.env`, `endpoints.json`, `users.json`, and other config files |
-| `./data`   | `/app/data`   | read-write | `base_stations.json` and other runtime data |
-| `./logs`   | `/app/logs`   | read-write | Application logs |
-
-On first run, any missing file in `config/` or `data/` is automatically bootstrapped from the bundled image defaults.
+- `./certs` - SSL certificates (read-only)
+- `./endpoints.json` - Sensor configuration
+- `./bssci_config.py` - Service configuration
+- `./logs` - Application logs
 
 ### Certificates
 
@@ -112,7 +104,7 @@ If you encounter permission issues with logs or certificates:
 
 ```bash
 # Set correct ownership
-sudo chown -R $USER:$USER certs/ config/ data/ logs/
+sudo chown -R $USER:$USER certs/ logs/
 
 # Or run with specific user
 UID=$(id -u) GID=$(id -g) docker-compose up
@@ -140,9 +132,9 @@ ports:
   - "5057:5000"    # Change external port
 ```
 
-### Security Notes
+## Security Notes
 
-- Change default MQTT credentials via the web UI (Settings → Configuration) or in `config/.env`
+- Change default MQTT credentials in `bssci_config.py`
 - Use proper SSL certificates for production
 - Restrict network access to required ports only
 - Regular security updates of base images

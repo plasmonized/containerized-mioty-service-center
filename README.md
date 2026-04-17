@@ -192,13 +192,13 @@ The BSSCI Service Center has been tested and verified with the following base st
 
 2. **Configure Environment**:
    ```bash
-   cp .env.example config/.env
-   # Edit config/.env with your settings
+   cp .env.example .env
+   # Edit .env with your settings
    ```
 
 3. **Generate Certificates** (if needed):
    ```bash
-   mkdir -p certs
+   mkdir certs
    # Use web UI certificate management or manual generation
    ```
 
@@ -212,7 +212,7 @@ The BSSCI Service Center has been tested and verified with the following base st
 
 ## Configuration
 
-### Environment Variables (config/.env)
+### Environment Variables (.env)
 
 ```bash
 # TLS Server Configuration
@@ -236,7 +236,7 @@ AUTO_DETACH_WARNING_TIMEOUT=129600  # 36 hours in seconds
 AUTO_DETACH_CHECK_INTERVAL=3600     # Check every hour
 
 # Application Configuration
-SENSOR_CONFIG_FILE=config/endpoints.json
+SENSOR_CONFIG_FILE=endpoints.json
 STATUS_INTERVAL=300
 DEDUPLICATION_DELAY=2.0
 ```
@@ -1101,13 +1101,17 @@ services:
       - "16019:16018"  # TLS Server port
       - "5056:5000"    # Web UI port
     volumes:
-      - ./certs:/app/certs:ro     # SSL certificates (read-only)
-      - ./config:/app/config:rw   # Configuration files
-      - ./data:/app/data:rw       # Runtime data (base stations, etc.)
-      - ./logs:/app/logs:rw       # Application logs
+      - ./certs:/app/certs:ro
+      - ./endpoints.json:/app/endpoints.json:rw
+      - ./bssci_config.py:/app/bssci_config.py:rw
+      - ./.env:/app/.env:rw
+      - ./base_stations.json:/app/data/base_stations.json:rw
+      - ./logs:/app/logs
+      - ./VERSION:/app/VERSION:rw  # Required for persistent updates
     restart: unless-stopped
     environment:
       - PYTHONUNBUFFERED=1
+      - BASE_STATION_CONFIG_FILE=/app/data/base_stations.json
 ```
 
 #### Live-Update Mode (Synology/Docker)
@@ -1124,12 +1128,11 @@ docker-compose -f docker-compose.live-update.yml up -d --build
 
 #### Synology NAS Setup
 ```bash
-# Create required directories and set permissions
-mkdir -p /volume1/docker/bssci/{certs,config,data,logs}
-chmod 755 /volume1/docker/bssci/{certs,config,data,logs}
+# Set file permissions
+chmod 666 /volume1/docker/bssci/endpoints.json
+chmod 666 /volume1/docker/bssci/VERSION
+chmod 666 /volume1/docker/bssci/.env
 ```
-
-Use `docker-compose.synology.yml` which is pre-configured for Synology deployments. On first start, the container automatically bootstraps default configuration files into `config/` and `data/`.
 
 ## Monitoring and Alerting
 

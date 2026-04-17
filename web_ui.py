@@ -109,7 +109,7 @@ logger = logging.getLogger(__name__)
 def load_users():
     """Load users from users.json file"""
     try:
-        with open('config/users.json', 'r') as f:
+        with open('users.json', 'r') as f:
             return json.load(f)
     except Exception as e:
         logger.error(f"Failed to load users: {e}")
@@ -118,7 +118,7 @@ def load_users():
 def save_users(users_data):
     """Save users to users.json file"""
     try:
-        with open('config/users.json', 'w') as f:
+        with open('users.json', 'w') as f:
             json.dump(users_data, f, indent=2)
         return True
     except Exception as e:
@@ -406,7 +406,7 @@ def get_sensors():
         # Load sensors from config file first
         sensor_status = {}
         try:
-            sensor_file = getattr(bssci_config, 'SENSOR_CONFIG_FILE', 'config/endpoints.json')
+            sensor_file = getattr(bssci_config, 'SENSOR_CONFIG_FILE', 'endpoints.json')
             print(f"Loading sensors from file: {sensor_file}")
             with open(sensor_file, 'r') as f:
                 sensors = json.load(f)
@@ -484,11 +484,11 @@ def get_sensors():
                 print(f"Processed sensor status for {len(sensor_status)} sensors with registration data")
                 return jsonify(sensor_status)
         except FileNotFoundError:
-            sensor_file = getattr(bssci_config, 'SENSOR_CONFIG_FILE', 'config/endpoints.json')
+            sensor_file = getattr(bssci_config, 'SENSOR_CONFIG_FILE', 'endpoints.json')
             print(f"Sensor config file not found: {sensor_file}")
             return jsonify({})
         except json.JSONDecodeError as e:
-            sensor_file = getattr(bssci_config, 'SENSOR_CONFIG_FILE', 'config/endpoints.json')
+            sensor_file = getattr(bssci_config, 'SENSOR_CONFIG_FILE', 'endpoints.json')
             print(f"Invalid JSON in sensor config file {sensor_file}: {e}")
             return jsonify({})
             
@@ -1161,7 +1161,7 @@ MQTT_PASSWORD={data.get('MQTT_PASSWORD', '')}
 BASE_TOPIC={data.get('BASE_TOPIC', 'bssci/')}
 
 # Application Configuration
-SENSOR_CONFIG_FILE=config/endpoints.json
+SENSOR_CONFIG_FILE=endpoints.json
 STATUS_INTERVAL={data.get('STATUS_INTERVAL', 30)}
 DEDUPLICATION_DELAY={data.get('DEDUPLICATION_DELAY', 2.0)}
 
@@ -1191,12 +1191,12 @@ LOG_FILE=logs/bssci_service.log
 # Security
 SECRET_KEY=your-secret-key-here"""
         
-        # Write to config/.env file with error handling for Docker environments
+        # Write to .env file with error handling for Docker environments
         try:
-            with open('config/.env', 'w') as f:
+            with open('.env', 'w') as f:
                 f.write(env_content)
         except PermissionError as pe:
-            # Try alternative approach for Docker environments
+            # Try alternative approach for Docker/Synology environments
             try:
                 import tempfile
                 import shutil
@@ -1204,14 +1204,13 @@ SECRET_KEY=your-secret-key-here"""
                 with tempfile.NamedTemporaryFile(mode='w', delete=False) as tmp:
                     tmp.write(env_content)
                     tmp_name = tmp.name
-                shutil.move(tmp_name, 'config/.env')
+                shutil.move(tmp_name, '.env')
             except Exception as fallback_error:
-                raise Exception(f"Cannot write config/.env file. Docker volume not mounted as writable? Original error: {pe}, Fallback error: {fallback_error}")
+                raise Exception(f"Cannot write .env file. Docker volume not mounted as writable? Original error: {pe}, Fallback error: {fallback_error}")
         
         # Reload environment variables
         from dotenv import load_dotenv
-        if not load_dotenv('config/.env', override=True):
-            load_dotenv(override=True)
+        load_dotenv(override=True)
             
         # Force reload of the bssci_config module to pick up new .env values
         import importlib
@@ -1449,7 +1448,7 @@ def api_coverage_topology():
 @login_required
 def api_coverage_positions():
     """Get or save coverage map device positions"""
-    positions_file = 'config/coverage_positions.json'
+    positions_file = 'coverage_positions.json'
     
     if request.method == 'POST':
         perms = get_user_permissions()
@@ -1475,7 +1474,7 @@ def api_coverage_positions():
 @login_required
 def api_coverage_floorplan():
     """Get or save floorplan image (base64 encoded)"""
-    floorplan_file = 'config/coverage_floorplan.txt'
+    floorplan_file = 'coverage_floorplan.txt'
     
     if request.method == 'POST':
         perms = get_user_permissions()
@@ -2292,7 +2291,7 @@ def create_backup():
         os.makedirs(backup_dir, exist_ok=True)
         
         # Backup important files
-        files_to_backup = ['config/.env', 'config/endpoints.json', 'VERSION']
+        files_to_backup = ['.env', 'endpoints.json', 'VERSION']
         dirs_to_backup = ['certs']
         
         for file in files_to_backup:

@@ -2935,7 +2935,7 @@ class TLSServer:
             }
         return status
 
-    def clear_all_sensors(self) -> None:
+    def clear_all_sensors(self) -> None:  # type: ignore[no-redef]
         """Clear all sensor configurations and registrations"""
         logger.info("🗑️ CLEARING ALL SENSOR CONFIGURATIONS")
 
@@ -3027,7 +3027,7 @@ class TLSServer:
             except:
                 logger.error("   Emergency backup also failed!")
 
-    def detach_sensor_sync(self, eui: str) -> bool:
+    def detach_sensor_sync(self, eui: str) -> bool:  # type: ignore[no-redef]
         """Synchronous wrapper for detach_sensor (for Web UI)"""
         try:
             # Create new event loop for sync call

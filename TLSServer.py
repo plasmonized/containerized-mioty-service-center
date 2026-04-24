@@ -845,7 +845,7 @@ class TLSServer:
                         logger.info(f"📨 BSSCI CONNECTION COMPLETE received from {addr}")
 
                         # Always remove from connecting first (fix for duplicate display bug)
-                        bs_eui = self.connecting_base_stations.pop(writer, None)
+                        bs_eui = self.connecting_base_stations.pop(writer, None)  # type: ignore[arg-type]
 
                         if bs_eui and writer not in self.connected_base_stations:
                             # Deduplicate: Remove any existing connection with the same EUI
@@ -1588,9 +1588,8 @@ class TLSServer:
 
                         # Parse OMS meter info from WMBUS payload
                         data_hex = bytes(data).hex() if isinstance(data, list) else data
-                        meter_info = self._extract_oms_meter_info(
-                            data if isinstance(data, list) else bytes.fromhex(data)
-                        )
+                        data_list: list = data if isinstance(data, list) else list(bytes.fromhex(data))
+                        meter_info = self._extract_oms_meter_info(data_list)
 
                         if meter_info:
                             meter_id = meter_info["meter_id"]
@@ -3286,11 +3285,8 @@ class TLSServer:
                 count += 1
 
         if count > 0:
-            avg_snr = round(total_snr / count, 2)
-            avg_rssi = round(total_rssi / count, 2)
-        else:
-            avg_snr = 0
-            avg_rssi = 0
+            avg_snr = round(total_snr / count, 2) if count > 0 else 0.0
+            avg_rssi = round(total_rssi / count, 2) if count > 0 else 0.0
 
         self.snr_rssi_history.append({"timestamp": current_time, "avg_snr": avg_snr, "avg_rssi": avg_rssi})
 

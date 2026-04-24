@@ -51,7 +51,7 @@ jobs:
       id: meta
       uses: docker/metadata-action@v5
       with:
-        images: ghcr.io/${{ github.repository }}/pr-test
+        images: ghcr.io/${{ github.repository.toLowerCase() }}/pr-test
         labels: |
           com.bssci.pr.id=${{ github.event.pull_request.number }}
           com.bssci.pr.branch=${{ github.head_ref }}
@@ -64,7 +64,7 @@ jobs:
         file: ./Dockerfile.pr
         push: false
         load: true
-        tags: ghcr.io/${{ github.repository }}/pr-test:pr-${{ github.event.pull_request.number }}
+        tags: ghcr.io/${{ github.repository.toLowerCase() }}/pr-test:pr-${{ github.event.pull_request.number }}
         labels: ${{ steps.meta.outputs.labels }}
         build-args: |
           GITHUB_PR_ID=${{ github.event.pull_request.number }}
@@ -75,7 +75,7 @@ jobs:
       run: |
         docker run -d --name bssci-pr-test \
           -p 16019:16018 -p 5056:5000 \
-          ghcr.io/${{ github.repository }}/pr-test:pr-${{ github.event.pull_request.number }}
+          ghcr.io/${{ github.repository.toLowerCase() }}/pr-test:pr-${{ github.event.pull_request.number }}
         sleep 5
         docker logs bssci-pr-test
         docker stop bssci-pr-test || true

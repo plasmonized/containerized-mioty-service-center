@@ -55,7 +55,7 @@ class TLSServer:
         }
         # Time-series data for charts (last 60 minutes, 1-minute resolution)
         self.traffic_history: list = []
-        self._last_history_update = 0
+        self._last_history_update = 0.0
 
         # Track active sensors per hour (sensors that sent data)
         self.active_sensors_hourly: set = set()

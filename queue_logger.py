@@ -35,10 +35,10 @@ class QueueLogger:
     async def _logged_put(self, item: Any) -> None:
         """Logged version of queue.put()"""
         self._check_daily_reset()
-        self.stats["put_count"] += 1
+        self.stats["put_count"] = (self.stats["put_count"] or 0) + 1
         self.stats["last_put_time"] = time.time()
         self.stats["current_size"] = self.queue.qsize() + 1
-        self.stats["max_size_seen"] = max(self.stats["max_size_seen"], self.stats["current_size"])
+        self.stats["max_size_seen"] = max((self.stats["max_size_seen"] or 0), self.stats["current_size"])
 
         logger.info(f"📤 [{self.queue_name}] PUT #{self.stats['put_count']}")
         logger.info(f"   Queue Daily Counter: {self.daily_counter}")
@@ -54,10 +54,10 @@ class QueueLogger:
         self._check_daily_reset()
         item = await self.original_get()
 
-        self.stats["get_count"] += 1
+        self.stats["get_count"] = (self.stats["get_count"] or 0) + 1
         self.stats["last_get_time"] = time.time()
         self.stats["current_size"] = self.queue.qsize()
-        self.stats["total_items_processed"] += 1
+        self.stats["total_items_processed"] = (self.stats["total_items_processed"] or 0) + 1
 
         logger.info(f"📥 [{self.queue_name}] GET #{self.stats['get_count']}")
         logger.info(f"   Queue Daily Counter: {self.daily_counter}")

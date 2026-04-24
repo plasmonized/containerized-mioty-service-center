@@ -38,7 +38,7 @@ class QueueLogger:
         self.stats["put_count"] = (self.stats["put_count"] or 0) + 1
         self.stats["last_put_time"] = time.time()
         self.stats["current_size"] = self.queue.qsize() + 1
-        self.stats["max_size_seen"] = max((self.stats["max_size_seen"] or 0), self.stats["current_size"])
+        self.stats["max_size_seen"] = max((self.stats["max_size_seen"] or 0), self.stats["current_size"])  # type: ignore[arg-type]
 
         logger.info(f"📤 [{self.queue_name}] PUT #{self.stats['put_count']}")
         logger.info(f"   Queue Daily Counter: {self.daily_counter}")

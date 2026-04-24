@@ -1,0 +1,35 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y \
+    openssl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+RUN mkdir -p certs logs
+
+RUN chmod 644 bssci_config.py endpoints.json && \
+    chown root:root bssci_config.py endpoints.json && \
+    touch .env && chmod 666 .env
+
+LABEL org.opencontainers.image.title="BSSCI Service Center (PR)" \
+      org.opencontainers.image.description="BSSCI Service Center - Pull Request Test Build" \
+      org.opencontainers.image.source="https://github.com/anomalyco/containerized-mioty-Service-Center" \
+      org.opencontainers.image.vendor="BSSCI" \
+      org.opencontainers.image.version="pr-${GITHUB_PR_ID:-local}-${GITHUB_SHA:-dev}" \
+      org.opencontainers.image.authors="BSSCI Team" \
+      org.opencontainers.image.url="https://github.com/anomalyco/containerized-mioty-Service-Center/pull/${GITHUB_PR_ID:-N/A}" \
+      com.bssci.pr.id="${GITHUB_PR_ID:-N/A}" \
+      com.bssci.pr.branch="${GITHUB_HEAD_REF:-local}" \
+      com.bssci.pr.commit="${GITHUB_SHA:-N/A}" \
+      com.bssci.pr.workflow="pr-test"
+
+EXPOSE 16018 5000
+
+CMD ["python", "web_main.py"]

@@ -34,3 +34,52 @@ jobs:
 
     - name: Run pytest (Tests)  
       run: pytest || echo "No tests found - OK"
+
+  docker-pr:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    needs: lint-test
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Docker metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ghcr.io/${{ github.repository }}/pr-test
+        labels: |
+          com.bssci.pr.id=${{ github.event.pull_request.number }}
+          com.bssci.pr.branch=${{ github.head_ref }}
+          com.bssci.pr.commit=${{ github.sha }}
+
+    - name: Build PR Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile.pr
+        push: false
+        load: true
+        tags: ghcr.io/${{ github.repository }}/pr-test:pr-${{ github.event.pull_request.number }}
+        labels: ${{ steps.meta.outputs.labels }}
+        build-args: |
+          GITHUB_PR_ID=${{ github.event.pull_request.number }}
+          GITHUB_SHA=${{ github.sha }}
+          GITHUB_HEAD_REF=${{ github.head_ref }}
+
+    - name: Run container
+      run: |
+        docker run -d --name bssci-pr-test \
+          -p 16019:16018 -p 5056:5000 \
+          ghcr.io/${{ github.repository }}/pr-test:pr-${{ github.event.pull_request.number }}
+        sleep 5
+        docker logs bssci-pr-test
+        docker stop bssci-pr-test || true
+
+    - name: Cleanup
+      if: always()
+      run: docker stop bssci-pr-test || true

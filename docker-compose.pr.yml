@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  bssci-pr:
+    build:
+      context: .
+      dockerfile: Dockerfile.pr
+      args:
+        - GITHUB_PR_ID=${GITHUB_PR_ID:-local}
+        - GITHUB_SHA=${GITHUB_SHA:-dev}
+        - GITHUB_HEAD_REF=${GITHUB_HEAD_REF:-local}
+    ports:
+      - "16019:16018"
+      - "5056:5000"
+    environment:
+      - GITHUB_PR_ID=${GITHUB_PR_ID:-}
+      - GITHUB_SHA=${GITHUB_SHA:-}
+      - GITHUB_HEAD_REF=${GITHUB_HEAD_REF:-}
+    env_file:
+      - .env
+    restart: unless-stopped
+    labels:
+      com.bssci.pr.id: "${GITHUB_PR_ID:-N/A}"
+      com.bssci.pr.branch: "${GITHUB_HEAD_REF:-local}"

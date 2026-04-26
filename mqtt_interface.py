@@ -1,12 +1,11 @@
 import asyncio
 import json
 import logging
-from typing import Dict, Any
-from aiomqtt import Client, MqttError
-import paho.mqtt.client
+from typing import Any
 
-import bssci_config
-from bssci_config import MQTT_BROKER, MQTT_PORT, MQTT_USERNAME, MQTT_PASSWORD, BASE_TOPIC
+from aiomqtt import Client
+
+from bssci_config import BASE_TOPIC, MQTT_BROKER, MQTT_PASSWORD, MQTT_PORT, MQTT_USERNAME
 
 logger = logging.getLogger(__name__)
 
@@ -29,13 +28,13 @@ class MQTTClient:
         self.mqtt_in_queue = mqtt_in_queue
 
         # Add queue logging
-        logger.info(f"🔍 MQTT Client Queue Assignment:")
+        logger.info("🔍 MQTT Client Queue Assignment:")
         logger.info(f"   mqtt_out_queue ID: {id(self.mqtt_out_queue)}")
         logger.info(f"   mqtt_in_queue ID: {id(self.mqtt_in_queue)}")
 
     def log_queue_info(self) -> None:
         """Log queue information for debugging"""
-        logger.info(f"🔍 MQTT Client Queue Information:")
+        logger.info("🔍 MQTT Client Queue Information:")
         logger.info(f"   mqtt_out_queue ID: {id(self.mqtt_out_queue)}, size: {self.mqtt_out_queue.qsize()}")
         logger.info(f"   mqtt_in_queue ID: {id(self.mqtt_in_queue)}, size: {self.mqtt_in_queue.qsize()}")
 
@@ -64,7 +63,7 @@ class MQTTClient:
                     username=MQTT_USERNAME,
                     password=MQTT_PASSWORD,
                     keepalive=60,  # Send keepalive every 60 seconds
-                    timeout=30     # Connection timeout after 30 seconds
+                    timeout=30,  # Connection timeout after 30 seconds
                 ) as client:
                     logger.info("✅ MQTT CLIENT CONNECTION SUCCESSFUL!")
                     logger.info("✅ Authentication completed successfully")
@@ -87,7 +86,7 @@ class MQTTClient:
                         self._handle_incoming(client),
                         self._handle_outgoing(client),
                         self._connection_health_monitor(client),
-                        return_exceptions=True
+                        return_exceptions=True,
                     )
 
             except Exception as e:
@@ -147,8 +146,8 @@ class MQTTClient:
                         eui = topic_parts[len(base_parts) + 1].upper()
                         logger.info(f"🔑 Extracted EUI: {eui}")
 
-                        if hasattr(message.payload, 'decode'):
-                            payload_str = message.payload.decode('utf-8')
+                        if hasattr(message.payload, "decode"):
+                            payload_str = message.payload.decode("utf-8")
                         else:
                             payload_str = str(message.payload)
                         logger.info(f"📄 Payload: {payload_str}")
@@ -173,7 +172,7 @@ class MQTTClient:
                         logger.info(f"✅ Configuration received for EUI {eui}")
                         logger.info(f"   Queue size before put: {self.mqtt_in_queue.qsize()}")
                         await self.mqtt_in_queue.put(config)
-                        logger.info(f"✅ Configuration queued successfully")
+                        logger.info("✅ Configuration queued successfully")
                         logger.info(f"   Queue size after put: {self.mqtt_in_queue.qsize()}")
                         logger.info(f"📋 Config: {json.dumps(config, indent=2)}")
 
@@ -235,9 +234,13 @@ class MQTTClient:
                 except Exception as e:
                     logger.error(f"❌ MQTT PUBLISH ERROR: {e}")
                     # For connection errors, re-raise to trigger reconnection
-                    if isinstance(e, (ConnectionError, OSError)) or "connection" in str(e).lower() or "not currently connected" in str(e).lower():
+                    if (
+                        isinstance(e, (ConnectionError, OSError))
+                        or "connection" in str(e).lower()
+                        or "not currently connected" in str(e).lower()
+                    ):
                         logger.error("   CONNECTION ERROR - TRIGGERING RECONNECTION")
-                        await self.mqtt_out_queue.put(msg)  # Put message back
+                        await self.mqtt_out_queue.put(msg)  # type: ignore[arg-type]
                         raise
                     # For other errors, continue
                     logger.error("   NON-CONNECTION ERROR - Continuing...")
@@ -246,7 +249,7 @@ class MQTTClient:
             logger.error(f"❌ MQTT OUTGOING HANDLER FATAL ERROR: {e}")
             raise
 
-    async def handle_command_message(self, topic: str, payload: Dict[str, Any], eui: str) -> None:
+    async def handle_command_message(self, topic: str, payload: dict[str, Any], eui: str) -> None:
         """Handle unified command messages from MQTT (/bssci/ep/eui/cmd)"""
         logger.info(f"🎯 Processing unified command message from topic: {topic}")
         logger.info(f"🔑 EUI: {eui}")
@@ -257,11 +260,11 @@ class MQTTClient:
                 command = payload.lower().strip()
                 logger.info(f"📄 String Command: {command}")
             else:
-                command = payload.get('command', payload.get('action', '')).lower().strip()
+                command = payload.get("command", payload.get("action", "")).lower().strip()
                 logger.info(f"📄 Dict Command: {command}")
 
             # Validate command
-            valid_commands = ['detach', 'attach', 'status']
+            valid_commands = ["detach", "attach", "status"]
             if command not in valid_commands:
                 logger.warning(f"⚠️  Invalid command: {command}. Valid commands: {valid_commands}")
                 return
@@ -270,29 +273,24 @@ class MQTTClient:
 
             # Create command message for TLS server processing
             command_msg = {
-                'message_type': 'command',
-                'eui': eui,
-                'action': command,
-                'source': 'unified_cmd',
-                'timestamp': payload.get('timestamp', asyncio.get_event_loop().time()) if isinstance(payload, dict) else asyncio.get_event_loop().time()
+                "message_type": "command",
+                "eui": eui,
+                "action": command,
+                "source": "unified_cmd",
+                "timestamp": payload.get("timestamp", asyncio.get_event_loop().time())
+                if isinstance(payload, dict)
+                else asyncio.get_event_loop().time(),
             }
 
             # Add to in_queue for TLS server processing
             await self.mqtt_in_queue.put(command_msg)
-            logger.info(f"✅ Unified command queued for TLS server processing")
+            logger.info("✅ Unified command queued for TLS server processing")
 
             # Send acknowledgment
             ack_topic = f"ep/{eui.upper()}/response"
-            ack_payload = {
-                "command": command,
-                "status": "received",
-                "timestamp": asyncio.get_event_loop().time()
-            }
+            ack_payload = {"command": command, "status": "received", "timestamp": asyncio.get_event_loop().time()}
 
-            await self.mqtt_out_queue.put({
-                "topic": ack_topic,
-                "payload": json.dumps(ack_payload)
-            })
+            await self.mqtt_out_queue.put({"topic": ack_topic, "payload": json.dumps(ack_payload)})
 
             logger.info(f"📤 Command acknowledgment sent to {self.base_topic}/{ack_topic}")
 
@@ -302,7 +300,7 @@ class MQTTClient:
             logger.error(f"   Payload: {payload}")
             logger.error(f"   EUI: {eui}")
 
-    async def handle_register_message(self, topic: str, payload: Dict[str, Any], eui: str) -> None:
+    async def handle_register_message(self, topic: str, payload: dict[str, Any], eui: str) -> None:
         """Handle legacy sensor registration messages from MQTT (/bssci/ep/eui/register)"""
         logger.info(f"🔐 Processing LEGACY registration message from topic: {topic}")
         logger.info(f"🔑 EUI: {eui}")
@@ -317,9 +315,9 @@ class MQTTClient:
             config["source"] = "legacy_register"
 
             # Validate required fields for registration
-            required_fields = ['nwKey', 'shortAddr']
+            required_fields = ["nwKey", "shortAddr"]
             missing_fields = [field for field in required_fields if field not in config]
-            
+
             if missing_fields:
                 logger.error(f"❌ Legacy registration missing required fields: {missing_fields}")
                 logger.error(f"   Required: {required_fields}")
@@ -327,19 +325,19 @@ class MQTTClient:
                 return
 
             # Set default bidirectional if not specified
-            if 'bidi' not in config:
-                config['bidi'] = False
+            if "bidi" not in config:
+                config["bidi"] = False
                 logger.info("🔧 Setting default bidi=false for legacy registration")
 
             logger.info(f"✅ Legacy registration received for EUI {eui}")
             logger.info(f"📋 nwKey: {config.get('nwKey', 'N/A')}")
             logger.info(f"📋 shortAddr: {config.get('shortAddr', 'N/A')}")
             logger.info(f"📋 bidi: {config.get('bidi', 'N/A')}")
-            
+
             # Queue for TLS server processing
             logger.info(f"   Queue size before put: {self.mqtt_in_queue.qsize()}")
             await self.mqtt_in_queue.put(config)
-            logger.info(f"✅ Legacy registration queued successfully")
+            logger.info("✅ Legacy registration queued successfully")
             logger.info(f"   Queue size after put: {self.mqtt_in_queue.qsize()}")
 
             # Send confirmation that legacy registration was processed
@@ -348,13 +346,10 @@ class MQTTClient:
                 "action": "legacy_register",
                 "status": "received",
                 "eui": eui,
-                "timestamp": asyncio.get_event_loop().time()
+                "timestamp": asyncio.get_event_loop().time(),
             }
 
-            await self.mqtt_out_queue.put({
-                "topic": ack_topic,
-                "payload": json.dumps(ack_payload)
-            })
+            await self.mqtt_out_queue.put({"topic": ack_topic, "payload": json.dumps(ack_payload)})
 
             logger.info(f"📤 Legacy registration acknowledgment sent to {self.base_topic}/{ack_topic}")
 
@@ -400,9 +395,7 @@ if __name__ == "__main__":
             ],
         }
         while True:
-            await mqtt_out_queue.put(
-                {"topic": f"ep/{eui.upper()}/ul", "payload": json.dumps(data_dict)}
-            )
+            await mqtt_out_queue.put({"topic": f"ep/{eui.upper()}/ul", "payload": json.dumps(data_dict)})
             await asyncio.sleep(5)
 
     async def main() -> None:

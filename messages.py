@@ -35,7 +35,7 @@ def build_detach_request(eui: str, opID: int) -> dict[str, object]:
     return {
         "command": "detPrp",  # BSSCI protocol: detach propagate
         "opId": opID,
-        "epEui": int.from_bytes(bytes.fromhex(eui), "big")
+        "epEui": int.from_bytes(bytes.fromhex(eui), "big"),
     }
 
 
@@ -62,9 +62,10 @@ def build_ul_response(opID: int) -> dict[str, object]:
 # Variable MAC (VM) Sub-Channel Messages
 # Per ETSI TS 103357 - VM mode for metering devices with longer messages and acknowledgement
 
+
 def build_vm_activate_request(opID: int, mac_type: int = 0) -> dict[str, object]:
     """Build VM sub-channel activate request
-    
+
     Per BSSCI VM specification:
     - command: "vm.activate"
     - opId: Numeric ID of the operation
@@ -79,7 +80,7 @@ def build_vm_activate_request(opID: int, mac_type: int = 0) -> dict[str, object]
 
 def build_vm_activate_response(opID: int) -> dict[str, object]:
     """Build VM sub-channel activate response
-    
+
     Per BSSCI VM specification:
     - command: "vm.activateRsp"
     - opId: Numeric ID of the operation
@@ -92,7 +93,7 @@ def build_vm_activate_response(opID: int) -> dict[str, object]:
 
 def build_vm_deactivate_request(opID: int, mac_type: int = 0) -> dict[str, object]:
     """Build VM sub-channel deactivate request
-    
+
     Per BSSCI VM specification:
     - command: "vm.deactivate"
     - opId: Numeric ID of the operation
@@ -107,7 +108,7 @@ def build_vm_deactivate_request(opID: int, mac_type: int = 0) -> dict[str, objec
 
 def build_vm_deactivate_response(opID: int) -> dict[str, object]:
     """Build VM sub-channel deactivate response
-    
+
     Per BSSCI VM specification:
     - command: "vm.deactivateRsp"
     - opId: Numeric ID of the operation
@@ -120,11 +121,11 @@ def build_vm_deactivate_response(opID: int) -> dict[str, object]:
 
 def build_vm_status_request(opID: int) -> dict[str, object]:
     """Build VM sub-channel status request
-    
+
     Per BSSCI VM specification:
     - command: "vm.status"
     - opId: Numeric ID of the operation
-    
+
     Response will contain macTypes: Numeric[] - List of activated macTypes
     """
     return {
@@ -133,9 +134,9 @@ def build_vm_status_request(opID: int) -> dict[str, object]:
     }
 
 
-def build_vm_status_response(opID: int, mac_types: list = None) -> dict[str, object]:
+def build_vm_status_response(opID: int, mac_types: list | None = None) -> dict[str, object]:
     """Build VM sub-channel status response
-    
+
     Per BSSCI VM specification:
     - command: "vm.statusRsp"
     - opId: Numeric ID of the operation
@@ -148,14 +149,26 @@ def build_vm_status_response(opID: int, mac_types: list = None) -> dict[str, obj
     }
 
 
-def build_vm_dl_data(opID: int, mac_type: int, user_data: list, 
-                     trx_time: int = 0, sys_time: int = 0, freq_off: int = 0,
-                     ul_snr: float = 0, ul_rssi: float = 0, carr_off_range: int = 5,
-                     carr_space: int = 1, ul_crc: list = None,
-                     tsi: int = 128, sync_burst: bool = False, dual_chan: bool = False,
-                     repetition: bool = False, long_blk_dist: bool = False) -> dict[str, object]:
+def build_vm_dl_data(
+    opID: int,
+    mac_type: int,
+    user_data: list,
+    trx_time: int = 0,
+    sys_time: int = 0,
+    freq_off: int = 0,
+    ul_snr: float = 0,
+    ul_rssi: float = 0,
+    carr_off_range: int = 5,
+    carr_space: int = 1,
+    ul_crc: list | None = None,
+    tsi: int = 128,
+    sync_burst: bool = False,
+    dual_chan: bool = False,
+    repetition: bool = False,
+    long_blk_dist: bool = False,
+) -> dict[str, object]:
     """Build VM downlink data message (Service Center -> Base Station -> Endpoint)
-    
+
     Per BSSCI VM specification:
     - command: "vm.dlData"
     - opId: Numeric ID of the operation
@@ -198,7 +211,7 @@ def build_vm_dl_data(opID: int, mac_type: int, user_data: list,
 
 def build_vm_dl_data_response(opID: int) -> dict[str, object]:
     """Build VM downlink data response
-    
+
     Per BSSCI VM specification:
     - command: "vm.dlDataRsp"
     - opId: Numeric ID of the operation
@@ -211,7 +224,7 @@ def build_vm_dl_data_response(opID: int) -> dict[str, object]:
 
 def build_vm_ul_data_response(opID: int) -> dict[str, object]:
     """Build VM uplink data response (acknowledge receipt of VM uplink data)
-    
+
     Per BSSCI VM specification:
     - command: "vm.ulDataRsp"
     - opId: Numeric ID of the operation

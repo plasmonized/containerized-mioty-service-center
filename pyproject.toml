@@ -1,4 +1,3 @@
-
 [project]
 name = "repl-nix-workspace"
 version = "0.1.0"
@@ -10,4 +9,38 @@ dependencies = [
     "flake8>=7.3.0",
     "flask>=3.1.2",
     "msgpack>=1.1.1",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["main*", "web_main*", "mqtt_interface*", "messages*", "protocol*", "queue_logger*", "TLSServer*", "bssci_config*", "web_ui*"]
+exclude = ["tests*", "logs*", "certs*", "static*", "templates*", "attached_assets*", ".config*"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "RUF"]
+ignore = ["E501", "F841", "E722", "W293", "N802", "N803", "N806", "B007", "F811", "B904", "C401", "RUF006", "RUF013", "RUF012", "RUF001", "RUF015", "RUF059", "RUF005"]
+
+[tool.ruff.lint.per-file-ignores]
+"attached_assets/*" = ["ALL"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.coverage.run]
+source = ["."]
+omit = ["*/tests/*", "*/attached_assets/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
 ]

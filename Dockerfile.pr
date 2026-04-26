@@ -2,28 +2,22 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install system dependencies
 RUN apt-get update && apt-get install -y \
     openssl \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements and install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application files
 COPY . .
 
-# Create necessary directories
 RUN mkdir -p certs logs
 
-# Set proper permissions for configuration files
 RUN chmod 644 bssci_config.py endpoints.json && \
     chown root:root bssci_config.py endpoints.json && \
     touch .env && chmod 666 .env
 
-# OCI labels for PR testing
 LABEL org.opencontainers.image.title="BSSCI Service Center (PR)" \
       org.opencontainers.image.description="BSSCI Service Center - Pull Request Test Build" \
       org.opencontainers.image.source="https://github.com/anomalyco/containerized-mioty-Service-Center" \
@@ -36,8 +30,6 @@ LABEL org.opencontainers.image.title="BSSCI Service Center (PR)" \
       com.bssci.pr.commit="${GITHUB_SHA:-N/A}" \
       com.bssci.pr.workflow="pr-test"
 
-# Expose ports
 EXPOSE 16018 5000
 
-# Default command
 CMD ["python", "web_main.py"]

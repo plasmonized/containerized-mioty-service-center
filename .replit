@@ -21,8 +21,8 @@ runButton = "Project"
 
 [[workflows.workflow]]
 name = "BSSCI Service"
-author = 45640243
 mode = "sequential"
+author = 45640243
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"

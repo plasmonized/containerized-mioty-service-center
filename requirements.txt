@@ -6,7 +6,7 @@ aiohttp==3.9.1
 paho-mqtt
 cryptography
 cryptography
-python-dotenv==1.0.0
+python-dotenv==1.2.2
 flake8
 black
 isort

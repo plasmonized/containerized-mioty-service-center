@@ -75,7 +75,7 @@ jobs:
       run: |
         docker run -d --name bssci-pr-test \
           -p 16019:16018 -p 5056:5000 \
-          ghcr.io/${{ github.repository.toLowerCase() }}/pr-test:pr-${{ github.event.pull_request.number }}
+          ghcr.io/${{ github.repository }}/pr-test:pr-${{ github.event.pull_request.number }}
         sleep 5
         docker logs bssci-pr-test
         docker stop bssci-pr-test || true

@@ -3,7 +3,7 @@ import logging
 
 from bssci_config import LISTEN_PORT, MQTT_BROKER, MQTT_PORT, SENSOR_CONFIG_FILE
 from mqtt_interface import MQTTClient
-from observability import configure_logging
+from observability import ERROR_CODES, configure_logging
 from TLSServer import TLSServer
 
 configure_logging(__name__)
@@ -75,7 +75,7 @@ async def main() -> None:
     except KeyboardInterrupt:
         logger.info("Shutting down BSSCI Service Center...")
     except Exception as e:
-        logger.error(f"Service error: {e}")
+        logger.error(f"Service error: {e}", extra={"error_code": ERROR_CODES["SC_SERVICE_ERROR"]})
 
     logger.info("✓ BSSCI Service Center shut down complete")
 

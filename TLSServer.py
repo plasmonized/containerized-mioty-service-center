@@ -7,6 +7,7 @@ from typing import Any
 
 import bssci_config
 import messages
+from observability import ERROR_CODES
 from protocol import decode_messages, encode_message
 
 logger = logging.getLogger(__name__)
@@ -170,13 +171,13 @@ class TLSServer:
             logger.info("✓ SSL context configured successfully with client certificate verification")
 
         except FileNotFoundError as e:
-            logger.error(f"❌ SSL certificate file not found: {e}")
+            logger.error(f"❌ SSL certificate file not found: {e}", extra={"error_code": ERROR_CODES["TLS_CERT_FILE_MISSING"]})
             raise
         except ssl.SSLError as e:
-            logger.error(f"❌ SSL configuration error: {e}")
+            logger.error(f"❌ SSL configuration error: {e}", extra={"error_code": ERROR_CODES["TLS_CONFIGURATION_ERROR"]})
             raise
         except Exception as e:
-            logger.error(f"❌ Unexpected error setting up SSL: {e}")
+            logger.error(f"❌ Unexpected error setting up SSL: {e}", extra={"error_code": ERROR_CODES["TLS_SERVER_START_FAILED"]})
             raise
 
         logger.info("🚀 Starting BSSCI TLS server...")
@@ -2139,7 +2140,7 @@ class TLSServer:
         except asyncio.CancelledError:
             logger.info("📨 MQTT queue watcher stopped")
         except Exception as e:
-            logger.error(f"❌ Error in MQTT queue watcher: {e}")
+            logger.error(f"❌ Error in MQTT queue watcher: {e}", extra={"error_code": ERROR_CODES["QUEUE_WATCHER_FAILED"]})
             import traceback
 
             logger.error(f"   Traceback: {traceback.format_exc()}")

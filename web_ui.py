@@ -27,6 +27,7 @@ from flask import (
 )
 
 import bssci_config
+from observability import ERROR_CODES
 
 # Global TLS server instance reference
 tls_server_instance = None
@@ -173,7 +174,7 @@ def load_users():
         with open("users.json") as f:
             return json.load(f)
     except Exception as e:
-        logger.error(f"Failed to load users: {e}")
+        logger.error(f"Failed to load users: {e}", extra={"error_code": ERROR_CODES["WEB_UI_USER_STORE_ERROR"]})
         return {"users": {}, "role_permissions": {}}
 
 
@@ -184,7 +185,7 @@ def save_users(users_data):
             json.dump(users_data, f, indent=2)
         return True
     except Exception as e:
-        logger.error(f"Failed to save users: {e}")
+        logger.error(f"Failed to save users: {e}", extra={"error_code": ERROR_CODES["WEB_UI_USER_STORE_ERROR"]})
         return False
 
 

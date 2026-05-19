@@ -44,12 +44,12 @@ class QueueLogger:
         cur_size = int(cur_val) if cur_val is not None else 0
         self.stats["max_size_seen"] = max(max_seen, cur_size)
 
-        logger.info(f"📤 [{self.queue_name}] PUT #{self.stats['put_count']}")
-        logger.info(f"   Queue Daily Counter: {self.daily_counter}")
-        logger.info(f"   New size: {self.stats['current_size']}")
-        logger.info(f"   Item type: {type(item).__name__}")
+        logger.debug(f"📤 [{self.queue_name}] PUT #{self.stats['put_count']}")
+        logger.debug(f"   Queue Daily Counter: {self.daily_counter}")
+        logger.debug(f"   New size: {self.stats['current_size']}")
+        logger.debug(f"   Item type: {type(item).__name__}")
         if isinstance(item, dict):
-            logger.info(f"   Item keys: {list(item.keys())}")
+            logger.debug(f"   Item keys: {list(item.keys())}")
 
         await self.original_put(item)
 
@@ -63,12 +63,12 @@ class QueueLogger:
         self.stats["current_size"] = self.queue.qsize()
         self.stats["total_items_processed"] = (self.stats["total_items_processed"] or 0) + 1
 
-        logger.info(f"📥 [{self.queue_name}] GET #{self.stats['get_count']}")
-        logger.info(f"   Queue Daily Counter: {self.daily_counter}")
-        logger.info(f"   New size: {self.stats['current_size']}")
-        logger.info(f"   Item type: {type(item).__name__}")
+        logger.debug(f"📥 [{self.queue_name}] GET #{self.stats['get_count']}")
+        logger.debug(f"   Queue Daily Counter: {self.daily_counter}")
+        logger.debug(f"   New size: {self.stats['current_size']}")
+        logger.debug(f"   Item type: {type(item).__name__}")
         if isinstance(item, dict):
-            logger.info(f"   Item keys: {list(item.keys())}")
+            logger.debug(f"   Item keys: {list(item.keys())}")
 
         return item
 

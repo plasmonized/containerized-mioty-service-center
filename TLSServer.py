@@ -1191,13 +1191,13 @@ class TLSServer:
                         if is_duplicate:
                             existing_message = self.deduplication_buffer[message_key]
                             if snr > existing_message["snr"]:
-                                logger.info(f"🔄 DEDUPLICATION: Better signal found for {eui}")
-                                logger.info(f"   Message counter: {packet_cnt}")
-                                logger.info(
+                                logger.debug(f"🔄 DEDUPLICATION: Better signal found for {eui}")
+                                logger.debug(f"   Message counter: {packet_cnt}")
+                                logger.debug(
                                     f"   Previous SNR: {existing_message['snr']:.2f} dB (via {existing_message['bs_eui']})"
                                 )
-                                logger.info(f"   New SNR: {snr:.2f} dB (via {bs_eui})")
-                                logger.info(f"   Updating preferred path: {existing_message['bs_eui']} → {bs_eui}")
+                                logger.debug(f"   New SNR: {snr:.2f} dB (via {bs_eui})")
+                                logger.debug(f"   Updating preferred path: {existing_message['bs_eui']} → {bs_eui}")
 
                                 # Update preferred downlink path in sensor config
                                 self.update_preferred_downlink_path(eui, bs_eui, snr)
@@ -1341,42 +1341,42 @@ class TLSServer:
                         except:
                             rx_time_str = str(rx_time)
 
-                        logger.info("📡 UPLINK DATA BUFFERED FOR DEDUPLICATION")
-                        logger.info("   =================================")
-                        logger.info(f"   Endpoint EUI: {eui}")
-                        logger.info(f"   Via Base Station: {bs_eui}")
-                        logger.info(f"   Reception Time: {rx_time_str}")
-                        logger.info(f"   Operation ID: {op_id}")
-                        logger.info("   Signal Quality:")
-                        logger.info(f"     SNR: {snr:.2f} dB")
-                        logger.info(f"     RSSI: {message['rssi']:.2f} dBm")
-                        logger.info(f"   Packet Counter: {packet_cnt}")
-                        logger.info("   Payload:")
-                        logger.info(f"     Length: {len(message['userData'])} bytes")
-                        logger.info(f"     Data (hex): {' '.join(f'{b:02x}' for b in message['userData'])}")
-                        logger.info(f"     Data (dec): {message['userData']}")
+                        logger.debug("📡 UPLINK DATA BUFFERED FOR DEDUPLICATION")
+                        logger.debug("   =================================")
+                        logger.debug(f"   Endpoint EUI: {eui}")
+                        logger.debug(f"   Via Base Station: {bs_eui}")
+                        logger.debug(f"   Reception Time: {rx_time_str}")
+                        logger.debug(f"   Operation ID: {op_id}")
+                        logger.debug("   Signal Quality:")
+                        logger.debug(f"     SNR: {snr:.2f} dB")
+                        logger.debug(f"     RSSI: {message['rssi']:.2f} dBm")
+                        logger.debug(f"   Packet Counter: {packet_cnt}")
+                        logger.debug("   Payload:")
+                        logger.debug(f"     Length: {len(message['userData'])} bytes")
+                        logger.debug(f"     Data (hex): {' '.join(f'{b:02x}' for b in message['userData'])}")
+                        logger.debug(f"     Data (dec): {message['userData']}")
 
                         # Check if this sensor is registered
                         is_registered = eui.upper() in self.registered_sensors
                         if is_registered:
                             reg_info = self.registered_sensors[eui.upper()]
-                            logger.info("   Registration Status: ✅ REGISTERED")
-                            logger.info(
+                            logger.debug("   Registration Status: ✅ REGISTERED")
+                            logger.debug(
                                 f"     Registered to {len(reg_info.get('base_stations', []))} base station(s): {reg_info.get('base_stations', [])}"
                             )
-                            logger.info(f"     Data received via: {bs_eui}")
-                            logger.info(f"     Registration time: {reg_info.get('registration_time', 'unknown')}")
+                            logger.debug(f"     Data received via: {bs_eui}")
+                            logger.debug(f"     Registration time: {reg_info.get('registration_time', 'unknown')}")
                         else:
-                            logger.warning("   Registration Status: ⚠️  NOT REGISTERED")
-                            logger.warning("     This sensor may not be configured in endpoints.json")
+                            logger.debug("   Registration Status: ⚠️  NOT REGISTERED")
+                            logger.debug("     This sensor may not be configured in endpoints.json")
 
                         # Message will be published after deduplication delay
-                        logger.info("⏳ Message queued for deduplication processing")
-                        logger.info(
+                        logger.debug("⏳ Message queued for deduplication processing")
+                        logger.debug(
                             f"   Will be published in {self.deduplication_delay} seconds if no better signal received"
                         )
-                        logger.info(f"   Buffer size: {len(self.deduplication_buffer)} messages")
-                        logger.info("   =================================")
+                        logger.debug(f"   Buffer size: {len(self.deduplication_buffer)} messages")
+                        logger.debug("   =================================")
 
                         msg_pack = encode_message(messages.build_ul_response(message.get("opId", "")))
                         writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
@@ -1388,8 +1388,8 @@ class TLSServer:
                         if eui.upper() in self.sensor_warning_sent:
                             self.sensor_warning_sent[eui.upper()] = False
 
-                        logger.info(f"✅ UPLINK DATA PROCESSING COMPLETE for {eui}")
-                        logger.info("   =================================")
+                        logger.debug(f"✅ UPLINK DATA PROCESSING COMPLETE for {eui}")
+                        logger.debug("   =================================")
 
                     elif msg_type == "ulDataCmp":
                         pass
@@ -1820,11 +1820,11 @@ class TLSServer:
                     pub_msg = self.deduplication_stats["published_messages"]
                     dup_rate = (dup_msg / total_msg * 100) if total_msg > 0 else 0
 
-                    logger.info("📊 DEDUPLICATION STATISTICS:")
-                    logger.info(f"   Total messages received: {total_msg}")
-                    logger.info(f"   Duplicate messages filtered: {dup_msg}")
-                    logger.info(f"   Messages published: {pub_msg}")
-                    logger.info(f"   Duplication rate: {dup_rate:.1f}%")
+                    logger.debug("📊 DEDUPLICATION STATISTICS:")
+                    logger.debug(f"   Total messages received: {total_msg}")
+                    logger.debug(f"   Duplicate messages filtered: {dup_msg}")
+                    logger.debug(f"   Messages published: {pub_msg}")
+                    logger.debug(f"   Duplication rate: {dup_rate:.1f}%")
 
                 except Exception as mqtt_err:
                     logger.error("❌ FAILED to queue deduplicated MQTT message")
@@ -3090,10 +3090,10 @@ class TLSServer:
                 message = await self.mqtt_in_queue.get()
                 message_count += 1
 
-                logger.info(f"🎉 MQTT MESSAGE #{message_count} RECEIVED!")
-                logger.info(f"   EUI: {message.get('eui', 'unknown')}")
-                logger.info(f"   Message Type: {message.get('message_type', 'config')}")
-                logger.info(f"   Message Keys: {list(message.keys())}")
+                logger.debug(f"🎉 MQTT MESSAGE #{message_count} RECEIVED!")
+                logger.debug(f"   EUI: {message.get('eui', 'unknown')}")
+                logger.debug(f"   Message Type: {message.get('message_type', 'config')}")
+                logger.debug(f"   Message Keys: {list(message.keys())}")
 
                 try:
                     message_type = message.get("message_type", "config")

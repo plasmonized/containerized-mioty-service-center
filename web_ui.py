@@ -14,7 +14,17 @@ from datetime import UTC, datetime, timedelta, timezone
 from functools import wraps
 from typing import Any
 
-from flask import Flask, Response, jsonify, redirect, render_template, request, send_file, session, url_for
+from flask import (
+    Flask,
+    Response,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    send_file,
+    session,
+    url_for,
+)
 
 import bssci_config
 
@@ -366,11 +376,8 @@ class WebUILogHandler(logging.Handler):
 if not any(isinstance(h, WebUILogHandler) for h in logging.getLogger().handlers):
     web_handler = WebUILogHandler()
     logging.getLogger().addHandler(web_handler)
-    logging.getLogger().setLevel(logging.DEBUG)
-
-    # Specifically capture important logs
-    logging.getLogger("TLSServer").setLevel(logging.DEBUG)
-    logging.getLogger("mqtt_interface").setLevel(logging.DEBUG)
+    configured_level = os.getenv("LOG_LEVEL", "INFO").upper()
+    logging.getLogger().setLevel(getattr(logging, configured_level, logging.INFO))
 
 
 @app.context_processor

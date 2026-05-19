@@ -5,7 +5,13 @@ from typing import Any
 
 from aiomqtt import Client
 
-from bssci_config import BASE_TOPIC, MQTT_BROKER, MQTT_PASSWORD, MQTT_PORT, MQTT_USERNAME
+from bssci_config import (
+    BASE_TOPIC,
+    MQTT_BROKER,
+    MQTT_PASSWORD,
+    MQTT_PORT,
+    MQTT_USERNAME,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -134,8 +140,8 @@ class MQTTClient:
         try:
             async for message in client.messages:
                 message_count += 1
-                logger.info(f"🎉 MQTT INCOMING MESSAGE #{message_count} RECEIVED!")
-                logger.info(f"📍 Topic: {message.topic}")
+                logger.debug(f"🎉 MQTT INCOMING MESSAGE #{message_count} RECEIVED!")
+                logger.debug(f"📍 Topic: {message.topic}")
 
                 try:
                     # Extract EUI like the working version
@@ -150,7 +156,7 @@ class MQTTClient:
                             payload_str = message.payload.decode("utf-8")
                         else:
                             payload_str = str(message.payload)
-                        logger.info(f"📄 Payload: {payload_str}")
+                        logger.debug(f"📄 Payload: {payload_str}")
 
                         payload_dict = json.loads(payload_str)
 
@@ -221,9 +227,9 @@ class MQTTClient:
                     message_count += 1
                     topic = f"{self.base_topic}/{msg['topic']}"
 
-                    logger.info(f"🎉 MESSAGE #{message_count} RECEIVED FOR PUBLISHING!")
-                    logger.info(f"   Topic: {topic}")
-                    logger.info(f"   Payload Size: {len(msg['payload'])} bytes")
+                    logger.debug(f"🎉 MESSAGE #{message_count} RECEIVED FOR PUBLISHING!")
+                    logger.debug(f"   Topic: {topic}")
+                    logger.debug(f"   Payload Size: {len(msg['payload'])} bytes")
 
                     # Use the working simple publish pattern
                     print(f"{topic}:\n\t{msg['payload']}")  # Keep the original print

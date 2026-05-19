@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import ssl
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 import bssci_config
@@ -150,17 +150,8 @@ class TLSServer:
         return op_id
 
     def _get_local_time(self) -> str:
-        """Get current time in configured timezone"""
-        try:
-            import zoneinfo
-
-            tz = zoneinfo.ZoneInfo(bssci_config.TIMEZONE)
-            local_time = datetime.now(tz)
-        except Exception:
-            # Fallback to UTC+1 (CET) if timezone not available
-            utc_time = datetime.now(UTC)
-            local_time = utc_time + timedelta(hours=1)
-        return local_time.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        """Return current time in UTC for internal correlation."""
+        return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
     async def start_server(self) -> None:
         logger.info("🔐 Setting up SSL/TLS context for BSSCI server...")
@@ -936,7 +927,7 @@ class TLSServer:
 
                         # Parse timestamp
                         try:
-                            bs_time = datetime.fromtimestamp(message["time"] / 1_000_000_000)
+                            bs_time = datetime.fromtimestamp(message["time"] / 1_000_000_000, tz=UTC)
                             logger.info(f"   Base Station Time: {bs_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
                         except:
                             logger.info(f"   Base Station Time: {message['time']} (raw)")
@@ -1336,7 +1327,7 @@ class TLSServer:
 
                         # Parse received timestamp if available
                         try:
-                            rx_datetime = datetime.fromtimestamp(rx_time / 1_000_000_000)
+                            rx_datetime = datetime.fromtimestamp(rx_time / 1_000_000_000, tz=UTC)
                             rx_time_str = rx_datetime.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
                         except:
                             rx_time_str = str(rx_time)

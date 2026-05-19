@@ -7,7 +7,7 @@ from typing import Any
 class ConnectionTimeline:
     """Thread-safe in-memory timeline for connectivity events."""
 
-    def __init__(self, max_entries: int = 1000) -> None:
+    def __init__(self, max_entries: int = 2000) -> None:
         self._entries: deque[dict[str, Any]] = deque(maxlen=max_entries)
         self._lock = threading.RLock()
 

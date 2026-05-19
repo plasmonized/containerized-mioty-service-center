@@ -3,6 +3,7 @@ import json
 import logging
 import ssl
 import threading
+import warnings
 from datetime import UTC, datetime
 from typing import Any
 
@@ -15,6 +16,8 @@ from protocol import decode_messages, encode_message
 logger = logging.getLogger(__name__)
 
 IDENTIFIER = bytes("MIOTYB01", "utf-8")
+# Suffix used for synthetic failure tracking entries in registered_sensors.
+REGISTERED_SENSOR_FAILURE_SUFFIX = "_failure"
 
 
 class TLSServer:
@@ -2169,6 +2172,13 @@ class TLSServer:
                 )
 
     async def queue_watcher(self) -> None:
+        """Deprecated wrapper for inbound processing; use process_mqtt_messages instead."""
+        warnings.warn(
+            "TLSServer.queue_watcher() is deprecated since 2026-05; call process_mqtt_messages() directly "
+            "(planned removal: next major release)",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         logger.info("📨 queue_watcher is deprecated; delegating to process_mqtt_messages")
         try:
             await self.process_mqtt_messages()
@@ -2564,13 +2574,20 @@ class TLSServer:
         }
 
     def get_runtime_snapshot(self) -> dict[str, Any]:
-        """Thread-safe runtime snapshot for Web UI consumers."""
+        """Thread-safe runtime snapshot with fields:
+        connected_euis, connecting_euis, total_connected, total_connecting,
+        total_sensors, registered_sensors, sensor_status.
+        """
         with self.state_lock:
             connected_euis = sorted({eui.upper() for eui in self.connected_base_stations.values()})
             connecting_euis = sorted({eui.upper() for eui in self.connecting_base_stations.values()})
             total_sensors = len(self.sensor_config)
             registered_sensors = len(
-                [k for k, v in self.registered_sensors.items() if not k.endswith("_failure") and v.get("status") == "registered"]
+                [
+                    k
+                    for k, v in self.registered_sensors.items()
+                    if not k.endswith(REGISTERED_SENSOR_FAILURE_SUFFIX) and v.get("status") == "registered"
+                ]
             )
 
         return {

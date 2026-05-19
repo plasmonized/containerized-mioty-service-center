@@ -27,7 +27,7 @@ from flask import (
 )
 
 import bssci_config
-from observability import ERROR_CODES
+from observability import ERROR_CODES, configure_logging
 
 # Global TLS server instance reference
 tls_server_instance = None
@@ -162,6 +162,7 @@ def _generate_bs_certificate(eui):
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "bssci-service-secret-key-change-me")
+configure_logging(__name__)
 
 # Configure logger for this module
 logger = logging.getLogger(__name__)
@@ -2788,7 +2789,10 @@ def get_bssci_service_status():
         return response
 
     except Exception as e:
-        print(f"Error in get_bssci_service_status: {e}")
+        logger.error(
+            f"Error in get_bssci_service_status: {e}",
+            extra={"error_code": ERROR_CODES["WEB_UI_STATUS_ERROR"]},
+        )
         import traceback
 
         traceback.print_exc()
@@ -2801,7 +2805,8 @@ def get_bssci_service_status():
             "total_sensors": 0,
             "registered_sensors": 0,
             "pending_requests": 0,
-            "error": f"Status error: {e!s}",
+            "error": "Failed to retrieve service status",
+            "error_code": ERROR_CODES["WEB_UI_STATUS_ERROR"],
         }
 
 
@@ -2822,7 +2827,10 @@ def bssci_status():
         status = get_bssci_service_status()
         return jsonify(status)
     except Exception as e:
-        app.logger.error(f"Error in bssci_status endpoint: {e}")
+        app.logger.error(
+            f"Error in bssci_status endpoint: {e}",
+            extra={"error_code": ERROR_CODES["WEB_UI_STATUS_ERROR"]},
+        )
         error_response = {
             "running": False,
             "error": f"Service status error: {e!s}",
@@ -2848,8 +2856,11 @@ def api_connection_timeline():
             return jsonify({"success": True, "entries": tls_server_instance.get_connection_timeline(limit=limit)})
         return jsonify({"success": True, "entries": []})
     except Exception as e:
-        logger.error(f"Failed to read connection timeline: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        logger.error(
+            f"Failed to read connection timeline: {e}",
+            extra={"error_code": ERROR_CODES["WEB_UI_TIMELINE_ERROR"]},
+        )
+        return jsonify({"success": False, "error": "Failed to read connection timeline"}), 500
 
 
 @app.route("/api/base_stations")

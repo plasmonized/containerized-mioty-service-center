@@ -15,6 +15,8 @@ ERROR_CODES = {
     "TLS_SERVER_START_FAILED": "TLS_SERVER_START_FAILED",
     "QUEUE_WATCHER_FAILED": "QUEUE_WATCHER_FAILED",
     "WEB_UI_USER_STORE_ERROR": "WEB_UI_USER_STORE_ERROR",
+    "WEB_UI_STATUS_ERROR": "WEB_UI_STATUS_ERROR",
+    "WEB_UI_TIMELINE_ERROR": "WEB_UI_TIMELINE_ERROR",
 }
 
 
@@ -34,6 +36,7 @@ class JsonUTCFormatter(logging.Formatter):
             "error_code": getattr(record, "error_code", None),
             "message": record.getMessage(),
         }
+        payload = {k: v for k, v in payload.items() if v is not None}
 
         if record.exc_info:
             payload["exception"] = self.formatException(record.exc_info)
@@ -61,4 +64,5 @@ def configure_logging(default_component: str | None = None) -> None:
 
 
 def new_correlation_id() -> str:
+    """Generate a UUID4 correlation ID for cross-component traceability."""
     return str(uuid.uuid4())

@@ -2734,65 +2734,33 @@ def get_bssci_service_status():
                 "error": "TLS server not available",
             }
 
-        # Get base station status safely without asyncio operations
-        bs_status = {"total_connected": 0, "total_connecting": 0, "connected": [], "connecting": []}
+        runtime_snapshot = tls_server.get_runtime_snapshot() if hasattr(tls_server, "get_runtime_snapshot") else {}
+        connected_euis = runtime_snapshot.get("connected_euis", [])
+        connecting_euis = runtime_snapshot.get("connecting_euis", [])
+
+        connected_stations = [{"eui": eui, "address": "connected", "status": "connected"} for eui in connected_euis]
+        connecting_stations = [{"eui": eui, "address": "connecting", "status": "connecting"} for eui in connecting_euis]
+
+        total_configured_bs = len(set(connected_euis + connecting_euis))
         try:
-            connected_stations = []
-            connecting_stations = []
-            unique_connected_euis = set()
-            unique_connecting_euis = set()
+            bs_config = load_base_station_config().get("base_stations", {})
+            all_bs = set(k.upper() for k in bs_config.keys())
+            all_bs.update(connected_euis)
+            all_bs.update(connecting_euis)
+            total_configured_bs = len(all_bs)
+        except Exception:
+            pass
 
-            if hasattr(tls_server, "connected_base_stations"):
-                connected_dict = getattr(tls_server, "connected_base_stations", {})
-                for writer, bs_eui in list(connected_dict.items()):
-                    eui_upper = bs_eui.upper()
-                    if eui_upper not in unique_connected_euis:
-                        unique_connected_euis.add(eui_upper)
-                        connected_stations.append({"eui": eui_upper, "address": "connected", "status": "connected"})
+        bs_status = {
+            "connected": connected_stations,
+            "connecting": connecting_stations,
+            "total_connected": runtime_snapshot.get("total_connected", 0),
+            "total_connecting": runtime_snapshot.get("total_connecting", 0),
+            "total_configured": total_configured_bs,
+        }
 
-            if hasattr(tls_server, "connecting_base_stations"):
-                connecting_dict = getattr(tls_server, "connecting_base_stations", {})
-                for writer, bs_eui in list(connecting_dict.items()):
-                    eui_upper = bs_eui.upper()
-                    if eui_upper not in unique_connecting_euis and eui_upper not in unique_connected_euis:
-                        unique_connecting_euis.add(eui_upper)
-                        connecting_stations.append({"eui": eui_upper, "address": "connecting", "status": "connecting"})
-
-            connected_count = len(unique_connected_euis)
-            connecting_count = len(unique_connecting_euis)
-
-            total_configured_bs = 0
-            try:
-                bs_config = load_base_station_config().get("base_stations", {})
-                all_bs = set(k.upper() for k in bs_config.keys())
-                all_bs.update(unique_connected_euis)
-                all_bs.update(unique_connecting_euis)
-                total_configured_bs = len(all_bs)
-            except:
-                total_configured_bs = connected_count
-
-            bs_status = {
-                "connected": connected_stations,
-                "connecting": connecting_stations,
-                "total_connected": connected_count,
-                "total_connecting": connecting_count,
-                "total_configured": total_configured_bs,
-            }
-        except Exception as e:
-            print(f"Error getting base station status: {e}")
-
-        # Get sensor count safely
-        total_sensors = 0
-        registered_sensors = 0
-        try:
-            # Count sensors from config file instead of runtime status to avoid asyncio issues
-            with open(bssci_config.SENSOR_CONFIG_FILE) as f:
-                sensors = json.load(f)
-                total_sensors = len(sensors)
-                # For now, assume all configured sensors could be registered
-                registered_sensors = total_sensors
-        except Exception as e:
-            print(f"Error counting sensors: {e}")
+        total_sensors = runtime_snapshot.get("total_sensors", 0)
+        registered_sensors = runtime_snapshot.get("registered_sensors", 0)
 
         # Build response safely
         response = {
@@ -2814,9 +2782,7 @@ def get_bssci_service_status():
             "total_sensors": total_sensors,
             "registered_sensors": registered_sensors,
             "pending_requests": 0,
-            "sensor_status": tls_server.get_sensor_status_summary()
-            if hasattr(tls_server, "get_sensor_status_summary")
-            else {"online": 0, "offline": 0, "total_tracked": 0},
+            "sensor_status": runtime_snapshot.get("sensor_status", {"online": 0, "offline": 0, "total_tracked": 0}),
         }
 
         return response
@@ -2869,6 +2835,21 @@ def bssci_status():
             "pending_requests": 0,
         }
         return jsonify(error_response), 500
+
+
+@app.route("/api/connection-timeline")
+@login_required
+def api_connection_timeline():
+    try:
+        global tls_server_instance
+        if tls_server_instance and hasattr(tls_server_instance, "get_connection_timeline"):
+            limit = request.args.get("limit", 200, type=int)
+            limit = max(1, min(limit, 2000))
+            return jsonify({"success": True, "entries": tls_server_instance.get_connection_timeline(limit=limit)})
+        return jsonify({"success": True, "entries": []})
+    except Exception as e:
+        logger.error(f"Failed to read connection timeline: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route("/api/base_stations")

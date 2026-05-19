@@ -2,12 +2,14 @@ import asyncio
 import json
 import logging
 import ssl
+import threading
 from datetime import UTC, datetime
 from typing import Any
 
 import bssci_config
 import messages
-from observability import ERROR_CODES
+from connection_timeline import ConnectionTimeline
+from observability import ERROR_CODES, new_correlation_id
 from protocol import decode_messages, encode_message
 
 logger = logging.getLogger(__name__)
@@ -23,6 +25,9 @@ class TLSServer:
         mqtt_in_queue: asyncio.Queue[dict[str, str]],
     ) -> None:
         self.bs_op_ids: dict[asyncio.streams.StreamWriter, int] = {}
+        self.state_lock = threading.RLock()
+        self.connection_timeline = ConnectionTimeline(max_entries=2000)
+        self.connection_correlation_ids: dict[asyncio.streams.StreamWriter, str] = {}
         self.mqtt_out_queue = mqtt_out_queue
         self.mqtt_in_queue = mqtt_in_queue
         self.connected_base_stations: dict[asyncio.streams.StreamWriter, str] = {}
@@ -192,8 +197,8 @@ class TLSServer:
             ssl=ssl_ctx,
         )
 
-        logger.info("📨 Starting MQTT queue watcher task...")
-        asyncio.create_task(self.queue_watcher())
+        logger.info("📨 Starting MQTT inbound processor task...")
+        asyncio.create_task(self.process_mqtt_messages())
 
         logger.info("✓ BSSCI TLS Server is ready and listening for base station connections")
         async with server:
@@ -201,6 +206,7 @@ class TLSServer:
 
     async def send_attach_request(self, writer: asyncio.streams.StreamWriter, sensor: dict[str, Any]) -> None:
         bs_eui = self.connected_base_stations.get(writer, "unknown")
+        correlation_id = self.connection_correlation_ids.get(writer)
         try:
             op_id = self._get_next_op_id(writer)
             logger.info("📤 BSSCI ATTACH REQUEST INITIATED")
@@ -314,6 +320,13 @@ class TLSServer:
                     "base_station": bs_eui,
                     "sensor_config": normalized_sensor,
                 }
+                self.connection_timeline.add_event(
+                    "attach_request_sent",
+                    correlation_id=correlation_id,
+                    bs_eui=bs_eui,
+                    sensor_eui=sensor["eui"].upper(),
+                    op_id=op_id,
+                )
 
                 logger.info("✅ BSSCI ATTACH REQUEST TRANSMITTED")
                 logger.info(f"   Operation ID {op_id} sent to base station {bs_eui}")
@@ -720,7 +733,10 @@ class TLSServer:
                     logger.info(f"   Connected base stations: {len(self.connected_base_stations)}")
                     logger.info(f"   Base stations: {list(self.connected_base_stations.values())}")
 
-                    for writer in list(self.connected_base_stations.keys()):
+                    with self.state_lock:
+                        current_writers = list(self.connected_base_stations.keys())
+
+                    for writer in current_writers:
                         try:
                             bs_eui = self.connected_base_stations.get(writer, "unknown")
                             logger.info(f"   📊 Sending status request to {bs_eui}")
@@ -746,10 +762,11 @@ class TLSServer:
                                 logger.error(
                                     f"   🔌 Base station {bs_eui} reached failure threshold ({self.BS_STATUS_FAILURE_THRESHOLD}), removing from active list"
                                 )
-                                if writer in self.connected_base_stations:
-                                    self.connected_base_stations.pop(writer)
-                                self.bs_status_failures.pop(writer, None)
-                                self.bs_op_ids.pop(writer, None)
+                                with self.state_lock:
+                                    if writer in self.connected_base_stations:
+                                        self.connected_base_stations.pop(writer)
+                                    self.bs_status_failures.pop(writer, None)
+                                    self.bs_op_ids.pop(writer, None)
                                 try:
                                     writer.close()
                                 except:
@@ -829,19 +846,36 @@ class TLSServer:
                         writer.write(IDENTIFIER + len(msg).to_bytes(4, byteorder="little") + msg)
                         await writer.drain()
                         bs_eui = int(message["bsEui"]).to_bytes(8, byteorder="big").hex().upper()
-                        self.connecting_base_stations[writer] = bs_eui
-                        logger.info(f"📤 BSSCI CONNECTION RESPONSE sent to base station {bs_eui}")
+                        correlation_id = new_correlation_id()
+                        self.connection_timeline.add_event(
+                            "connection_request",
+                            correlation_id=correlation_id,
+                            bs_eui=bs_eui,
+                            op_id=message.get("opId"),
+                        )
+                        with self.state_lock:
+                            self.connecting_base_stations[writer] = bs_eui
+                            self.connection_correlation_ids[writer] = correlation_id
+                        logger.info(
+                            f"📤 BSSCI CONNECTION RESPONSE sent to base station {bs_eui}",
+                            extra={"correlation_id": correlation_id},
+                        )
                         logger.info(f"   Base station {bs_eui} is now in connecting state")
 
                     elif msg_type == "conCmp":
                         logger.info(f"📨 BSSCI CONNECTION COMPLETE received from {addr}")
 
                         # Always remove from connecting first (fix for duplicate display bug)
-                        bs_eui = self.connecting_base_stations.pop(writer, None)  # type: ignore[arg-type]
+                        with self.state_lock:
+                            bs_eui = self.connecting_base_stations.pop(writer, None)  # type: ignore[arg-type]
 
-                        if bs_eui and writer not in self.connected_base_stations:
+                        with self.state_lock:
+                            writer_connected = writer in self.connected_base_stations
+
+                        if bs_eui and not writer_connected:
                             # Deduplicate: Remove any existing connection with the same EUI
-                            old_writers = [w for w, eui in list(self.connected_base_stations.items()) if eui == bs_eui]
+                            with self.state_lock:
+                                old_writers = [w for w, eui in list(self.connected_base_stations.items()) if eui == bs_eui]
                             for old_writer in old_writers:
                                 logger.warning(f"🔄 REPLACING duplicate connection for base station {bs_eui}")
                                 logger.warning(f"   Closing old connection, keeping new connection from {addr}")
@@ -849,16 +883,28 @@ class TLSServer:
                                     old_writer.close()
                                 except Exception as e:
                                     logger.debug(f"   Could not close old writer: {e}")
-                                self.connected_base_stations.pop(old_writer, None)
-                                self.bs_op_ids.pop(old_writer, None)
-                                # Also remove from connecting if present there
-                                self.connecting_base_stations.pop(old_writer, None)
+                                with self.state_lock:
+                                    self.connected_base_stations.pop(old_writer, None)
+                                    self.bs_op_ids.pop(old_writer, None)
+                                    # Also remove from connecting if present there
+                                    self.connecting_base_stations.pop(old_writer, None)
 
-                            self.connected_base_stations[writer] = bs_eui
-                            self.bs_op_ids[writer] = -1
+                            with self.state_lock:
+                                self.connected_base_stations[writer] = bs_eui
+                                self.bs_op_ids[writer] = -1
+                                correlation_id = self.connection_correlation_ids.get(writer)
                             connection_time = asyncio.get_event_loop().time() - connection_start_time
+                            self.connection_timeline.add_event(
+                                "connection_established",
+                                correlation_id=correlation_id,
+                                bs_eui=bs_eui,
+                                details=f"setup_duration={connection_time:.2f}s",
+                            )
 
-                            logger.info(f"✅ BSSCI CONNECTION ESTABLISHED with base station {bs_eui}")
+                            logger.info(
+                                f"✅ BSSCI CONNECTION ESTABLISHED with base station {bs_eui}",
+                                extra={"correlation_id": correlation_id},
+                            )
                             logger.info("   =====================================")
                             logger.info(f"   Base Station EUI: {bs_eui}")
                             logger.info(f"   Connection established at: {self._get_local_time()}")
@@ -1054,6 +1100,14 @@ class TLSServer:
 
                             # Remove from pending requests
                             del self.pending_attach_requests[op_id]
+                            self.connection_timeline.add_event(
+                                "attach_response_received",
+                                correlation_id=self.connection_correlation_ids.get(writer),
+                                bs_eui=bs_eui,
+                                sensor_eui=sensor_eui.upper(),
+                                op_id=op_id,
+                                details=f"processing_duration={processing_duration:.3f}s",
+                            )
 
                         else:
                             logger.warning("⚠️  ATTACH RESPONSE for unknown operation ID")
@@ -1739,14 +1793,26 @@ class TLSServer:
             writer.close()
             await writer.wait_closed()
 
-            if writer in self.connected_base_stations:
-                bs_eui = self.connected_base_stations.pop(writer)
-                logger.info(f"❌ Base station {bs_eui} disconnected")
-                logger.info(f"   Remaining connected base stations: {len(self.connected_base_stations)}")
-            if writer in self.connecting_base_stations:
-                self.connecting_base_stations.pop(writer)
-            self.bs_status_failures.pop(writer, None)
-            self.bs_op_ids.pop(writer, None)
+            with self.state_lock:
+                if writer in self.connected_base_stations:
+                    bs_eui = self.connected_base_stations.pop(writer)
+                    correlation_id = self.connection_correlation_ids.pop(writer, None)
+                    self.connection_timeline.add_event(
+                        "connection_closed",
+                        correlation_id=correlation_id,
+                        bs_eui=bs_eui,
+                        details=f"duration={connection_duration:.2f}s",
+                    )
+                    logger.info(
+                        f"❌ Base station {bs_eui} disconnected",
+                        extra={"correlation_id": correlation_id},
+                    )
+                    logger.info(f"   Remaining connected base stations: {len(self.connected_base_stations)}")
+                if writer in self.connecting_base_stations:
+                    self.connecting_base_stations.pop(writer)
+                self.connection_correlation_ids.pop(writer, None)
+                self.bs_status_failures.pop(writer, None)
+                self.bs_op_ids.pop(writer, None)
 
     async def process_deduplication_buffer(self) -> None:
         """Processes the deduplication buffer, forwards best messages, and cleans up old entries."""
@@ -2103,47 +2169,16 @@ class TLSServer:
                 )
 
     async def queue_watcher(self) -> None:
-        logger.info("📨 MQTT queue watcher started - monitoring for configuration updates")
-        logger.info(f"   Watching queue ID: {id(self.mqtt_in_queue)}")
+        logger.info("📨 queue_watcher is deprecated; delegating to process_mqtt_messages")
         try:
-            while True:
-                logger.debug(f"⏳ Queue watcher waiting for message (queue size: {self.mqtt_in_queue.qsize()})")
-                msg = dict(await self.mqtt_in_queue.get())
-                logger.info("📥 MQTT CONFIGURATION MESSAGE received")
-                logger.debug(f"   Raw message: {msg}")
-
-                if "eui" in msg.keys() and "nwKey" in msg.keys() and "shortAddr" in msg.keys() and "bidi" in msg.keys():
-                    logger.info("🔧 PROCESSING ENDPOINT CONFIGURATION")
-                    logger.info(f"   Endpoint EUI: {msg['eui']}")
-                    logger.info(f"   Short Address: {msg['shortAddr']}")
-                    logger.info(f"   Network Key: {msg['nwKey'][:8]}...{msg['nwKey'][-8:]}")
-                    logger.info(f"   Bidirectional: {msg['bidi']}")
-
-                    if self.connected_base_stations:
-                        logger.info(f"📤 PROPAGATING to {len(self.connected_base_stations)} connected base stations")
-                        for writer, bs_eui in self.connected_base_stations.items():
-                            logger.info(f"   Sending attach request to base station: {bs_eui}")
-                            await self.send_attach_request(writer, msg)
-                    else:
-                        logger.warning("⚠️  NO BASE STATIONS CONNECTED")
-                        logger.warning(
-                            "   Configuration saved but attach requests will be sent when base stations connect"
-                        )
-
-                    logger.info("💾 UPDATING local configuration file")
-                    self.update_or_add_entry(msg)
-                    logger.info(f"✅ ENDPOINT CONFIGURATION processing complete for {msg['eui']}")
-                else:
-                    logger.error("❌ INVALID MQTT configuration message - missing required fields")
-                    logger.error("   Required: eui, nwKey, shortAddr, bidi")
-                    logger.error(f"   Received: {list(msg.keys())}")
+            await self.process_mqtt_messages()
         except asyncio.CancelledError:
             logger.info("📨 MQTT queue watcher stopped")
         except Exception as e:
-            logger.error(f"❌ Error in MQTT queue watcher: {e}", extra={"error_code": ERROR_CODES["QUEUE_WATCHER_FAILED"]})
-            import traceback
-
-            logger.error(f"   Traceback: {traceback.format_exc()}")
+            logger.error(
+                f"❌ Error in MQTT queue watcher: {e}",
+                extra={"error_code": ERROR_CODES["QUEUE_WATCHER_FAILED"]},
+            )
 
     # ==================== Variable MAC (VM) Sub-Channel Methods ====================
 
@@ -2527,6 +2562,30 @@ class TLSServer:
             "total_connected": len(connected_stations),
             "total_connecting": len(connecting_stations),
         }
+
+    def get_runtime_snapshot(self) -> dict[str, Any]:
+        """Thread-safe runtime snapshot for Web UI consumers."""
+        with self.state_lock:
+            connected_euis = sorted({eui.upper() for eui in self.connected_base_stations.values()})
+            connecting_euis = sorted({eui.upper() for eui in self.connecting_base_stations.values()})
+            total_sensors = len(self.sensor_config)
+            registered_sensors = len(
+                [k for k, v in self.registered_sensors.items() if not k.endswith("_failure") and v.get("status") == "registered"]
+            )
+
+        return {
+            "connected_euis": connected_euis,
+            "connecting_euis": connecting_euis,
+            "total_connected": len(connected_euis),
+            "total_connecting": len(connecting_euis),
+            "total_sensors": total_sensors,
+            "registered_sensors": registered_sensors,
+            "sensor_status": self.get_sensor_status_summary(),
+        }
+
+    def get_connection_timeline(self, limit: int = 200) -> list[dict[str, Any]]:
+        """Return recent connection timeline entries."""
+        return self.connection_timeline.get_entries(limit=limit)
 
     def reload_sensor_config(self) -> None:
         """Reload sensor configuration from file"""

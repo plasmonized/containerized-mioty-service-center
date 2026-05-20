@@ -86,9 +86,7 @@ def set_tls_server(server):
         logger.info("✅ TLS server instance passed to web UI successfully")
         logger.info(f"   TLS server ID: {id(tls_server_instance)}")
         if hasattr(tls_server_instance, "connected_base_stations"):
-            logger.info(
-                f"   Connected base stations count: {len(tls_server_instance.connected_base_stations)}"
-            )
+            logger.info(f"   Connected base stations count: {len(tls_server_instance.connected_base_stations)}")
     except ImportError as e:
         logger.error(f"❌ Failed to import web_ui: {e}")
     except Exception as e:

@@ -180,13 +180,19 @@ class TLSServer:
             logger.info("✓ SSL context configured successfully with client certificate verification")
 
         except FileNotFoundError as e:
-            logger.error(f"❌ SSL certificate file not found: {e}", extra={"error_code": ERROR_CODES["TLS_CERT_FILE_MISSING"]})
+            logger.error(
+                f"❌ SSL certificate file not found: {e}", extra={"error_code": ERROR_CODES["TLS_CERT_FILE_MISSING"]}
+            )
             raise
         except ssl.SSLError as e:
-            logger.error(f"❌ SSL configuration error: {e}", extra={"error_code": ERROR_CODES["TLS_CONFIGURATION_ERROR"]})
+            logger.error(
+                f"❌ SSL configuration error: {e}", extra={"error_code": ERROR_CODES["TLS_CONFIGURATION_ERROR"]}
+            )
             raise
         except Exception as e:
-            logger.error(f"❌ Unexpected error setting up SSL: {e}", extra={"error_code": ERROR_CODES["TLS_SERVER_START_FAILED"]})
+            logger.error(
+                f"❌ Unexpected error setting up SSL: {e}", extra={"error_code": ERROR_CODES["TLS_SERVER_START_FAILED"]}
+            )
             raise
 
         logger.info("🚀 Starting BSSCI TLS server...")
@@ -879,7 +885,9 @@ class TLSServer:
                         if bs_eui and not writer_connected:
                             # Deduplicate: Remove any existing connection with the same EUI
                             with self.state_lock:
-                                old_writers = [w for w, eui in list(self.connected_base_stations.items()) if eui == bs_eui]
+                                old_writers = [
+                                    w for w, eui in list(self.connected_base_stations.items()) if eui == bs_eui
+                                ]
                             for old_writer in old_writers:
                                 logger.warning(f"🔄 REPLACING duplicate connection for base station {bs_eui}")
                                 logger.warning(f"   Closing old connection, keeping new connection from {addr}")
@@ -896,21 +904,21 @@ class TLSServer:
                             with self.state_lock:
                                 self.connected_base_stations[writer] = bs_eui
                                 self.bs_op_ids[writer] = -1
-                                correlation_id = self.connection_correlation_ids.get(writer)
-                                if correlation_id is None:
-                                    correlation_id = generate_correlation_id()
-                                    self.connection_correlation_ids[writer] = correlation_id
+                                event_correlation_id = self.connection_correlation_ids.get(writer)
+                                if event_correlation_id is None:
+                                    event_correlation_id = generate_correlation_id()
+                                    self.connection_correlation_ids[writer] = event_correlation_id
                             connection_time = asyncio.get_event_loop().time() - connection_start_time
                             self.connection_timeline.add_event(
                                 "connection_established",
-                                correlation_id=correlation_id,
+                                correlation_id=event_correlation_id,
                                 bs_eui=bs_eui,
                                 details=f"setup_duration={connection_time:.2f}s",
                             )
 
                             logger.info(
                                 f"✅ BSSCI CONNECTION ESTABLISHED with base station {bs_eui}",
-                                extra={"correlation_id": correlation_id},
+                                extra={"correlation_id": event_correlation_id},
                             )
                             logger.info("   =====================================")
                             logger.info(f"   Base Station EUI: {bs_eui}")
@@ -1803,18 +1811,18 @@ class TLSServer:
             with self.state_lock:
                 if writer in self.connected_base_stations:
                     bs_eui = self.connected_base_stations.pop(writer)
-                    correlation_id = self.connection_correlation_ids.get(writer)
+                    event_correlation_id = self.connection_correlation_ids.get(writer)
                     if writer in self.connection_correlation_ids:
                         del self.connection_correlation_ids[writer]
                     self.connection_timeline.add_event(
                         "connection_closed",
-                        correlation_id=correlation_id,
+                        correlation_id=event_correlation_id,
                         bs_eui=bs_eui,
                         details=f"duration={connection_duration:.2f}s",
                     )
                     logger.info(
                         f"❌ Base station {bs_eui} disconnected",
-                        extra={"correlation_id": correlation_id},
+                        extra={"correlation_id": event_correlation_id},
                     )
                     logger.info(f"   Remaining connected base stations: {len(self.connected_base_stations)}")
                 if writer in self.connecting_base_stations:

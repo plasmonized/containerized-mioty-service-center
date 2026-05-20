@@ -19,16 +19,12 @@ async def main() -> None:
     mqtt_in_queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
 
     logger.info("Initializing BSSCI Service Center...")
-    logger.info(
-        f"Config: TLS Port {LISTEN_PORT}, MQTT Broker {MQTT_BROKER}:{MQTT_PORT}"
-    )
+    logger.info(f"Config: TLS Port {LISTEN_PORT}, MQTT Broker {MQTT_BROKER}:{MQTT_PORT}")
 
     # Setup queue logging to monitor queue usage
     from queue_logger import log_all_queue_stats, setup_queue_logging
 
-    queue_loggers = setup_queue_logging(
-        {"mqtt_out_queue": mqtt_out_queue, "mqtt_in_queue": mqtt_in_queue}
-    )
+    queue_loggers = setup_queue_logging({"mqtt_out_queue": mqtt_out_queue, "mqtt_in_queue": mqtt_in_queue})
 
     logger.info("🔍 Queue Instance Analysis:")
     logger.info("   mqtt_out_queue Daily Counter: Starting fresh")
@@ -69,9 +65,7 @@ async def main() -> None:
 
     try:
         # Start both services concurrently
-        await asyncio.gather(
-            tls_server.start_server(), mqtt_client.start(), return_exceptions=True
-        )
+        await asyncio.gather(tls_server.start_server(), mqtt_client.start(), return_exceptions=True)
     except KeyboardInterrupt:
         logger.info("Shutting down BSSCI Service Center...")
     except Exception as e:

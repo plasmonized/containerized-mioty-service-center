@@ -10,13 +10,14 @@ from typing import Any
 import bssci_config
 import messages
 from connection_timeline import ConnectionTimeline
-from observability import ERROR_CODES, new_correlation_id
+from observability import ERROR_CODES, generate_correlation_id
 from protocol import decode_messages, encode_message
 
 logger = logging.getLogger(__name__)
 
 IDENTIFIER = bytes("MIOTYB01", "utf-8")
-# Suffix used for synthetic failure tracking entries in registered_sensors.
+# Suffix used for synthetic `registered_sensors` entries created after repeated
+# status request failures so disconnected sensors are still surfaced in status APIs.
 REGISTERED_SENSOR_FAILURE_SUFFIX = "_failure"
 
 
@@ -158,7 +159,7 @@ class TLSServer:
         self.bs_op_ids[writer] = op_id - 1
         return op_id
 
-    def _get_local_time(self) -> str:
+    def _get_utc_time(self) -> str:
         """Return current time in UTC for internal correlation."""
         return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
@@ -217,7 +218,7 @@ class TLSServer:
             logger.info(f"   Sensor EUI: {sensor['eui']}")
             logger.info(f"   Target Base Station: {bs_eui}")
             logger.info(f"   Operation ID: {op_id}")
-            logger.info(f"   Timestamp: {self._get_local_time()}")
+            logger.info(f"   Timestamp: {self._get_utc_time()}")
 
             # Comprehensive validation with detailed logging
             validation_errors = []
@@ -849,7 +850,7 @@ class TLSServer:
                         writer.write(IDENTIFIER + len(msg).to_bytes(4, byteorder="little") + msg)
                         await writer.drain()
                         bs_eui = int(message["bsEui"]).to_bytes(8, byteorder="big").hex().upper()
-                        correlation_id = new_correlation_id()
+                        correlation_id = generate_correlation_id()
                         self.connection_timeline.add_event(
                             "connection_request",
                             correlation_id=correlation_id,
@@ -910,7 +911,7 @@ class TLSServer:
                             )
                             logger.info("   =====================================")
                             logger.info(f"   Base Station EUI: {bs_eui}")
-                            logger.info(f"   Connection established at: {self._get_local_time()}")
+                            logger.info(f"   Connection established at: {self._get_utc_time()}")
                             logger.info(f"   Connection setup duration: {connection_time:.2f} seconds")
                             logger.info(f"   Client address: {addr}")
                             logger.info(f"   Total connected base stations: {len(self.connected_base_stations)}")
@@ -1071,7 +1072,7 @@ class TLSServer:
                                     "status": "registered",
                                     "base_stations": [],
                                     "timestamp": response_time,
-                                    "registration_time": self._get_local_time(),
+                                    "registration_time": self._get_utc_time(),
                                     "registrations": [],
                                 }
 
@@ -1083,14 +1084,14 @@ class TLSServer:
                                         "base_station": bs_eui,
                                         "op_id": op_id,
                                         "processing_duration": processing_duration,
-                                        "registration_time": self._get_local_time(),
+                                        "registration_time": self._get_utc_time(),
                                     }
                                 )
                                 self.registered_sensors[eui_key]["timestamp"] = response_time
 
                             logger.info("✅ SENSOR REGISTRATION SUCCESSFUL")
                             logger.info(f"   Sensor {sensor_eui} is now REGISTERED to base station {bs_eui}")
-                            logger.info(f"   Registration completed at: {self._get_local_time()}")
+                            logger.info(f"   Registration completed at: {self._get_utc_time()}")
                             logger.info(
                                 f"   Total base stations for this sensor: {len(self.registered_sensors[eui_key]['base_stations'])}"
                             )
@@ -1142,7 +1143,7 @@ class TLSServer:
                                         "status": "registered",
                                         "base_stations": [],
                                         "timestamp": asyncio.get_event_loop().time(),
-                                        "registration_time": self._get_local_time(),
+                                        "registration_time": self._get_utc_time(),
                                         "registrations": [],
                                     }
 
@@ -1153,7 +1154,7 @@ class TLSServer:
                                         {
                                             "base_station": bs_eui,
                                             "op_id": op_id,
-                                            "registration_time": self._get_local_time(),
+                                            "registration_time": self._get_utc_time(),
                                             "fallback_used": True,
                                         }
                                     )
@@ -1166,7 +1167,7 @@ class TLSServer:
                                 # Remove the fallback request
                                 del self.pending_attach_requests[fallback_op_id]
 
-                        logger.info(f"   Response received at: {self._get_local_time()}")
+                        logger.info(f"   Response received at: {self._get_utc_time()}")
                         logger.info("   =====================================")
 
                         msg_pack = encode_message(messages.build_attach_complete(message.get("opId", "")))
@@ -2089,7 +2090,7 @@ class TLSServer:
                 "active": True,
                 "inactive_hours": round(hours_inactive, 1),
                 "hours_until_detach": round(hours_until_detach, 1),
-                "warning_sent_time": self._get_local_time(),
+                "warning_sent_time": self._get_utc_time(),
             }
 
         # Send MQTT warning notification
@@ -2130,7 +2131,7 @@ class TLSServer:
                     "detached": True,
                     "reason": "inactivity",
                     "inactive_hours": round(hours_inactive, 1),
-                    "detach_time": self._get_local_time(),
+                    "detach_time": self._get_utc_time(),
                 }
 
             # Remove from last seen and warning tracking
@@ -3036,7 +3037,7 @@ class TLSServer:
                 sensor["preferredDownlinkPath"] = {
                     "baseStation": bs_eui,
                     "snr": round(snr, 2),
-                    "lastUpdated": self._get_local_time(),
+                    "lastUpdated": self._get_utc_time(),
                     "messageCount": sensor["preferredDownlinkPath"].get("messageCount", 0) + 1,
                 }
 

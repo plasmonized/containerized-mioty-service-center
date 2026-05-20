@@ -65,6 +65,6 @@ def configure_logging(default_component: str | None = None) -> None:
         logging.getLogger(default_component).setLevel(level)
 
 
-def new_correlation_id() -> str:
+def generate_correlation_id() -> str:
     """Generate a UUID4 correlation ID for cross-component traceability."""
     return str(uuid.uuid4())

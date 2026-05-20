@@ -68,6 +68,20 @@ def _validate_eui(eui):
 
 
 def _safe_certs_path(*parts: str) -> Path:
+    for part in parts:
+        part_path = Path(part)
+        if (
+            not part
+            or part_path.is_absolute()
+            or len(part_path.parts) > 1
+            or ".." in part_path.parts
+        ):
+            logger.warning(
+                "Blocked invalid certificate path part",
+                extra={"error_code": ERROR_CODES["WEB_UI_CERT_PATH_INVALID"]},
+            )
+            raise ValueError("Invalid certificate path")
+
     candidate = (CERTS_BASE_DIR / Path(*parts)).resolve()
     if not candidate.is_relative_to(CERTS_BASE_DIR):
         logger.warning(
@@ -3292,18 +3306,29 @@ def bssci_status():
 def api_connection_timeline():
     try:
         global tls_server_instance
+        requested_limit = request.args.get("limit", 200, type=int)
+        if requested_limit is None:
+            requested_limit = 200
+        limit = max(1, min(requested_limit, 2000))
         if tls_server_instance and hasattr(
             tls_server_instance, "get_connection_timeline"
         ):
-            limit = request.args.get("limit", 200, type=int)
-            limit = max(1, min(limit, 2000))
             return jsonify(
                 {
                     "success": True,
+                    "requested_limit": requested_limit,
+                    "applied_limit": limit,
                     "entries": tls_server_instance.get_connection_timeline(limit=limit),
                 }
             )
-        return jsonify({"success": True, "entries": []})
+        return jsonify(
+            {
+                "success": True,
+                "requested_limit": requested_limit,
+                "applied_limit": limit,
+                "entries": [],
+            }
+        )
     except Exception as e:
         logger.error(
             f"Failed to read connection timeline: {e}",

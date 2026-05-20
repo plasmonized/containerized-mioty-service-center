@@ -897,6 +897,9 @@ class TLSServer:
                                 self.connected_base_stations[writer] = bs_eui
                                 self.bs_op_ids[writer] = -1
                                 correlation_id = self.connection_correlation_ids.get(writer)
+                                if correlation_id is None:
+                                    correlation_id = generate_correlation_id()
+                                    self.connection_correlation_ids[writer] = correlation_id
                             connection_time = asyncio.get_event_loop().time() - connection_start_time
                             self.connection_timeline.add_event(
                                 "connection_established",
@@ -1800,7 +1803,9 @@ class TLSServer:
             with self.state_lock:
                 if writer in self.connected_base_stations:
                     bs_eui = self.connected_base_stations.pop(writer)
-                    correlation_id = self.connection_correlation_ids.pop(writer, None)
+                    correlation_id = self.connection_correlation_ids.get(writer)
+                    if writer in self.connection_correlation_ids:
+                        del self.connection_correlation_ids[writer]
                     self.connection_timeline.add_event(
                         "connection_closed",
                         correlation_id=correlation_id,

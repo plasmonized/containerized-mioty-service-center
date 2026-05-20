@@ -36,7 +36,7 @@ tls_server_instance = None
 CERTS_BASE_DIR = Path("certs").resolve()
 
 # Uptime tracking
-bs_uptime_events = {}
+bs_uptime_events: dict[str, list[dict[str, str]]] = {}
 _last_known_bs_status: dict[str, dict[str, str | int]] = {}
 
 

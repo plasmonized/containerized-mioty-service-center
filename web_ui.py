@@ -32,6 +32,7 @@ from observability import ERROR_CODES, configure_logging
 
 # Global TLS server instance reference
 tls_server_instance = None
+# Trusted base directory for all certificate file operations.
 CERTS_BASE_DIR = Path("certs").resolve()
 
 # Uptime tracking
@@ -69,6 +70,10 @@ def _validate_eui(eui):
 def _safe_certs_path(*parts: str) -> Path:
     candidate = (CERTS_BASE_DIR / Path(*parts)).resolve()
     if not candidate.is_relative_to(CERTS_BASE_DIR):
+        logger.warning(
+            "Blocked certificate path traversal attempt",
+            extra={"error_code": ERROR_CODES["WEB_UI_CERT_PATH_INVALID"]},
+        )
         raise ValueError("Invalid certificate path")
     return candidate
 
@@ -1609,9 +1614,16 @@ SECRET_KEY=your-secret-key-here"""
             }
         )
     except Exception as e:
-        print(f"Error updating config: {e}")
+        logger.error(
+            f"Error updating config: {e}",
+            extra={"error_code": ERROR_CODES["WEB_UI_CONFIG_UPDATE_ERROR"]},
+        )
         return jsonify(
-            {"success": False, "message": f"Configuration update failed: {e!s}"}
+            {
+                "success": False,
+                "message": "Configuration update failed.",
+                "error_code": ERROR_CODES["WEB_UI_CONFIG_UPDATE_ERROR"],
+            }
         )
 
 

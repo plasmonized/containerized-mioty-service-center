@@ -1,0 +1,12 @@
+Metadata-Version: 2.4
+Name: repl-nix-workspace
+Version: 0.1.0
+Summary: Add your description here
+Requires-Python: >=3.12
+License-File: LICENSE
+Requires-Dist: aiomqtt>=2.4.0
+Requires-Dist: black>=25.1.0
+Requires-Dist: flake8>=7.3.0
+Requires-Dist: flask>=3.1.2
+Requires-Dist: msgpack>=1.1.1
+Dynamic: license-file

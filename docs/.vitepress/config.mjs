@@ -76,7 +76,6 @@ export default withMermaid(defineConfig({
       provider: 'local'
     }
   },
-  outDir: '../dist',
   markdown: {
     theme: {
       light: 'github-light',

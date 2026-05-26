@@ -4,9 +4,7 @@ import os
 import threading
 import time
 
-# Configure logging with timezone
-from datetime import UTC, datetime, timedelta, timezone
-
+from observability import configure_logging
 from web_ui import app
 
 # Check for Synology Docker mode
@@ -22,29 +20,7 @@ if os.getenv("SYNOLOGY_DOCKER") == "1":
     print("=" * 50)
 
 
-class TimezoneFormatter(logging.Formatter):
-    def __init__(self, fmt, datefmt=None):
-        super().__init__(fmt, datefmt)
-        # Set timezone to UTC+2 (Central European Time)
-        self.timezone = timezone(timedelta(hours=2))
-
-    def formatTime(self, record, datefmt=None):
-        # Convert UTC timestamp to local timezone
-        utc_time = datetime.fromtimestamp(record.created, tz=UTC)
-        local_time = utc_time.astimezone(self.timezone)
-        if datefmt:
-            return local_time.strftime(datefmt)
-        else:
-            return local_time.strftime("%Y-%m-%d %H:%M:%S")
-
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-
-# Apply timezone formatter to all handlers
-timezone_formatter = TimezoneFormatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s", "%Y-%m-%d %H:%M:%S")
-for handler in logging.root.handlers:
-    handler.setFormatter(timezone_formatter)
+configure_logging(__name__)
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +70,6 @@ def run_bssci_service():
 
 def get_tls_server():
     """Get the TLS server instance"""
-    global tls_server_instance
     return tls_server_instance
 
 

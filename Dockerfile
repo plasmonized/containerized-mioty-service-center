@@ -26,5 +26,8 @@ RUN chmod 644 bssci_config.py endpoints.json && \
 # Expose ports
 EXPOSE 16018 5000
 
+# Entry point for initialization (certs, permissions, etc.)
+ENTRYPOINT ["./docker-entrypoint.sh"]
+
 # Default command
 CMD ["python", "web_main.py"]

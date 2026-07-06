@@ -1,14 +1,16 @@
 [project]
-name = "repl-nix-workspace"
+name = "bssci-service-center"
 version = "0.1.0"
-description = "Add your description here"
+description = "Service center for mioty base stations, sensors, and MQTT integration."
+readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "aiomqtt>=2.4.0",
-    "black>=25.1.0",
-    "flake8>=7.3.0",
+    "cryptography>=42.0.0",
     "flask>=3.1.2",
     "msgpack>=1.1.1",
+    "paho-mqtt>=2.1.0",
+    "python-dotenv>=1.0.0",
 ]
 
 [tool.setuptools.packages.find]
@@ -16,26 +18,41 @@ where = ["."]
 include = ["main*", "web_main*", "mqtt_interface*", "messages*", "protocol*", "queue_logger*", "TLSServer*", "bssci_config*", "web_ui*"]
 exclude = ["tests*", "logs*", "certs*", "static*", "templates*", "attached_assets*", ".config*"]
 
-[tool.ruff]
-line-length = 120
-target-version = "py312"
+[dependency-groups]
+dev = [
+    "black>=25.1.0",
+    "isort>=5.13.2",
+    "mypy>=1.18.2",
+    "pytest>=8.4.2",
+    "pytest-asyncio>=0.25.0",
+    "pytest-cov>=6.0.0",
+    "pytest-mock>=3.14.0",
+    "ruff>=0.11.0",
+]
 
-[tool.ruff.lint]
-select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "RUF"]
-ignore = ["E501", "F841", "E722", "W293", "N802", "N803", "N806", "B007", "F811", "B904", "C401", "RUF006", "RUF013", "RUF012", "RUF001", "RUF015", "RUF059", "RUF005"]
-
-[tool.ruff.lint.per-file-ignores]
-"attached_assets/*" = ["ALL"]
+[tool.uv]
+package = false
 
 [tool.pytest.ini_options]
+asyncio_mode = "auto"
 testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests that need external services (MQTT, TLS)",
+    "unit: marks pure unit tests (no external deps)",
+]
 
 [tool.coverage.run]
 source = ["."]
-omit = ["*/tests/*", "*/attached_assets/*"]
+omit = [
+    "*/tests/*",
+    "*/attached_assets/*",
+    "**/__pycache__/*",
+    ".venv/*",
+]
 
 [tool.coverage.report]
 exclude_lines = [
@@ -43,4 +60,53 @@ exclude_lines = [
     "def __repr__",
     "raise NotImplementedError",
     "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
 ]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "I",    # isort
+    "N",    # pep8-naming
+    "W",    # pycodestyle warnings
+    "UP",   # pyupgrade
+    "LOG",  # logging
+    "RUF",  # ruff-specific
+]
+ignore = [
+    "E111",  # indentation with mixed spaces/tabs
+    "E117",  # over-indented
+    "E128",  # continuation line under-indented for visual indent
+    "E129",  # visually indented line with same indent as next logical line
+    "E203",  # whitespace before ':'
+    "E261",  # at least two spaces before inline comment
+    "E302",  # expected 2 blank lines
+    "E303",  # too many blank lines
+    "E305",  # expected 2 blank lines after class/function
+    "E501",  # line too long (handled by formatter)
+    "E722",  # do not use bare except
+    "F401",  # imported but unused (covered by F811)
+    "F541",  # f-string without placeholders
+    "F811",  # redefined function
+    "F824",  # declaration at module level
+    "UP007", # non-pep604-annotation (allow Optional[X] style)
+    "W291",  # trailing whitespace
+    "W292",  # no newline at end of file
+    "W293",  # blank line contains whitespace
+    "W503",  # line break before binary operator
+    "W504",  # line break after binary operator
+    "N818",  # exception class name suffix
+]
+
+[tool.ruff.lint.per-file-ignores]
+"attached_assets/*" = ["ALL"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"

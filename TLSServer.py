@@ -172,11 +172,27 @@ class TLSServer:
             ssl_ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
             ssl_ctx.load_cert_chain(certfile=bssci_config.CERT_FILE, keyfile=bssci_config.KEY_FILE)
             ssl_ctx.load_verify_locations(cafile=bssci_config.CA_FILE)
-            ssl_ctx.verify_mode = ssl.CERT_REQUIRED
+
+            require_cert = getattr(bssci_config, "TLS_REQUIRE_CLIENT_CERT", True)
+            compat_mode = getattr(bssci_config, "TLS_COMPAT_MODE", False)
+
+            if require_cert:
+                ssl_ctx.verify_mode = ssl.CERT_REQUIRED
+                logger.info("   Client certificate: REQUIRED (mutual TLS)")
+            else:
+                ssl_ctx.verify_mode = ssl.CERT_OPTIONAL
+                logger.warning("   Client certificate: OPTIONAL (TLS_REQUIRE_CLIENT_CERT=false)")
+
+            if compat_mode:
+                # Lower OpenSSL security level for embedded TLS stacks
+                # (accepts older ciphers, smaller keys - e.g. some gateway hardware)
+                ssl_ctx.set_ciphers("DEFAULT:@SECLEVEL=1")
+                ssl_ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+                logger.warning("   TLS compatibility mode: ENABLED (SECLEVEL=1, min TLSv1.2)")
 
             # Log SSL context details
             logger.info(f"   TLS Protocol versions: {ssl_ctx.minimum_version.name} - {ssl_ctx.maximum_version.name}")
-            logger.info("✓ SSL context configured successfully with client certificate verification")
+            logger.info("✓ SSL context configured successfully")
 
         except FileNotFoundError as e:
             logger.error(f"❌ SSL certificate file not found: {e}")

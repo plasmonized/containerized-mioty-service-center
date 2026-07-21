@@ -35,3 +35,9 @@ TIMEZONE = os.getenv("TIMEZONE", "Europe/Berlin")  # Default to Europe/Berlin (C
 
 # Update Channel Configuration
 UPDATE_CHANNEL = os.getenv("UPDATE_CHANNEL", "stable")
+
+# TLS Compatibility Configuration
+# TLS_REQUIRE_CLIENT_CERT: require base stations to present a CA-signed client certificate (mutual TLS)
+# TLS_COMPAT_MODE: lower OpenSSL security level for embedded TLS stacks (older ciphers/smaller keys)
+TLS_REQUIRE_CLIENT_CERT = os.getenv("TLS_REQUIRE_CLIENT_CERT", "true").lower() == "true"
+TLS_COMPAT_MODE = os.getenv("TLS_COMPAT_MODE", "false").lower() == "true"

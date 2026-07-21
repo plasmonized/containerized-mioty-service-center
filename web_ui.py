@@ -2245,7 +2245,7 @@ def get_remote_version(channel="stable"):
             pass
 
         # Fallback: Get latest commit
-        api_url = f"https://api.github.com/repos/{GITHUB_REPO}/commits/main"
+        api_url = f"https://api.github.com/repos/{GITHUB_REPO}/commits/{get_default_branch()}"
         req = urllib.request.Request(api_url, headers={"User-Agent": "BSSCI-Service-Center"})
 
         try:
@@ -2266,10 +2266,13 @@ def get_remote_version(channel="stable"):
                 except:
                     pass
 
-            subprocess.run(["git", "fetch", "--tags", "origin", "main"], capture_output=True, text=True, timeout=30)
+            default_branch = get_default_branch()
+            subprocess.run(
+                ["git", "fetch", "--tags", "origin", default_branch], capture_output=True, text=True, timeout=30
+            )
 
             result = subprocess.run(
-                ["git", "rev-parse", "--short", "origin/main"], capture_output=True, text=True, timeout=10
+                ["git", "rev-parse", "--short", f"origin/{default_branch}"], capture_output=True, text=True, timeout=10
             )
             if result.returncode == 0:
                 return (f"commit-{result.stdout.strip()}", False)
@@ -2485,6 +2488,54 @@ def create_backup():
         return {"success": False, "error": str(e)}
 
 
+_default_branch_cache = {"branch": None, "time": 0.0}
+
+
+def get_default_branch():
+    """Detect the repository's default branch on GitHub (cached 5 min).
+
+    The repo's default branch is 'release', not 'main' - hardcoding 'main'
+    caused updates to check out a stale local branch and break the install.
+    """
+    GITHUB_REPO = "plasmonized/containerized-mioty-Service-Center"
+    now = time.time()
+    if _default_branch_cache["branch"] and now - _default_branch_cache["time"] < 300:
+        return _default_branch_cache["branch"]
+
+    branch = None
+    try:
+        import ssl as _ssl
+        import urllib.request
+
+        ctx = _ssl.create_default_context()
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{GITHUB_REPO}", headers={"User-Agent": "BSSCI-Service-Center"}
+        )
+        with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
+            data = json.loads(response.read().decode())
+            branch = data.get("default_branch")
+    except Exception as e:
+        logger.warning(f"Could not detect default branch via GitHub API: {e}")
+
+    if not branch:
+        try:
+            result = subprocess.run(
+                ["git", "ls-remote", "--symref", "origin", "HEAD"], capture_output=True, text=True, timeout=15
+            )
+            for line in result.stdout.splitlines():
+                if line.startswith("ref:"):
+                    branch = line.split()[1].replace("refs/heads/", "")
+                    break
+        except Exception:
+            pass
+
+    branch = branch or "release"
+    _default_branch_cache["branch"] = branch
+    _default_branch_cache["time"] = now
+    logger.info(f"Default branch detected: {branch}")
+    return branch
+
+
 def perform_update():
     """Perform update by downloading from GitHub"""
     GITHUB_REPO = "plasmonized/containerized-mioty-Service-Center"
@@ -2525,18 +2576,27 @@ def perform_update():
                     else:
                         logger.warning(f"Beta remote version not usable: {remote}")
                 else:
+                    default_branch = get_default_branch()
                     subprocess.run(["git", "reset", "--hard", "HEAD"], capture_output=True, timeout=30)
-                    subprocess.run(["git", "checkout", "main"], capture_output=True, timeout=30)
+                    checkout_result = subprocess.run(
+                        ["git", "checkout", default_branch], capture_output=True, text=True, timeout=30
+                    )
+                    if checkout_result.returncode != 0:
+                        logger.error(f"Git checkout {default_branch} failed: {checkout_result.stderr}")
+                        raise Exception(f"Git checkout {default_branch} failed, using ZIP fallback")
                     result = subprocess.run(
-                        ["git", "pull", "origin", "main"], capture_output=True, text=True, timeout=60
+                        ["git", "pull", "origin", default_branch], capture_output=True, text=True, timeout=60
                     )
                     if result.returncode == 0:
                         return {
                             "success": True,
-                            "message": f"Update completed successfully via git ({channel} channel)",
+                            "message": f"Update completed successfully via git ({channel} channel, branch {default_branch})",
                             "backup_dir": backup_result["backup_dir"],
                             "git_output": result.stdout,
                         }
+                    else:
+                        logger.error(f"Git pull origin {default_branch} failed: {result.stderr}")
+                        raise Exception(f"Git pull {default_branch} failed, using ZIP fallback")
             except Exception as e:
                 logger.error(f"Git update failed, trying ZIP download: {e}")
 
@@ -2554,7 +2614,10 @@ def perform_update():
             except Exception as e:
                 logger.error(f"Beta channel ZIP download failed: {e}")
 
-        for branch in ["main", "master"]:
+        branch_candidates = [get_default_branch(), "main", "master"]
+        seen = set()
+        branch_candidates = [b for b in branch_candidates if not (b in seen or seen.add(b))]
+        for branch in branch_candidates:
             zip_url = f"https://github.com/{GITHUB_REPO}/archive/refs/heads/{branch}.zip"
             try:
                 return _download_and_extract_zip(zip_url, ctx, backup_result, f"{branch} branch")

@@ -2,3 +2,4 @@
 - [Logging basicConfig no-op](logging-basicconfig-noop.md) — importing web_ui adds a root handler first, making later basicConfig a silent no-op (no console/Docker logs).
 - [Replit shell git merges](replit-shell-git-merges.md) — merges must run as one compound shell line or the checkpoint system wipes the merge state between commands.
 - [Update system default branch](update-default-branch.md) — GitHub repo default branch is `release`, not `main`; update code must detect it dynamically; repo URL is now lowercase.
+- [Miromico/ifm EdgeCard firewall](miromico-edgecard-firewall.md) — gateway only forwards card traffic to dest port 16017; other SC ports silently dropped.

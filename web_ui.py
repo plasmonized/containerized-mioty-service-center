@@ -12,17 +12,31 @@ import time
 import zipfile
 from datetime import UTC, datetime, timedelta, timezone
 from functools import wraps
+from pathlib import Path
 from typing import Any
 
-from flask import Flask, Response, jsonify, redirect, render_template, request, send_file, session, url_for
+from flask import (
+    Flask,
+    Response,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    send_file,
+    session,
+    url_for,
+)
 
 import bssci_config
+from observability import ERROR_CODES, configure_logging
 
 # Global TLS server instance reference
 tls_server_instance = None
+# Trusted base directory for all certificate file operations.
+CERTS_BASE_DIR = Path("certs").resolve()
 
 # Uptime tracking
-bs_uptime_events = {}
+bs_uptime_events: dict[str, list[dict[str, str]]] = {}
 _last_known_bs_status: dict[str, dict[str, str | int]] = {}
 
 
@@ -51,12 +65,35 @@ def _validate_eui(eui):
     return bool(re.match(r"^[0-9a-f]{16}$", eui.lower()))
 
 
+def _safe_certs_path(*parts: str) -> Path:
+    for part in parts:
+        part_path = Path(part)
+        if not part or part_path.is_absolute() or len(part_path.parts) > 1 or ".." in part_path.parts:
+            logger.warning(
+                "Blocked invalid certificate path part",
+                extra={"error_code": ERROR_CODES["WEB_UI_CERT_PATH_INVALID"]},
+            )
+            raise ValueError("Invalid certificate path")
+
+    candidate = (CERTS_BASE_DIR / Path(*parts)).resolve()
+    if not candidate.is_relative_to(CERTS_BASE_DIR):
+        logger.warning(
+            "Blocked certificate path traversal attempt",
+            extra={"error_code": ERROR_CODES["WEB_UI_CERT_PATH_INVALID"]},
+        )
+        raise ValueError("Invalid certificate path")
+    return candidate
+
+
 def _ensure_ca_exists():
     if os.path.exists("certs/ca_cert.pem") and os.path.exists("certs/ca_key.pem"):
         return True
     os.makedirs("certs", exist_ok=True)
     result = subprocess.run(
-        ["openssl", "genrsa", "-out", "certs/ca_key.pem", "2048"], capture_output=True, text=True, timeout=30
+        ["openssl", "genrsa", "-out", "certs/ca_key.pem", "2048"],
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     if result.returncode != 0:
         return False
@@ -88,12 +125,17 @@ def _generate_bs_certificate(eui):
         return False, "Invalid EUI format"
     if not _ensure_ca_exists():
         return False, "Failed to ensure CA exists"
-    bs_cert_dir = os.path.join("certs", f"bs_{eui}")
-    os.makedirs(bs_cert_dir, exist_ok=True)
-    key_path = os.path.join(bs_cert_dir, f"{eui}_key.pem")
-    csr_path = os.path.join(bs_cert_dir, f"{eui}.csr")
-    cert_path = os.path.join(bs_cert_dir, f"{eui}_cert.pem")
-    result = subprocess.run(["openssl", "genrsa", "-out", key_path, "2048"], capture_output=True, text=True, timeout=30)
+    bs_cert_dir = _safe_certs_path(f"bs_{eui}")
+    bs_cert_dir.mkdir(parents=True, exist_ok=True)
+    key_path = _safe_certs_path(f"bs_{eui}", f"{eui}_key.pem")
+    csr_path = _safe_certs_path(f"bs_{eui}", f"{eui}.csr")
+    cert_path = _safe_certs_path(f"bs_{eui}", f"{eui}_cert.pem")
+    result = subprocess.run(
+        ["openssl", "genrsa", "-out", str(key_path), "2048"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
     if result.returncode != 0:
         return False, f"Key generation failed: {result.stderr}"
     result = subprocess.run(
@@ -102,9 +144,9 @@ def _generate_bs_certificate(eui):
             "req",
             "-new",
             "-key",
-            key_path,
+            str(key_path),
             "-out",
-            csr_path,
+            str(csr_path),
             "-subj",
             f"/C=US/ST=State/L=City/O=BSSCI/CN={eui}",
         ],
@@ -120,14 +162,14 @@ def _generate_bs_certificate(eui):
             "x509",
             "-req",
             "-in",
-            csr_path,
+            str(csr_path),
             "-CA",
             "certs/ca_cert.pem",
             "-CAkey",
             "certs/ca_key.pem",
             "-CAcreateserial",
             "-out",
-            cert_path,
+            str(cert_path),
             "-days",
             "365",
         ],
@@ -137,8 +179,8 @@ def _generate_bs_certificate(eui):
     )
     if result.returncode != 0:
         return False, f"Certificate signing failed: {result.stderr}"
-    if os.path.exists(csr_path):
-        os.remove(csr_path)
+    if csr_path.exists():
+        csr_path.unlink()
     now = datetime.now(UTC)
     expires = now + timedelta(days=365)
     config = load_base_station_config()
@@ -151,6 +193,7 @@ def _generate_bs_certificate(eui):
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "bssci-service-secret-key-change-me")
+configure_logging(__name__)
 
 # Configure logger for this module
 logger = logging.getLogger(__name__)
@@ -163,7 +206,10 @@ def load_users():
         with open("users.json") as f:
             return json.load(f)
     except Exception as e:
-        logger.error(f"Failed to load users: {e}")
+        logger.error(
+            f"Failed to load users: {e}",
+            extra={"error_code": ERROR_CODES["WEB_UI_USER_STORE_ERROR"]},
+        )
         return {"users": {}, "role_permissions": {}}
 
 
@@ -174,7 +220,10 @@ def save_users(users_data):
             json.dump(users_data, f, indent=2)
         return True
     except Exception as e:
-        logger.error(f"Failed to save users: {e}")
+        logger.error(
+            f"Failed to save users: {e}",
+            extra={"error_code": ERROR_CODES["WEB_UI_USER_STORE_ERROR"]},
+        )
         return False
 
 
@@ -260,16 +309,24 @@ def internal_error(error):
     """Handle internal server errors and return JSON"""
     app.logger.error(f"Internal server error: {error}")
     if request.path.startswith("/api/"):
-        return jsonify(
-            {
-                "error": "Internal server error",
-                "running": False,
-                "service_type": "web_ui",
-                "tls_server": {"active": False},
-                "mqtt_broker": {"active": False},
-                "base_stations": {"total_connected": 0, "total_connecting": 0, "connected": [], "connecting": []},
-            }
-        ), 500
+        return (
+            jsonify(
+                {
+                    "error": "Internal server error",
+                    "running": False,
+                    "service_type": "web_ui",
+                    "tls_server": {"active": False},
+                    "mqtt_broker": {"active": False},
+                    "base_stations": {
+                        "total_connected": 0,
+                        "total_connecting": 0,
+                        "connected": [],
+                        "connecting": [],
+                    },
+                }
+            ),
+            500,
+        )
     return error
 
 
@@ -321,7 +378,14 @@ class WebUILogHandler(logging.Handler):
         # Filter out noisy web request logs to reduce clutter
         if record.name == "werkzeug" and any(
             x in record.getMessage()
-            for x in ["GET /api/", "GET /logs", "GET /sensors", "GET /config", "GET /", "GET /static/"]
+            for x in [
+                "GET /api/",
+                "GET /logs",
+                "GET /sensors",
+                "GET /config",
+                "GET /",
+                "GET /static/",
+            ]
         ):
             return  # Skip web request logs
 
@@ -366,11 +430,8 @@ class WebUILogHandler(logging.Handler):
 if not any(isinstance(h, WebUILogHandler) for h in logging.getLogger().handlers):
     web_handler = WebUILogHandler()
     logging.getLogger().addHandler(web_handler)
-    logging.getLogger().setLevel(logging.DEBUG)
-
-    # Specifically capture important logs
-    logging.getLogger("TLSServer").setLevel(logging.DEBUG)
-    logging.getLogger("mqtt_interface").setLevel(logging.DEBUG)
+    configured_level = os.getenv("LOG_LEVEL", "INFO").upper()
+    logging.getLogger().setLevel(getattr(logging, configured_level, logging.INFO))
 
 
 @app.context_processor
@@ -380,7 +441,7 @@ def inject_user():
     return {
         "current_user": user,
         "user_permissions": user.get("permissions", {}) if user else {},
-        "visible_tabs": user.get("permissions", {}).get("visible_tabs", []) if user else [],
+        "visible_tabs": (user.get("permissions", {}).get("visible_tabs", []) if user else []),
     }
 
 
@@ -418,14 +479,33 @@ def api_users():
     if request.method == "GET":
         users_list = []
         for username, data in users_data.get("users", {}).items():
-            users_list.append({"username": username, "name": data.get("name", ""), "role": data.get("role", "viewer")})
-        return jsonify({"users": users_list, "roles": list(users_data.get("role_permissions", {}).keys())})
+            users_list.append(
+                {
+                    "username": username,
+                    "name": data.get("name", ""),
+                    "role": data.get("role", "viewer"),
+                }
+            )
+        return jsonify(
+            {
+                "users": users_list,
+                "roles": list(users_data.get("role_permissions", {}).keys()),
+            }
+        )
 
     elif request.method == "POST":
         data = request.get_json()
         username = data.get("username", "").strip()
         if not username or username in users_data.get("users", {}):
-            return jsonify({"success": False, "error": "Benutzername ungültig oder bereits vorhanden"}), 400
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": "Benutzername ungültig oder bereits vorhanden",
+                    }
+                ),
+                400,
+            )
         users_data["users"][username] = {
             "password": data.get("password", "password123"),
             "role": data.get("role", "viewer"),
@@ -452,7 +532,15 @@ def api_users():
         data = request.get_json()
         username = data.get("username")
         if username == session.get("username"):
-            return jsonify({"success": False, "error": "Eigenen Benutzer kann nicht gelöscht werden"}), 400
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": "Eigenen Benutzer kann nicht gelöscht werden",
+                    }
+                ),
+                400,
+            )
         if username in users_data.get("users", {}):
             del users_data["users"][username]
             save_users(users_data)
@@ -649,19 +737,42 @@ def add_sensor():
                         else:
                             print(f"Failed to send attach requests for {data['eui']}")
                             return jsonify(
-                                {"success": True, "message": "Sensor saved but failed to send attach requests"}
+                                {
+                                    "success": True,
+                                    "message": "Sensor saved but failed to send attach requests",
+                                }
                             )
                     else:
-                        return jsonify({"success": True, "message": "Sensor saved but attach function not available"})
+                        return jsonify(
+                            {
+                                "success": True,
+                                "message": "Sensor saved but attach function not available",
+                            }
+                        )
                 else:
-                    return jsonify({"success": True, "message": "Sensor saved (no base stations connected for attach)"})
+                    return jsonify(
+                        {
+                            "success": True,
+                            "message": "Sensor saved (no base stations connected for attach)",
+                        }
+                    )
 
                 return jsonify({"success": True, "message": "Sensor saved and processed"})
             except Exception as e:
                 print(f"Error notifying TLS server: {e}")
-                return jsonify({"success": True, "message": "Sensor saved but failed to notify TLS server"})
+                return jsonify(
+                    {
+                        "success": True,
+                        "message": "Sensor saved but failed to notify TLS server",
+                    }
+                )
         else:
-            return jsonify({"success": True, "message": "Sensor saved (TLS server not available for attach)"})
+            return jsonify(
+                {
+                    "success": True,
+                    "message": "Sensor saved (TLS server not available for attach)",
+                }
+            )
 
     except Exception as e:
         return jsonify({"success": False, "message": f"Error: {e!s}"})
@@ -707,10 +818,18 @@ def attach_sensor(eui):
             bs_count = len(tls_server.connected_base_stations)
             if attached_count > 0:
                 return jsonify(
-                    {"success": True, "message": f"Sensor {eui} attached to {attached_count}/{bs_count} base stations"}
+                    {
+                        "success": True,
+                        "message": f"Sensor {eui} attached to {attached_count}/{bs_count} base stations",
+                    }
                 )
             else:
-                return jsonify({"success": False, "message": f"Failed to attach sensor {eui} to any base stations"})
+                return jsonify(
+                    {
+                        "success": False,
+                        "message": f"Failed to attach sensor {eui} to any base stations",
+                    }
+                )
         else:
             return jsonify({"success": False, "message": "Attach function not available"})
     except Exception as e:
@@ -728,7 +847,10 @@ def detach_sensor(eui):
         if tls_server and hasattr(tls_server, "detach_sensor_sync"):
             success = tls_server.detach_sensor_sync(eui)
             return jsonify(
-                {"success": success, "message": f"Sensor {eui} {'detached' if success else 'detach failed'}"}
+                {
+                    "success": success,
+                    "message": f"Sensor {eui} {'detached' if success else 'detach failed'}",
+                }
             )
         else:
             return jsonify({"success": False, "message": "TLS server not available"})
@@ -859,16 +981,16 @@ def get_sensor_details(eui):
             "max_snr": stats.get("max_snr", 0),
             "min_rssi": stats.get("min_rssi", 0),
             "max_rssi": stats.get("max_rssi", 0),
-            "current_rssi": stats.get("rssi_sum", 0) / stats.get("rssi_count", 1)
-            if stats.get("rssi_count", 0) > 0
-            else 0,
+            "current_rssi": (
+                stats.get("rssi_sum", 0) / stats.get("rssi_count", 1) if stats.get("rssi_count", 0) > 0 else 0
+            ),
             "send_interval": round(send_interval, 1),
             "gateway_count": gateway_count,
             "primary_gateway": topology.get("primary_bs", ""),
-            "receiving_gateways": list(topology.get("receiving_bases", {}).keys()) if topology else [],
-            "receiving_bases_details": _convert_topology_timestamps(topology.get("receiving_bases", {}), last_seen)
-            if topology
-            else {},
+            "receiving_gateways": (list(topology.get("receiving_bases", {}).keys()) if topology else []),
+            "receiving_bases_details": (
+                _convert_topology_timestamps(topology.get("receiving_bases", {}), last_seen) if topology else {}
+            ),
             "signal_score": round(signal_score, 1),
             "energy_score": round(energy_score, 1),
             "spreading_factor": stats.get("spreading_factor", 7),
@@ -876,7 +998,7 @@ def get_sensor_details(eui):
             "frequency_mhz": round(stats.get("frequency_mhz", 0), 3),
             "frame_counter": stats.get("frame_counter", 0),
             "last_airtime_ms": round(stats.get("last_airtime_ms", 0), 2),
-            "avg_airtime_ms": round(total_airtime_ms / packets_received, 2) if packets_received > 0 else 0,
+            "avg_airtime_ms": (round(total_airtime_ms / packets_received, 2) if packets_received > 0 else 0),
             "total_airtime_ms": round(total_airtime_ms, 2),
             "duty_cycle": round(duty_cycle, 4),
             "snr_history": stats.get("snr_history", [])[-50:],
@@ -937,7 +1059,12 @@ def attach_all_sensors():
             message = f"Sent attach requests for {attached_count} sensors to {bs_count} base stations"
             return jsonify({"success": True, "message": message})
         else:
-            return jsonify({"success": False, "message": "Attach all function not available in TLS server"})
+            return jsonify(
+                {
+                    "success": False,
+                    "message": "Attach all function not available in TLS server",
+                }
+            )
     except Exception as e:
         return jsonify({"success": False, "message": str(e)})
 
@@ -1002,7 +1129,12 @@ def reload_sensors():
         tls_server = tls_server_instance
         if tls_server:
             tls_server.reload_sensor_config()
-            return jsonify({"success": True, "message": "Sensor configuration reloaded successfully"})
+            return jsonify(
+                {
+                    "success": True,
+                    "message": "Sensor configuration reloaded successfully",
+                }
+            )
         else:
             return jsonify({"success": False, "message": "TLS server not available"})
     except Exception as e:
@@ -1100,14 +1232,22 @@ def import_sensors():
         if has_header:
             # Map header columns
             header_lower = [h.lower().strip() for h in header]
-            eui_idx = next((i for i, h in enumerate(header_lower) if h in ["eui", "mac", "address"]), 0)
+            eui_idx = next(
+                (i for i, h in enumerate(header_lower) if h in ["eui", "mac", "address"]),
+                0,
+            )
             nwkey_idx = next(
-                (i for i, h in enumerate(header_lower) if h in ["nwkey", "network_key", "key", "networkkey"]), 1
+                (i for i, h in enumerate(header_lower) if h in ["nwkey", "network_key", "key", "networkkey"]),
+                1,
             )
             shortaddr_idx = next(
-                (i for i, h in enumerate(header_lower) if h in ["shortaddr", "short_addr", "shortaddress", "addr"]), 2
+                (i for i, h in enumerate(header_lower) if h in ["shortaddr", "short_addr", "shortaddress", "addr"]),
+                2,
             )
-            bidi_idx = next((i for i, h in enumerate(header_lower) if h in ["bidi", "bidirectional", "bidir"]), 3)
+            bidi_idx = next(
+                (i for i, h in enumerate(header_lower) if h in ["bidi", "bidirectional", "bidir"]),
+                3,
+            )
             data_rows = rows[1:]
         else:
             # Assume order: eui, nwKey, shortAddr, bidi
@@ -1362,10 +1502,24 @@ SECRET_KEY=your-secret-key-here"""
         bssci_config.AUTO_DETACH_ENABLED = str(data.get("AUTO_DETACH_ENABLED", True)).lower() == "true"
         bssci_config.TIMEZONE = data.get("TIMEZONE", "Europe/Berlin")
 
-        return jsonify({"success": True, "message": "Configuration updated in .env file and reloaded successfully."})
+        return jsonify(
+            {
+                "success": True,
+                "message": "Configuration updated in .env file and reloaded successfully.",
+            }
+        )
     except Exception as e:
-        print(f"Error updating config: {e}")
-        return jsonify({"success": False, "message": f"Configuration update failed: {e!s}"})
+        logger.error(
+            f"Error updating config: {e}",
+            extra={"error_code": ERROR_CODES["WEB_UI_CONFIG_UPDATE_ERROR"]},
+        )
+        return jsonify(
+            {
+                "success": False,
+                "message": "Configuration update failed.",
+                "error_code": ERROR_CODES["WEB_UI_CONFIG_UPDATE_ERROR"],
+            }
+        )
 
 
 @app.route("/certificates")
@@ -1514,7 +1668,13 @@ def get_health_stats():
 
             # Calculate signal score distribution based on SNR
             # Excellent: >= 10 dB, Good: 5-10 dB, Fair: 0-5 dB, Poor: -5-0 dB, Critical: < -5 dB
-            distribution = {"excellent": 0, "good": 0, "fair": 0, "poor": 0, "critical": 0}
+            distribution = {
+                "excellent": 0,
+                "good": 0,
+                "fair": 0,
+                "poor": 0,
+                "critical": 0,
+            }
             for stats in tls_server_instance.sensor_packet_stats.values():
                 if stats.get("snr_count", 0) > 0:
                     avg_snr = stats["snr_sum"] / stats["snr_count"]
@@ -1820,7 +1980,13 @@ def get_base_stations():
                 }
             )
 
-        result.sort(key=lambda x: (x["status"] != "connected", x["status"] != "connecting", x["eui"]))
+        result.sort(
+            key=lambda x: (
+                x["status"] != "connected",
+                x["status"] != "connecting",
+                x["eui"],
+            )
+        )
 
         current_statuses = {bs["eui"]: bs["status"] for bs in result}
         _track_bs_status_changes(current_statuses)
@@ -1908,11 +2074,22 @@ def add_base_station():
         eui = data.get("eui", "").lower()
 
         if not eui or not _validate_eui(eui):
-            return jsonify({"success": False, "error": "Invalid EUI (must be 16 hex characters)"}), 400
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": "Invalid EUI (must be 16 hex characters)",
+                    }
+                ),
+                400,
+            )
 
         config = load_base_station_config()
         if eui in config.get("base_stations", {}):
-            return jsonify({"success": False, "error": "Base station already exists"}), 400
+            return (
+                jsonify({"success": False, "error": "Base station already exists"}),
+                400,
+            )
 
         config["base_stations"][eui] = {
             "name": data.get("name", ""),
@@ -2003,7 +2180,11 @@ def get_traffic_metrics():
                     "status_requests": 0,
                     "start_time": 0,
                 },
-                "dedup_stats": {"total_messages": 0, "duplicate_messages": 0, "published_messages": 0},
+                "dedup_stats": {
+                    "total_messages": 0,
+                    "duplicate_messages": 0,
+                    "published_messages": 0,
+                },
                 "history": [],
                 "connections": 0,
             }
@@ -2078,7 +2259,12 @@ def get_logs():
     recent_logs = filtered_logs[-limit:] if len(filtered_logs) > limit else filtered_logs
 
     return jsonify(
-        {"logs": recent_logs, "total_logs": len(log_entries), "filtered_logs": len(filtered_logs), "source": "memory"}
+        {
+            "logs": recent_logs,
+            "total_logs": len(log_entries),
+            "filtered_logs": len(filtered_logs),
+            "source": "memory",
+        }
     )
 
 
@@ -2109,12 +2295,20 @@ def get_current_version():
                 except:
                     pass
 
-            result = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=10)
+            result = subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
             if result.returncode == 0:
                 commit_hash = result.stdout.strip()
 
                 tag_result = subprocess.run(
-                    ["git", "describe", "--tags", "--exact-match", "HEAD"], capture_output=True, text=True, timeout=10
+                    ["git", "describe", "--tags", "--exact-match", "HEAD"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
                 )
                 if tag_result.returncode == 0:
                     return tag_result.stdout.strip()
@@ -2299,14 +2493,22 @@ def get_commit_log(limit=5):
                     pass
 
             result = subprocess.run(
-                ["git", "log", "--oneline", f"-{limit}"], capture_output=True, text=True, timeout=10
+                ["git", "log", "--oneline", f"-{limit}"],
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             if result.returncode == 0:
                 commits = []
                 for line in result.stdout.strip().split("\n"):
                     if line:
                         parts = line.split(" ", 1)
-                        commits.append({"hash": parts[0], "message": parts[1] if len(parts) > 1 else ""})
+                        commits.append(
+                            {
+                                "hash": parts[0],
+                                "message": parts[1] if len(parts) > 1 else "",
+                            }
+                        )
                 return commits
         except FileNotFoundError:
             # Git not installed
@@ -2421,10 +2623,16 @@ def check_for_updates(force=False):
                 commits_data = json.loads(response.read().decode())
                 for commit in commits_data:
                     recent_commits.append(
-                        {"hash": commit["sha"][:7], "message": commit["commit"]["message"].split("\n")[0][:60]}
+                        {
+                            "hash": commit["sha"][:7],
+                            "message": commit["commit"]["message"].split("\n")[0][:60],
+                        }
                     )
 
-                if commits_data and remote in ["remote-unavailable", "remote-check-unavailable"]:
+                if commits_data and remote in [
+                    "remote-unavailable",
+                    "remote-check-unavailable",
+                ]:
                     first_commit = commits_data[0]
                     remote_hash = first_commit["sha"][:7]
                     commit_date = first_commit["commit"]["committer"]["date"][:10]
@@ -2548,20 +2756,33 @@ def perform_update():
 
         backup_result = create_backup()
         if not backup_result["success"]:
-            return {"success": False, "error": f"Backup failed: {backup_result['error']}"}
+            return {
+                "success": False,
+                "error": f"Backup failed: {backup_result['error']}",
+            }
 
         if os.path.exists(".git"):
             try:
                 subprocess.run(
-                    ["git", "fetch", "--tags", "--force", "origin"], capture_output=True, text=True, timeout=60
+                    ["git", "fetch", "--tags", "--force", "origin"],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
                 )
                 if channel == "beta":
                     remote, _ = get_remote_version("beta")
                     if remote.startswith("v") and "unavailable" not in remote:
-                        subprocess.run(["git", "reset", "--hard", "HEAD"], capture_output=True, timeout=30)
+                        subprocess.run(
+                            ["git", "reset", "--hard", "HEAD"],
+                            capture_output=True,
+                            timeout=30,
+                        )
                         subprocess.run(["git", "clean", "-fd"], capture_output=True, timeout=30)
                         result = subprocess.run(
-                            ["git", "checkout", "--force", remote], capture_output=True, text=True, timeout=60
+                            ["git", "checkout", "--force", remote],
+                            capture_output=True,
+                            text=True,
+                            timeout=60,
                         )
                         if result.returncode == 0:
                             return {
@@ -2627,7 +2848,10 @@ def perform_update():
                     continue
                 raise
 
-        return {"success": False, "error": "Could not download from GitHub (no valid branch found)"}
+        return {
+            "success": False,
+            "error": "Could not download from GitHub (no valid branch found)",
+        }
 
     except PermissionError as e:
         logger.error(f"Update failed - permission denied: {e}")
@@ -2782,72 +3006,45 @@ def get_bssci_service_status():
                 "service_type": "web_ui",
                 "tls_server": {"active": False},
                 "mqtt_broker": {"active": False},
-                "base_stations": {"total_connected": 0, "total_connecting": 0, "connected": [], "connecting": []},
+                "base_stations": {
+                    "total_connected": 0,
+                    "total_connecting": 0,
+                    "connected": [],
+                    "connecting": [],
+                },
                 "total_sensors": 0,
                 "registered_sensors": 0,
                 "pending_requests": 0,
                 "error": "TLS server not available",
             }
 
-        # Get base station status safely without asyncio operations
-        bs_status = {"total_connected": 0, "total_connecting": 0, "connected": [], "connecting": []}
+        runtime_snapshot = tls_server.get_runtime_snapshot() if hasattr(tls_server, "get_runtime_snapshot") else {}
+        connected_euis = runtime_snapshot.get("connected_euis", [])
+        connecting_euis = runtime_snapshot.get("connecting_euis", [])
+
+        connected_stations = [{"eui": eui, "address": "connected", "status": "connected"} for eui in connected_euis]
+        connecting_stations = [{"eui": eui, "address": "connecting", "status": "connecting"} for eui in connecting_euis]
+
+        total_configured_bs = len(set(connected_euis + connecting_euis))
         try:
-            connected_stations = []
-            connecting_stations = []
-            unique_connected_euis = set()
-            unique_connecting_euis = set()
+            bs_config = load_base_station_config().get("base_stations", {})
+            all_bs = set(k.upper() for k in bs_config.keys())
+            all_bs.update(connected_euis)
+            all_bs.update(connecting_euis)
+            total_configured_bs = len(all_bs)
+        except Exception:
+            pass
 
-            if hasattr(tls_server, "connected_base_stations"):
-                connected_dict = getattr(tls_server, "connected_base_stations", {})
-                for writer, bs_eui in list(connected_dict.items()):
-                    eui_upper = bs_eui.upper()
-                    if eui_upper not in unique_connected_euis:
-                        unique_connected_euis.add(eui_upper)
-                        connected_stations.append({"eui": eui_upper, "address": "connected", "status": "connected"})
+        bs_status = {
+            "connected": connected_stations,
+            "connecting": connecting_stations,
+            "total_connected": runtime_snapshot.get("total_connected", 0),
+            "total_connecting": runtime_snapshot.get("total_connecting", 0),
+            "total_configured": total_configured_bs,
+        }
 
-            if hasattr(tls_server, "connecting_base_stations"):
-                connecting_dict = getattr(tls_server, "connecting_base_stations", {})
-                for writer, bs_eui in list(connecting_dict.items()):
-                    eui_upper = bs_eui.upper()
-                    if eui_upper not in unique_connecting_euis and eui_upper not in unique_connected_euis:
-                        unique_connecting_euis.add(eui_upper)
-                        connecting_stations.append({"eui": eui_upper, "address": "connecting", "status": "connecting"})
-
-            connected_count = len(unique_connected_euis)
-            connecting_count = len(unique_connecting_euis)
-
-            total_configured_bs = 0
-            try:
-                bs_config = load_base_station_config().get("base_stations", {})
-                all_bs = set(k.upper() for k in bs_config.keys())
-                all_bs.update(unique_connected_euis)
-                all_bs.update(unique_connecting_euis)
-                total_configured_bs = len(all_bs)
-            except:
-                total_configured_bs = connected_count
-
-            bs_status = {
-                "connected": connected_stations,
-                "connecting": connecting_stations,
-                "total_connected": connected_count,
-                "total_connecting": connecting_count,
-                "total_configured": total_configured_bs,
-            }
-        except Exception as e:
-            print(f"Error getting base station status: {e}")
-
-        # Get sensor count safely
-        total_sensors = 0
-        registered_sensors = 0
-        try:
-            # Count sensors from config file instead of runtime status to avoid asyncio issues
-            with open(bssci_config.SENSOR_CONFIG_FILE) as f:
-                sensors = json.load(f)
-                total_sensors = len(sensors)
-                # For now, assume all configured sensors could be registered
-                registered_sensors = total_sensors
-        except Exception as e:
-            print(f"Error counting sensors: {e}")
+        total_sensors = runtime_snapshot.get("total_sensors", 0)
+        registered_sensors = runtime_snapshot.get("registered_sensors", 0)
 
         # Build response safely
         response = {
@@ -2869,15 +3066,16 @@ def get_bssci_service_status():
             "total_sensors": total_sensors,
             "registered_sensors": registered_sensors,
             "pending_requests": 0,
-            "sensor_status": tls_server.get_sensor_status_summary()
-            if hasattr(tls_server, "get_sensor_status_summary")
-            else {"online": 0, "offline": 0, "total_tracked": 0},
+            "sensor_status": runtime_snapshot.get("sensor_status", {"online": 0, "offline": 0, "total_tracked": 0}),
         }
 
         return response
 
     except Exception as e:
-        print(f"Error in get_bssci_service_status: {e}")
+        logger.error(
+            f"Error in get_bssci_service_status: {e}",
+            extra={"error_code": ERROR_CODES["WEB_UI_STATUS_ERROR"]},
+        )
         import traceback
 
         traceback.print_exc()
@@ -2886,11 +3084,17 @@ def get_bssci_service_status():
             "service_type": "web_ui",
             "tls_server": {"active": False},
             "mqtt_broker": {"active": False},
-            "base_stations": {"total_connected": 0, "total_connecting": 0, "connected": [], "connecting": []},
+            "base_stations": {
+                "total_connected": 0,
+                "total_connecting": 0,
+                "connected": [],
+                "connecting": [],
+            },
             "total_sensors": 0,
             "registered_sensors": 0,
             "pending_requests": 0,
-            "error": f"Status error: {e!s}",
+            "error": "Failed to retrieve service status",
+            "error_code": ERROR_CODES["WEB_UI_STATUS_ERROR"],
         }
 
 
@@ -2911,19 +3115,64 @@ def bssci_status():
         status = get_bssci_service_status()
         return jsonify(status)
     except Exception as e:
-        app.logger.error(f"Error in bssci_status endpoint: {e}")
+        app.logger.error(
+            f"Error in bssci_status endpoint: {e}",
+            extra={"error_code": ERROR_CODES["WEB_UI_STATUS_ERROR"]},
+        )
         error_response = {
             "running": False,
             "error": f"Service status error: {e!s}",
             "service_type": "web_ui",
             "tls_server": {"active": False},
             "mqtt_broker": {"active": False},
-            "base_stations": {"total_connected": 0, "total_connecting": 0, "connected": [], "connecting": []},
+            "base_stations": {
+                "total_connected": 0,
+                "total_connecting": 0,
+                "connected": [],
+                "connecting": [],
+            },
             "total_sensors": 0,
             "registered_sensors": 0,
             "pending_requests": 0,
         }
         return jsonify(error_response), 500
+
+
+@app.route("/api/connection-timeline")
+@login_required
+def api_connection_timeline():
+    try:
+        global tls_server_instance
+        requested_limit = request.args.get("limit", 200, type=int)
+        if requested_limit is None:
+            requested_limit = 200
+        limit = max(1, min(requested_limit, 2000))
+        if tls_server_instance and hasattr(tls_server_instance, "get_connection_timeline"):
+            return jsonify(
+                {
+                    "success": True,
+                    "requested_limit": requested_limit,
+                    "applied_limit": limit,
+                    "entries": tls_server_instance.get_connection_timeline(limit=limit),
+                }
+            )
+        return jsonify(
+            {
+                "success": True,
+                "requested_limit": requested_limit,
+                "applied_limit": limit,
+                "entries": [],
+            }
+        )
+    except Exception as e:
+        logger.error(
+            f"Failed to read connection timeline: {e}",
+            extra={"error_code": ERROR_CODES["WEB_UI_TIMELINE_ERROR"]},
+        )
+        return (
+            jsonify({"success": False, "error": "Failed to read connection timeline"}),
+            500,
+        )
 
 
 @app.route("/api/base_stations")
@@ -2969,15 +3218,18 @@ def get_base_stations_status():
         tls_server = tls_server_instance
 
         if not tls_server:
-            return jsonify(
-                {
-                    "connected": [],
-                    "connecting": [],
-                    "total_connected": 0,
-                    "total_connecting": 0,
-                    "error": "TLS server not initialized",
-                }
-            ), 503
+            return (
+                jsonify(
+                    {
+                        "connected": [],
+                        "connecting": [],
+                        "total_connected": 0,
+                        "total_connecting": 0,
+                        "error": "TLS server not initialized",
+                    }
+                ),
+                503,
+            )
 
         connected_stations = []
         connecting_stations = []
@@ -2987,7 +3239,13 @@ def get_base_stations_status():
                 connected_dict = getattr(tls_server, "connected_base_stations", {})
                 for writer, bs_eui in list(connected_dict.items()):
                     try:
-                        connected_stations.append({"eui": bs_eui, "address": "connected", "status": "connected"})
+                        connected_stations.append(
+                            {
+                                "eui": bs_eui,
+                                "address": "connected",
+                                "status": "connected",
+                            }
+                        )
                     except Exception as e:
                         print(f"Error processing connected station {bs_eui}: {e}")
 
@@ -2995,7 +3253,13 @@ def get_base_stations_status():
                 connecting_dict = getattr(tls_server, "connecting_base_stations", {})
                 for writer, bs_eui in list(connecting_dict.items()):
                     try:
-                        connecting_stations.append({"eui": bs_eui, "address": "connecting", "status": "connecting"})
+                        connecting_stations.append(
+                            {
+                                "eui": bs_eui,
+                                "address": "connecting",
+                                "status": "connecting",
+                            }
+                        )
                     except Exception as e:
                         print(f"Error processing connecting station {bs_eui}: {e}")
 
@@ -3039,7 +3303,13 @@ def get_vm_status():
         if tls_server_instance and hasattr(tls_server_instance, "get_vm_status"):
             status = tls_server_instance.get_vm_status()
             return jsonify({"success": True, **status})
-        return jsonify({"success": False, "message": "TLS server not available", "active_sensors": {}})
+        return jsonify(
+            {
+                "success": False,
+                "message": "TLS server not available",
+                "active_sensors": {},
+            }
+        )
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
 
@@ -3056,7 +3326,10 @@ def vm_activate():
     try:
         global tls_server_instance
         if not tls_server_instance:
-            return jsonify({"success": False, "message": "TLS server not available"}), 503
+            return (
+                jsonify({"success": False, "message": "TLS server not available"}),
+                503,
+            )
 
         data = request.get_json(silent=True) or {}
         mac_type = data.get("macType", 0)
@@ -3071,7 +3344,10 @@ def vm_activate():
 
         if success:
             return jsonify(
-                {"success": True, "message": f"VM activate sent to VM-capable base stations (macType={mac_type})"}
+                {
+                    "success": True,
+                    "message": f"VM activate sent to VM-capable base stations (macType={mac_type})",
+                }
             )
         else:
             return jsonify({"success": False, "message": "No VM-capable base stations found"})
@@ -3091,7 +3367,10 @@ def vm_deactivate():
     try:
         global tls_server_instance
         if not tls_server_instance:
-            return jsonify({"success": False, "message": "TLS server not available"}), 503
+            return (
+                jsonify({"success": False, "message": "TLS server not available"}),
+                503,
+            )
 
         data = request.get_json(silent=True) or {}
         mac_type = data.get("macType", 0)
@@ -3106,7 +3385,10 @@ def vm_deactivate():
 
         if success:
             return jsonify(
-                {"success": True, "message": f"VM deactivate sent to VM-capable base stations (macType={mac_type})"}
+                {
+                    "success": True,
+                    "message": f"VM deactivate sent to VM-capable base stations (macType={mac_type})",
+                }
             )
         else:
             return jsonify({"success": False, "message": "No VM-capable base stations found"})
@@ -3126,7 +3408,10 @@ def vm_query_status():
     try:
         global tls_server_instance
         if not tls_server_instance:
-            return jsonify({"success": False, "message": "TLS server not available"}), 503
+            return (
+                jsonify({"success": False, "message": "TLS server not available"}),
+                503,
+            )
 
         data = request.get_json(silent=True) or {}
         discover = data.get("discover", False)  # If true, query ALL base stations
@@ -3142,10 +3427,18 @@ def vm_query_status():
         if success:
             if discover:
                 return jsonify(
-                    {"success": True, "message": "VM status query sent to ALL base stations (discovery mode)"}
+                    {
+                        "success": True,
+                        "message": "VM status query sent to ALL base stations (discovery mode)",
+                    }
                 )
             else:
-                return jsonify({"success": True, "message": "VM status query sent to VM-capable base stations"})
+                return jsonify(
+                    {
+                        "success": True,
+                        "message": "VM status query sent to VM-capable base stations",
+                    }
+                )
         else:
             if discover:
                 return jsonify({"success": False, "message": "No base stations connected"})
@@ -3189,7 +3482,14 @@ def get_vm_capable_base_stations():
                     "connected_base_stations": connected,
                 }
             )
-        return jsonify({"success": True, "vm_capable": [], "total_connected": 0, "connected_base_stations": []})
+        return jsonify(
+            {
+                "success": True,
+                "vm_capable": [],
+                "total_connected": 0,
+                "connected_base_stations": [],
+            }
+        )
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
 
@@ -3202,7 +3502,10 @@ def vm_send_data_to_sensor(eui):
     try:
         global tls_server_instance
         if not tls_server_instance:
-            return jsonify({"success": False, "message": "TLS server not available"}), 503
+            return (
+                jsonify({"success": False, "message": "TLS server not available"}),
+                503,
+            )
 
         data = request.json
         if not data or "data" not in data:
@@ -3223,7 +3526,10 @@ def vm_send_data_to_sensor(eui):
             return jsonify({"success": True, "message": f"VM downlink data sent to sensor {eui}"})
         else:
             return jsonify(
-                {"success": False, "message": "Failed to send VM data - VM may not be active for this sensor"}
+                {
+                    "success": False,
+                    "message": "Failed to send VM data - VM may not be active for this sensor",
+                }
             )
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
@@ -3305,7 +3611,11 @@ def upload_certificate(cert_type):
         return jsonify({"success": False, "message": "No file selected"})
 
     # Map cert types to filenames
-    cert_mapping = {"ca": "ca_cert.pem", "service": "service_center_cert.pem", "key": "service_center_key.pem"}
+    cert_mapping = {
+        "ca": "ca_cert.pem",
+        "service": "service_center_cert.pem",
+        "key": "service_center_key.pem",
+    }
 
     if cert_type not in cert_mapping:
         return jsonify({"success": False, "message": "Invalid certificate type"})
@@ -3323,7 +3633,12 @@ def upload_certificate(cert_type):
         # Save new file
         file.save(target_file)
 
-        return jsonify({"success": True, "message": f"{cert_type.upper()} certificate uploaded successfully"})
+        return jsonify(
+            {
+                "success": True,
+                "message": f"{cert_type.upper()} certificate uploaded successfully",
+            }
+        )
     except Exception as e:
         return jsonify({"success": False, "message": str(e)})
 
@@ -3346,10 +3661,18 @@ def generate_certificates():
 
         # Generate CA private key
         result = subprocess.run(
-            ["openssl", "genrsa", "-out", "certs/ca_key.pem", "2048"], capture_output=True, text=True, timeout=30
+            ["openssl", "genrsa", "-out", "certs/ca_key.pem", "2048"],
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         if result.returncode != 0:
-            return jsonify({"success": False, "message": f"CA key generation failed: {result.stderr}"})
+            return jsonify(
+                {
+                    "success": False,
+                    "message": f"CA key generation failed: {result.stderr}",
+                }
+            )
 
         # Generate CA certificate
         result = subprocess.run(
@@ -3372,7 +3695,12 @@ def generate_certificates():
             timeout=30,
         )
         if result.returncode != 0:
-            return jsonify({"success": False, "message": f"CA certificate generation failed: {result.stderr}"})
+            return jsonify(
+                {
+                    "success": False,
+                    "message": f"CA certificate generation failed: {result.stderr}",
+                }
+            )
 
         # Generate service private key
         result = subprocess.run(
@@ -3382,7 +3710,12 @@ def generate_certificates():
             timeout=30,
         )
         if result.returncode != 0:
-            return jsonify({"success": False, "message": f"Service key generation failed: {result.stderr}"})
+            return jsonify(
+                {
+                    "success": False,
+                    "message": f"Service key generation failed: {result.stderr}",
+                }
+            )
 
         # Generate service certificate request
         result = subprocess.run(
@@ -3403,7 +3736,10 @@ def generate_certificates():
         )
         if result.returncode != 0:
             return jsonify(
-                {"success": False, "message": f"Service certificate request generation failed: {result.stderr}"}
+                {
+                    "success": False,
+                    "message": f"Service certificate request generation failed: {result.stderr}",
+                }
             )
 
         # Sign service certificate with CA
@@ -3429,7 +3765,12 @@ def generate_certificates():
             timeout=30,
         )
         if result.returncode != 0:
-            return jsonify({"success": False, "message": f"Service certificate signing failed: {result.stderr}"})
+            return jsonify(
+                {
+                    "success": False,
+                    "message": f"Service certificate signing failed: {result.stderr}",
+                }
+            )
 
         # Clean up temporary files
         temp_files = ["certs/service_center.csr", "certs/ca_cert.srl"]
@@ -3458,13 +3799,21 @@ def backup_certificates():
         temp_zip = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
 
         with zipfile.ZipFile(temp_zip.name, "w") as zipf:
-            cert_files = ["ca_cert.pem", "service_center_cert.pem", "service_center_key.pem"]
+            cert_files = [
+                "ca_cert.pem",
+                "service_center_cert.pem",
+                "service_center_key.pem",
+            ]
             for cert_file in cert_files:
                 file_path = os.path.join("certs", cert_file)
                 if os.path.exists(file_path):
                     zipf.write(file_path, cert_file)
 
-        return send_file(temp_zip.name, as_attachment=True, download_name="bssci_certificates_backup.zip")
+        return send_file(
+            temp_zip.name,
+            as_attachment=True,
+            download_name="bssci_certificates_backup.zip",
+        )
     except Exception as e:
         return jsonify({"success": False, "message": str(e)})
 
@@ -3496,7 +3845,11 @@ def restore_certificates():
             os.makedirs("certs", exist_ok=True)
 
             # Extract only certificate files
-            cert_files = ["ca_cert.pem", "service_center_cert.pem", "service_center_key.pem"]
+            cert_files = [
+                "ca_cert.pem",
+                "service_center_cert.pem",
+                "service_center_key.pem",
+            ]
             for cert_file in cert_files:
                 if cert_file in zipf.namelist():
                     target_path = os.path.join("certs", cert_file)
@@ -3509,7 +3862,12 @@ def restore_certificates():
         # Clean up temporary file
         os.unlink(temp_zip.name)
 
-        return jsonify({"success": True, "message": "Certificates restored successfully from backup"})
+        return jsonify(
+            {
+                "success": True,
+                "message": "Certificates restored successfully from backup",
+            }
+        )
     except Exception as e:
         return jsonify({"success": False, "message": str(e)})
 
@@ -3529,7 +3887,11 @@ def generate_bs_certificate(eui):
         success, msg = _generate_bs_certificate(eui)
         if success:
             return jsonify(
-                {"success": True, "message": msg, "download_url": f"/api/base-stations/{eui}/certificate/download"}
+                {
+                    "success": True,
+                    "message": msg,
+                    "download_url": f"/api/base-stations/{eui}/certificate/download",
+                }
             )
         else:
             return jsonify({"success": False, "message": msg}), 500
@@ -3551,14 +3913,26 @@ def download_bs_certificate(eui):
         key_path = os.path.join(bs_cert_dir, f"{eui}_key.pem")
         ca_path = "certs/ca_cert.pem"
         if not os.path.exists(cert_path) or not os.path.exists(key_path):
-            return jsonify({"success": False, "message": "Certificate not found for this base station"}), 404
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "message": "Certificate not found for this base station",
+                    }
+                ),
+                404,
+            )
         temp_zip = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
         with zipfile.ZipFile(temp_zip.name, "w") as zipf:
             if os.path.exists(ca_path):
                 zipf.write(ca_path, "ca_cert.pem")
             zipf.write(cert_path, f"{eui}_cert.pem")
             zipf.write(key_path, f"{eui}_key.pem")
-        return send_file(temp_zip.name, as_attachment=True, download_name=f"bs_{eui}_certificates.zip")
+        return send_file(
+            temp_zip.name,
+            as_attachment=True,
+            download_name=f"bs_{eui}_certificates.zip",
+        )
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
 

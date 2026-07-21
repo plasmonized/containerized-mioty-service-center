@@ -4,9 +4,7 @@ import os
 import threading
 import time
 
-# Configure logging with timezone
-from datetime import UTC, datetime, timedelta, timezone
-
+from observability import configure_logging
 from web_ui import app
 
 # Check for Synology Docker mode
@@ -22,40 +20,15 @@ if os.getenv("SYNOLOGY_DOCKER") == "1":
     print("=" * 50)
 
 
-class TimezoneFormatter(logging.Formatter):
-    def __init__(self, fmt, datefmt=None):
-        super().__init__(fmt, datefmt)
-        # Set timezone to UTC+2 (Central European Time)
-        self.timezone = timezone(timedelta(hours=2))
+configure_logging(__name__)
 
-    def formatTime(self, record, datefmt=None):
-        # Convert UTC timestamp to local timezone
-        utc_time = datetime.fromtimestamp(record.created, tz=UTC)
-        local_time = utc_time.astimezone(self.timezone)
-        if datefmt:
-            return local_time.strftime(datefmt)
-        else:
-            return local_time.strftime("%Y-%m-%d %H:%M:%S")
+# configure_logging() resets all root handlers, which removes the in-memory
+# handler that powers the web UI log viewer. Re-attach it so the log page works.
+from web_ui import WebUILogHandler  # noqa: E402
 
-
-# Configure logging
-# NOTE: web_ui (imported above) already adds its in-memory handler to the root
-# logger, which makes logging.basicConfig() a silent no-op. We must explicitly
-# add a console StreamHandler so logs also reach stdout/stderr (Docker logs).
-timezone_formatter = TimezoneFormatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s", "%Y-%m-%d %H:%M:%S")
-
-root_logger = logging.getLogger()
-
-has_console_handler = any(
-    isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler) for h in root_logger.handlers
-)
-if not has_console_handler:
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-    root_logger.addHandler(console_handler)
-
-for handler in root_logger.handlers:
-    handler.setFormatter(timezone_formatter)
+_root_logger = logging.getLogger()
+if not any(isinstance(h, WebUILogHandler) for h in _root_logger.handlers):
+    _root_logger.addHandler(WebUILogHandler())
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +78,6 @@ def run_bssci_service():
 
 def get_tls_server():
     """Get the TLS server instance"""
-    global tls_server_instance
     return tls_server_instance
 
 

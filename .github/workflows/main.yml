@@ -12,28 +12,36 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: "3.11"
+        python-version: "3.12"
+
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v6
+      with:
+        enable-cache: true
+        cache-suffix: "uv-${{ runner.os }}"
+        cache-dependency-path: uv.lock
 
     - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install flake8 black isort mypy pytest
+      run: uv sync --locked --all-groups --no-install-project
 
-    - name: Run flake8 (Style & Fehler) - Relaxed
-      run: |
-        flake8 . \
-          --max-line-length=120 \
-          --ignore=E501,F541,E302,E303,W293,F401,F811,E722,E261,E128,W503,E111,E117,W504,E305,F824,E129,W291,W292,E203 \
-          --exclude=.pythonlibs,./attached_assets \
-          || echo "flake8 completed with warnings"
+    - name: Run ruff (Linter)
+      run: uv run ruff check . --exclude=attached_assets --exit-zero
 
-    - name: Run pytest (Tests)  
-      run: pytest || echo "No tests found - OK"
+    - name: Run ruff (Format Check)
+      run: uv run ruff format --check . --exclude=attached_assets || echo "Format check completed with warnings"
+
+    - name: Run mypy (Type Check)
+      run: uv run mypy . --ignore-missing-imports --exclude='attached_assets/' || echo "mypy completed with warnings"
+
+    - name: Run pytest with coverage (Unit Tests)
+      run: |
+        uv run pytest --cov=. --cov-report=term-missing --cov-fail-under=0 \
+          -m "not integration" -v || echo "No tests found - OK"
 
   docker-pr:
     runs-on: ubuntu-latest

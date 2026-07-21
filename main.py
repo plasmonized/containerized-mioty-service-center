@@ -1,39 +1,12 @@
 import asyncio
 import logging
 
-# Configure logging with timezone
-from datetime import UTC, datetime, timedelta, timezone
-
 from bssci_config import LISTEN_PORT, MQTT_BROKER, MQTT_PORT, SENSOR_CONFIG_FILE
 from mqtt_interface import MQTTClient
+from observability import ERROR_CODES, configure_logging
 from TLSServer import TLSServer
 
-
-class TimezoneFormatter(logging.Formatter):
-    def __init__(self, fmt, datefmt=None):
-        super().__init__(fmt, datefmt)
-        # Set timezone to UTC+2 (Central European Time)
-        self.timezone = timezone(timedelta(hours=2))
-
-    def formatTime(self, record, datefmt=None):
-        # Convert UTC timestamp to local timezone
-        utc_time = datetime.fromtimestamp(record.created, tz=UTC)
-        local_time = utc_time.astimezone(self.timezone)
-        if datefmt:
-            return local_time.strftime(datefmt)
-        else:
-            return local_time.strftime("%Y-%m-%d %H:%M:%S")
-
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
-)
-
-# Apply timezone formatter to all handlers
-timezone_formatter = TimezoneFormatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s", "%Y-%m-%d %H:%M:%S")
-for handler in logging.root.handlers:
-    handler.setFormatter(timezone_formatter)
+configure_logging(__name__)
 logger = logging.getLogger(__name__)
 
 # Global TLS server instance for web UI access
@@ -96,7 +69,7 @@ async def main() -> None:
     except KeyboardInterrupt:
         logger.info("Shutting down BSSCI Service Center...")
     except Exception as e:
-        logger.error(f"Service error: {e}")
+        logger.error(f"Service error: {e}", extra={"error_code": ERROR_CODES["SC_SERVICE_ERROR"]})
 
     logger.info("✓ BSSCI Service Center shut down complete")
 

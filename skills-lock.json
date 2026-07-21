@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "skills": {
+    "commit-context": {
+      "source": "rohitg00/agentmemory",
+      "sourceType": "github",
+      "skillPath": "plugin/skills/commit-context/SKILL.md",
+      "computedHash": "721fefe3c9569d064f12fa5b9026b3e8ebda6aafa7f7dc44e45e95a361232641"
+    },
+    "commit-history": {
+      "source": "rohitg00/agentmemory",
+      "sourceType": "github",
+      "skillPath": "plugin/skills/commit-history/SKILL.md",
+      "computedHash": "3568181217a848242391668203f75e253d465343513bd4b295fbfe2e160f0cda"
+    },
+    "forget": {
+      "source": "rohitg00/agentmemory",
+      "sourceType": "github",
+      "skillPath": "plugin/skills/forget/SKILL.md",
+      "computedHash": "a3a0bce30ef436c85b23b2a2bf48de589299ed3163a48091b43d047112c58abe"
+    },
+    "handoff": {
+      "source": "rohitg00/agentmemory",
+      "sourceType": "github",
+      "skillPath": "plugin/skills/handoff/SKILL.md",
+      "computedHash": "c71fec4b77d19b09b8b5a77787a0455dad7d6c2a04f15947642d4f280f4e6ad2"
+    },
+    "recall": {
+      "source": "rohitg00/agentmemory",
+      "sourceType": "github",
+      "skillPath": "plugin/skills/recall/SKILL.md",
+      "computedHash": "c6d83cc8627e93db66907ffd3ef1a851f4d67cd2fce5c4f4bc622fbc5de80b17"
+    },
+    "recap": {
+      "source": "rohitg00/agentmemory",
+      "sourceType": "github",
+      "skillPath": "plugin/skills/recap/SKILL.md",
+      "computedHash": "dea05f1510feaa3667e008f67fb6ce09e92920829d1722dbae58a652424fdcbc"
+    },
+    "remember": {
+      "source": "rohitg00/agentmemory",
+      "sourceType": "github",
+      "skillPath": "plugin/skills/remember/SKILL.md",
+      "computedHash": "873c65ed19775a3348f0147a6e911d5fc8380959a32ef6cccc010a6ccf27c5bd"
+    },
+    "session-history": {
+      "source": "rohitg00/agentmemory",
+      "sourceType": "github",
+      "skillPath": "plugin/skills/session-history/SKILL.md",
+      "computedHash": "9791f4be46483991c301f94f6242fca93a902443b201c9cac6d5c77bd38cffdb"
+    }
+  }
+}

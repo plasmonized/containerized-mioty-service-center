@@ -39,11 +39,22 @@ class TimezoneFormatter(logging.Formatter):
 
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-
-# Apply timezone formatter to all handlers
+# NOTE: web_ui (imported above) already adds its in-memory handler to the root
+# logger, which makes logging.basicConfig() a silent no-op. We must explicitly
+# add a console StreamHandler so logs also reach stdout/stderr (Docker logs).
 timezone_formatter = TimezoneFormatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s", "%Y-%m-%d %H:%M:%S")
-for handler in logging.root.handlers:
+
+root_logger = logging.getLogger()
+
+has_console_handler = any(
+    isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler) for h in root_logger.handlers
+)
+if not has_console_handler:
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    root_logger.addHandler(console_handler)
+
+for handler in root_logger.handlers:
     handler.setFormatter(timezone_formatter)
 
 logger = logging.getLogger(__name__)

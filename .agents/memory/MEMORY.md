@@ -1,0 +1,2 @@
+- [TLS handshake debugging](tls-handshake-logging.md) — asyncio start_server(ssl=...) silently drops handshake failures; accept plain TCP + explicit start_tls to log them.
+- [Logging basicConfig no-op](logging-basicconfig-noop.md) — importing web_ui adds a root handler first, making later basicConfig a silent no-op (no console/Docker logs).

@@ -209,11 +209,94 @@ class TLSServer:
         logger.info(f"   Sensor config file: {self.sensor_config_file}")
         logger.info(f"   Loaded sensors: {len(self.sensor_config)}")
 
+        # Install exception handler to surface TLS handshake failures
+        # (asyncio normally swallows these silently - no log entry at all)
+        loop = asyncio.get_running_loop()
+        default_handler_installed = getattr(loop, "_bssci_tls_handler", False)
+        if not default_handler_installed:
+            prev_exception_handler = loop.get_exception_handler()
+
+            def _tls_exception_handler(loop_, context):
+                exc = context.get("exception")
+                msg = context.get("message", "")
+                transport = context.get("transport")
+                peer = None
+                try:
+                    if transport:
+                        peer = transport.get_extra_info("peername")
+                except Exception:
+                    pass
+                if isinstance(exc, ssl.SSLError) or "ssl" in msg.lower() or "handshake" in msg.lower():
+                    logger.error("🔒 TLS HANDSHAKE FAILURE detected!")
+                    logger.error(f"   Peer (base station): {peer}")
+                    logger.error(f"   Message: {msg}")
+                    logger.error(f"   Error: {exc}")
+                    if exc is not None:
+                        err_str = str(exc)
+                        if "certificate" in err_str.lower():
+                            logger.error("   💡 Hint: Client certificate problem - check cert on base station")
+                            logger.error("      or test with TLS_REQUIRE_CLIENT_CERT=false")
+                        elif "handshake" in err_str.lower() or "cipher" in err_str.lower() or "protocol" in err_str.lower():
+                            logger.error("   💡 Hint: TLS version/cipher mismatch - test with TLS_COMPAT_MODE=true")
+                else:
+                    if prev_exception_handler is not None:
+                        prev_exception_handler(loop_, context)
+                    else:
+                        loop_.default_exception_handler(context)
+            loop.set_exception_handler(_tls_exception_handler)
+            loop._bssci_tls_handler = True  # type: ignore[attr-defined]
+            logger.info("🔍 TLS handshake failure logging enabled")
+
+        # Accept plain TCP first, then perform the TLS handshake explicitly.
+        # This way EVERY connection attempt is logged with peer IP, and
+        # handshake failures produce a clear error message instead of being
+        # silently dropped by asyncio.
+        async def _close_writer(writer: asyncio.StreamWriter) -> None:
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
+
+        async def _tls_connection_handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            peer = writer.get_extra_info("peername")
+            logger.info(f"🔌 Incoming TCP connection from {peer} - starting TLS handshake...")
+            try:
+                await writer.start_tls(ssl_ctx, ssl_handshake_timeout=15.0)
+            except asyncio.TimeoutError:
+                logger.error(f"🔒 TLS HANDSHAKE TIMEOUT from {peer} (no handshake within 15s)")
+                logger.error("   💡 Hint: Client connected but never started TLS - wrong port/protocol on base station?")
+                await _close_writer(writer)
+                return
+            except ssl.SSLError as e:
+                err_str = str(e)
+                logger.error(f"🔒 TLS HANDSHAKE FAILED from {peer}")
+                logger.error(f"   Error: {err_str}")
+                if "certificate" in err_str.lower():
+                    logger.error("   💡 Hint: Client certificate problem - check the cert installed on the base station")
+                    logger.error("      or test with TLS_REQUIRE_CLIENT_CERT=false in .env")
+                elif any(k in err_str.lower() for k in ("handshake", "cipher", "protocol", "version")):
+                    logger.error("   💡 Hint: TLS version/cipher mismatch - test with TLS_COMPAT_MODE=true in .env")
+                await _close_writer(writer)
+                return
+            except (ConnectionResetError, BrokenPipeError, EOFError) as e:
+                logger.error(f"🔒 TLS HANDSHAKE ABORTED by {peer}: connection closed during handshake ({e!r})")
+                logger.error("   💡 Hint: Base station rejected our server certificate OR could not provide a client certificate")
+                logger.error("      Check: CA cert on base station, client cert on base station, TLS version support")
+                await _close_writer(writer)
+                return
+            except Exception as e:
+                logger.error(f"🔒 TLS HANDSHAKE ERROR from {peer}: {type(e).__name__}: {e}")
+                await _close_writer(writer)
+                return
+
+            logger.info(f"✅ TLS handshake successful with {peer}")
+            await self.handle_client(reader, writer)
+
         server = await asyncio.start_server(
-            self.handle_client,
+            _tls_connection_handler,
             bssci_config.LISTEN_HOST,
             bssci_config.LISTEN_PORT,
-            ssl=ssl_ctx,
         )
 
         logger.info("📨 Starting MQTT queue watcher task...")

@@ -78,6 +78,7 @@
                                 <th>CPU</th>
                                 <th>Memory</th>
                                 <th>Temp</th>
+                                <th style="min-width: 120px;">Duty Cycle</th>
                                 <th>VM</th>
                                 <th>Sensors</th>
                                 <th>Certificate</th>
@@ -317,6 +318,22 @@ function loadBaseStations() {
                 ? `${bs.health.temperature.toFixed(1)}°C`
                 : 'N/A';
             const ipDisplay = bs.configured_ip || '-';
+
+            let dutyCycleDisplay = '<span class="text-muted">-</span>';
+            if (bs.health?.duty_cycle !== undefined && bs.health?.duty_cycle !== null) {
+                const dc = Math.max(0, Math.min(100, bs.health.duty_cycle));
+                const dcLabel = bs.health.duty_cycle.toFixed(2);
+                const barColor = dc < 50 ? 'bg-success' : dc < 80 ? 'bg-warning' : 'bg-danger';
+                dutyCycleDisplay = `
+                    <div class="d-flex align-items-center" title="Duty Cycle: ${dcLabel}%">
+                        <div class="progress flex-grow-1" style="height: 14px; min-width: 70px;">
+                            <div class="progress-bar ${barColor}" role="progressbar"
+                                 style="width: ${Math.max(dc, 2)}%;"
+                                 aria-valuenow="${dc}" aria-valuemin="0" aria-valuemax="100"></div>
+                        </div>
+                        <small class="ms-2 text-nowrap">${dcLabel}%</small>
+                    </div>`;
+            }
             const tagsHtml = (bs.tags || []).map(t =>
                 `<span class="badge bg-info me-1">${t}</span>`
             ).join('') || '-';
@@ -351,6 +368,7 @@ function loadBaseStations() {
                     <td>${cpuDisplay}</td>
                     <td>${memDisplay}</td>
                     <td>${tempDisplay}</td>
+                    <td>${dutyCycleDisplay}</td>
                     <td>${vmBadge}</td>
                     <td>${bs.connected_sensors || 0}</td>
                     <td>${certBadge}</td>

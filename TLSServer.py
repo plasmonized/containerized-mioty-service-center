@@ -171,6 +171,18 @@ class TLSServer:
         """Return current time in UTC for internal correlation."""
         return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
+    def _get_local_time(self) -> str:
+        """Return current time in the configured timezone for user-facing display."""
+        try:
+            import zoneinfo
+
+            import bssci_config
+
+            tz = zoneinfo.ZoneInfo(getattr(bssci_config, "TIMEZONE", "Europe/Berlin"))
+        except Exception:
+            tz = UTC  # type: ignore[assignment]
+        return datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
     def _spawn_background_task(self, coro) -> asyncio.Task:
         """Create a background task and keep a reference so it is not GC'd."""
         task = asyncio.create_task(coro)
@@ -1361,7 +1373,7 @@ class TLSServer:
                                     "status": "registered",
                                     "base_stations": [],
                                     "timestamp": response_time,
-                                    "registration_time": self._get_utc_time(),
+                                    "registration_time": self._get_local_time(),
                                     "registrations": [],
                                 }
 
@@ -1373,7 +1385,7 @@ class TLSServer:
                                         "base_station": bs_eui,
                                         "op_id": op_id,
                                         "processing_duration": processing_duration,
-                                        "registration_time": self._get_utc_time(),
+                                        "registration_time": self._get_local_time(),
                                     }
                                 )
                                 self.registered_sensors[eui_key]["timestamp"] = response_time
@@ -1436,7 +1448,7 @@ class TLSServer:
                                         "status": "registered",
                                         "base_stations": [],
                                         "timestamp": asyncio.get_event_loop().time(),
-                                        "registration_time": self._get_utc_time(),
+                                        "registration_time": self._get_local_time(),
                                         "registrations": [],
                                     }
 
@@ -1447,7 +1459,7 @@ class TLSServer:
                                         {
                                             "base_station": bs_eui,
                                             "op_id": op_id,
-                                            "registration_time": self._get_utc_time(),
+                                            "registration_time": self._get_local_time(),
                                             "fallback_used": True,
                                         }
                                     )
@@ -2491,7 +2503,7 @@ class TLSServer:
                 "active": True,
                 "inactive_hours": round(hours_inactive, 1),
                 "hours_until_detach": round(hours_until_detach, 1),
-                "warning_sent_time": self._get_utc_time(),
+                "warning_sent_time": self._get_local_time(),
             }
 
         # Send MQTT warning notification
@@ -2534,7 +2546,7 @@ class TLSServer:
                     "detached": True,
                     "reason": "inactivity",
                     "inactive_hours": round(hours_inactive, 1),
-                    "detach_time": self._get_utc_time(),
+                    "detach_time": self._get_local_time(),
                 }
 
             # Remove from last seen and warning tracking
@@ -3473,7 +3485,7 @@ class TLSServer:
                 sensor["preferredDownlinkPath"] = {
                     "baseStation": bs_eui,
                     "snr": round(snr, 2),
-                    "lastUpdated": self._get_utc_time(),
+                    "lastUpdated": self._get_local_time(),
                     "messageCount": sensor["preferredDownlinkPath"].get("messageCount", 0) + 1,
                 }
 

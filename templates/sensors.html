@@ -206,7 +206,7 @@ function loadSensors() {
                             `<strong>BS:</strong> ${sensor.preferredDownlinkPath.baseStation}
                             <br><small><strong>SNR:</strong> ${sensor.preferredDownlinkPath.snr} dB</small>
                             <br><small><strong>Messages:</strong> ${sensor.preferredDownlinkPath.messageCount}</small>
-                            <br><small><strong>Updated:</strong> ${new Date(sensor.preferredDownlinkPath.lastUpdated).toLocaleString()}</small>` : 
+                            <br><small><strong>Updated:</strong> ${(sensor.preferredDownlinkPath.lastUpdated || '').split('.')[0]}</small>` : 
                             '<span class="text-muted">No data received</span>'}</td>
                     <td>
                         <div class="btn-group" role="group" aria-label="Sensor actions">

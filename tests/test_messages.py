@@ -102,10 +102,14 @@ class TestBuildAttachRequest:
         result = build_attach_request(SENSOR, 1)
         assert result["bidi"] is True
 
-    def test_nwk_sn_key_is_byte_list(self) -> None:
+    def test_nwk_sn_key_is_raw_bytes(self) -> None:
+        # Must be bytes so msgpack encodes it as bin type.
+        # Miromico EdgeCard FW 5.1.0 rejects the array-of-ints form
+        # with error 22 "attach propagate message malformed".
         result = build_attach_request(SENSOR, 1)
-        expected_key = list(bytes.fromhex(SENSOR["nwKey"]))
+        expected_key = bytes.fromhex(SENSOR["nwKey"])
         assert result["nwkSnKey"] == expected_key
+        assert isinstance(result["nwkSnKey"], bytes)
 
 
 class TestBuildAttachComplete:

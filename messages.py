@@ -32,7 +32,11 @@ def build_attach_request(sensor: dict[str, Any], opID: int) -> dict[str, object]
         "opId": opID,
         "epEui": int.from_bytes(bytes.fromhex(sensor["eui"]), "big"),
         "bidi": sensor["bidi"],
-        "nwkSnKey": list(bytes.fromhex(sensor["nwKey"])),
+        # Send as raw bytes -> msgpack bin type. Spec v1.0.0 says Numeric[16]
+        # (array of ints), but Miromico EdgeCard FW 5.1.0 (BSSCI 1.1.0)
+        # rejects the array form with error 22 "attach propagate message
+        # malformed" and expects a 16-byte msgpack bin instead.
+        "nwkSnKey": bytes.fromhex(sensor["nwKey"]),
         "shAddr": int.from_bytes(bytes.fromhex(sensor["shortAddr"]), "big"),
         "lastPacketCnt": 0,
         "dualChan": True,

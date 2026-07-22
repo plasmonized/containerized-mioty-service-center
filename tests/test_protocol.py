@@ -139,3 +139,32 @@ class TestDecodeMessages:
         # "MIOTYB01" won't be at offset 0, so this may need adjustment
         # based on exact parser implementation
         assert isinstance(result, list)
+
+
+# ── attPrp wire-format regression ────────────────────────────────────────────
+
+
+class TestAttachRequestWireFormat:
+    """Regression: nwkSnKey must be encoded as msgpack bin, not array.
+
+    Miromico EdgeCard FW 5.1.0 (BSSCI 1.1.0) rejects attPrp with error 22
+    "attach propagate message malformed" when the network session key is
+    sent as an array of 16 ints instead of a 16-byte msgpack bin.
+    """
+
+    def test_nwk_sn_key_packs_as_msgpack_bin(self) -> None:
+        from messages import build_attach_request
+
+        sensor = {
+            "eui": "74731D000000138B",
+            "bidi": False,
+            "nwKey": "09DE6551000000000000000071B538A4",
+            "shortAddr": "138B",
+        }
+        packed = encode_message(build_attach_request(sensor, -1))
+        # bin 8 marker (0xc4) followed by length 16 and the raw key bytes
+        assert b"\xc4\x10" + bytes.fromhex(sensor["nwKey"]) in packed
+
+        decoded = decode_message(packed)
+        assert decoded["nwkSnKey"] == bytes.fromhex(sensor["nwKey"])
+        assert isinstance(decoded["nwkSnKey"], bytes)

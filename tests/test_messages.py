@@ -102,14 +102,43 @@ class TestBuildAttachRequest:
         result = build_attach_request(SENSOR, 1)
         assert result["bidi"] is True
 
-    def test_nwk_sn_key_is_raw_bytes(self) -> None:
-        # Must be bytes so msgpack encodes it as bin type.
-        # Miromico EdgeCard FW 5.1.0 rejects the array-of-ints form
-        # with error 22 "attach propagate message malformed".
+    def test_nwk_sn_key_is_byte_list(self) -> None:
+        # Numeric[16] (array of ints) per BSSCI spec v1.0.0 AND v1.1.0.
         result = build_attach_request(SENSOR, 1)
-        expected_key = bytes.fromhex(SENSOR["nwKey"])
+        expected_key = list(bytes.fromhex(SENSOR["nwKey"]))
         assert result["nwkSnKey"] == expected_key
-        assert isinstance(result["nwkSnKey"], bytes)
+
+    def test_v100_format_has_bidi_no_epclass(self) -> None:
+        result = build_attach_request(SENSOR, 1, "1.0.0")
+        assert result["bidi"] is True
+        assert "epClass" not in result
+        assert "syncBurst" not in result
+
+    def test_default_version_is_v100_format(self) -> None:
+        assert build_attach_request(SENSOR, 1) == build_attach_request(SENSOR, 1, "1.0.0")
+
+    def test_v110_format_has_epclass_no_bidi(self) -> None:
+        # BSSCI 1.1.0 replaced 'bidi' with mandatory 'epClass' and added
+        # mandatory 'syncBurst'. Miromico EdgeCard FW 5.1.0 rejects the
+        # 1.0.0 layout with error 22 "attach propagate message malformed".
+        result = build_attach_request(SENSOR, 1, "1.1.0")
+        assert "bidi" not in result
+        assert result["epClass"] == "a"  # bidi sensor -> class 'a'
+        assert result["syncBurst"] is False
+
+    def test_v110_unidirectional_sensor_is_class_z(self) -> None:
+        sensor = dict(SENSOR, bidi=False)
+        result = build_attach_request(sensor, 1, "1.1.0")
+        assert result["epClass"] == "z"
+
+    def test_v110_higher_patch_and_minor_also_new_format(self) -> None:
+        assert "epClass" in build_attach_request(SENSOR, 1, "1.1.2")
+        assert "epClass" in build_attach_request(SENSOR, 1, "1.2.0")
+
+    def test_malformed_version_falls_back_to_v100(self) -> None:
+        for bad in (None, "", "garbage", "2"):
+            result = build_attach_request(SENSOR, 1, bad)
+            assert "bidi" in result, f"version {bad!r} should use 1.0.0 format"
 
 
 class TestBuildAttachComplete:

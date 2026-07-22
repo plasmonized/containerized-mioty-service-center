@@ -26,17 +26,34 @@ def build_connection_response(opID: int, snscuuid_arr: list[int] | None = None) 
     }
 
 
-def build_attach_request(sensor: dict[str, Any], opID: int) -> dict[str, object]:
-    return {
+def parse_protocol_version(version: str | None) -> tuple[int, int, int]:
+    """Parse a BSSCI 'major.minor.patch' version string, default (1, 0, 0)."""
+    try:
+        parts = str(version).strip().split(".")
+        return (int(parts[0]), int(parts[1]), int(parts[2]))
+    except (ValueError, IndexError, AttributeError, TypeError):
+        return (1, 0, 0)
+
+
+def build_attach_request(
+    sensor: dict[str, Any], opID: int, protocol_version: str | None = None
+) -> dict[str, object]:
+    """Build BSSCI attPrp, format depending on the BS protocol version.
+
+    BSSCI v1.0.0: fields command, opId, epEui, bidi, nwkSnKey, shAddr,
+    lastPacketCnt, dualChan, repetition, wideCarrOff, longBlkDist.
+
+    BSSCI v1.1.0 changed attPrp: 'bidi' was REMOVED and replaced by the
+    mandatory 'epClass' ('z'=uplink only, 'a'/'b'/'c'=downlink classes);
+    'syncBurst' became a mandatory field. Strict firmwares (Miromico
+    EdgeCard FW 5.1.0) reject the 1.0.0 layout with error 22 "attach
+    propagate message malformed". nwkSnKey stays Numeric[16] in both.
+    """
+    msg: dict[str, object] = {
         "command": "attPrp",
         "opId": opID,
         "epEui": int.from_bytes(bytes.fromhex(sensor["eui"]), "big"),
-        "bidi": sensor["bidi"],
-        # Send as raw bytes -> msgpack bin type. Spec v1.0.0 says Numeric[16]
-        # (array of ints), but Miromico EdgeCard FW 5.1.0 (BSSCI 1.1.0)
-        # rejects the array form with error 22 "attach propagate message
-        # malformed" and expects a 16-byte msgpack bin instead.
-        "nwkSnKey": bytes.fromhex(sensor["nwKey"]),
+        "nwkSnKey": list(bytes.fromhex(sensor["nwKey"])),
         "shAddr": int.from_bytes(bytes.fromhex(sensor["shortAddr"]), "big"),
         "lastPacketCnt": 0,
         "dualChan": True,
@@ -44,6 +61,12 @@ def build_attach_request(sensor: dict[str, Any], opID: int) -> dict[str, object]
         "wideCarrOff": False,
         "longBlkDist": False,
     }
+    if parse_protocol_version(protocol_version) >= (1, 1, 0):
+        msg["epClass"] = "a" if sensor["bidi"] else "z"
+        msg["syncBurst"] = False
+    else:
+        msg["bidi"] = sensor["bidi"]
+    return msg
 
 
 def build_attach_complete(opID: int) -> dict[str, object]:

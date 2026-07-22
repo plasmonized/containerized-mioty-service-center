@@ -145,26 +145,36 @@ class TestDecodeMessages:
 
 
 class TestAttachRequestWireFormat:
-    """Regression: nwkSnKey must be encoded as msgpack bin, not array.
+    """Regression: attPrp format must match the negotiated BSSCI version.
 
-    Miromico EdgeCard FW 5.1.0 (BSSCI 1.1.0) rejects attPrp with error 22
-    "attach propagate message malformed" when the network session key is
-    sent as an array of 16 ints instead of a 16-byte msgpack bin.
+    Miromico EdgeCard FW 5.1.0 (BSSCI 1.1.0) rejects the 1.0.0 attPrp
+    layout with error 22 "attach propagate message malformed": v1.1.0
+    removed 'bidi' (replaced by mandatory 'epClass') and added mandatory
+    'syncBurst'. nwkSnKey stays Numeric[16] (array) in both versions.
     """
 
-    def test_nwk_sn_key_packs_as_msgpack_bin(self) -> None:
+    SENSOR = {
+        "eui": "74731D000000138B",
+        "bidi": False,
+        "nwKey": "09DE6551000000000000000071B538A4",
+        "shortAddr": "138B",
+    }
+
+    def test_v110_roundtrip_has_epclass_and_array_key(self) -> None:
         from messages import build_attach_request
 
-        sensor = {
-            "eui": "74731D000000138B",
-            "bidi": False,
-            "nwKey": "09DE6551000000000000000071B538A4",
-            "shortAddr": "138B",
-        }
-        packed = encode_message(build_attach_request(sensor, -1))
-        # bin 8 marker (0xc4) followed by length 16 and the raw key bytes
-        assert b"\xc4\x10" + bytes.fromhex(sensor["nwKey"]) in packed
-
+        packed = encode_message(build_attach_request(self.SENSOR, -1, "1.1.0"))
         decoded = decode_message(packed)
-        assert decoded["nwkSnKey"] == bytes.fromhex(sensor["nwKey"])
-        assert isinstance(decoded["nwkSnKey"], bytes)
+        assert decoded["epClass"] == "z"
+        assert decoded["syncBurst"] is False
+        assert "bidi" not in decoded
+        assert decoded["nwkSnKey"] == list(bytes.fromhex(self.SENSOR["nwKey"]))
+
+    def test_v100_roundtrip_keeps_legacy_fields(self) -> None:
+        from messages import build_attach_request
+
+        packed = encode_message(build_attach_request(self.SENSOR, -1, "1.0.0"))
+        decoded = decode_message(packed)
+        assert decoded["bidi"] is False
+        assert "epClass" not in decoded
+        assert decoded["nwkSnKey"] == list(bytes.fromhex(self.SENSOR["nwKey"]))

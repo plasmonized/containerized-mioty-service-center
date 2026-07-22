@@ -29,6 +29,7 @@ class TLSServer:
         mqtt_in_queue: asyncio.Queue[dict[str, str]],
     ) -> None:
         self.bs_op_ids: dict[asyncio.streams.StreamWriter, int] = {}
+        self.bs_protocol_versions: dict[asyncio.streams.StreamWriter, str] = {}
         self.state_lock = threading.RLock()
         self.connection_timeline = ConnectionTimeline(max_entries=2000)
         self.connection_correlation_ids: dict[asyncio.streams.StreamWriter, str] = {}
@@ -407,8 +408,10 @@ class TLSServer:
                     "bidi": bidi_value,
                 }
 
-                # Build and encode the message
-                attach_message = messages.build_attach_request(normalized_sensor, op_id)
+                # Build and encode the message (format depends on BS protocol version)
+                bs_version = self.bs_protocol_versions.get(writer)
+                logger.info(f"     BSSCI protocol version: {bs_version or '1.0.0 (default)'}")
+                attach_message = messages.build_attach_request(normalized_sensor, op_id, bs_version)
                 logger.debug(f"   📝 Built attach message: {attach_message}")
 
                 msg_pack = encode_message(attach_message)
@@ -876,6 +879,7 @@ class TLSServer:
                                         self.connected_base_stations.pop(writer)
                                     self.bs_status_failures.pop(writer, None)
                                     self.bs_op_ids.pop(writer, None)
+                                    self.bs_protocol_versions.pop(writer, None)
                                 try:
                                     writer.close()
                                 except:
@@ -956,6 +960,8 @@ class TLSServer:
                         writer.write(IDENTIFIER + len(msg).to_bytes(4, byteorder="little") + msg)
                         await writer.drain()
                         bs_eui = int(message["bsEui"]).to_bytes(8, byteorder="big").hex().upper()
+                        bs_version = str(message.get("version", "1.0.0"))
+                        logger.info(f"   Protocol version: {bs_version}")
                         correlation_id = generate_correlation_id()
                         self.connection_timeline.add_event(
                             "connection_request",
@@ -966,6 +972,7 @@ class TLSServer:
                         with self.state_lock:
                             self.connecting_base_stations[writer] = bs_eui
                             self.connection_correlation_ids[writer] = correlation_id
+                            self.bs_protocol_versions[writer] = bs_version
                         logger.info(
                             f"📤 BSSCI CONNECTION RESPONSE sent to base station {bs_eui}",
                             extra={"correlation_id": correlation_id},
@@ -998,6 +1005,7 @@ class TLSServer:
                                 with self.state_lock:
                                     self.connected_base_stations.pop(old_writer, None)
                                     self.bs_op_ids.pop(old_writer, None)
+                                    self.bs_protocol_versions.pop(old_writer, None)
                                     # Also remove from connecting if present there
                                     self.connecting_base_stations.pop(old_writer, None)
 
@@ -1939,6 +1947,7 @@ class TLSServer:
                 self.connection_correlation_ids.pop(writer, None)
                 self.bs_status_failures.pop(writer, None)
                 self.bs_op_ids.pop(writer, None)
+                self.bs_protocol_versions.pop(writer, None)
 
     async def process_deduplication_buffer(self) -> None:
         """Processes the deduplication buffer, forwards best messages, and cleans up old entries."""

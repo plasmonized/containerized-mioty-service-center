@@ -29,8 +29,12 @@ class QueueLogger:
         queue_instance.put = self._logged_put  # type: ignore[method-assign]
         queue_instance.get = self._logged_get  # type: ignore[method-assign]
 
-        logger.info(f"🔍 Queue Logger initialized for '{queue_name}' (Daily Counter: {self.daily_counter})")
-        logger.info(f"   ✅ Queue '{queue_name}' logging enabled (Daily Counter: {self.daily_counter})")
+        logger.info(
+            f"🔍 Queue Logger initialized for '{queue_name}' (Daily Counter: {self.daily_counter})"
+        )
+        logger.info(
+            f"   ✅ Queue '{queue_name}' logging enabled (Daily Counter: {self.daily_counter})"
+        )
 
     async def _logged_put(self, item: Any) -> None:
         """Logged version of queue.put()"""
@@ -117,7 +121,9 @@ def setup_queue_logging(queues: dict[str, asyncio.Queue]) -> dict[str, QueueLogg
 
     for name, queue in queues.items():
         loggers[name] = QueueLogger(name, queue)
-        logger.info(f"   ✅ Queue '{name}' logging enabled (Daily Counter: {loggers[name].daily_counter})")
+        logger.info(
+            f"   ✅ Queue '{name}' logging enabled (Daily Counter: {loggers[name].daily_counter})"
+        )
 
     return loggers
 
@@ -136,6 +142,8 @@ def log_all_queue_stats(queue_loggers: dict[str, QueueLogger]) -> None:
     logger.info("🔄 Daily Counter Summary:")
     for name, queue_logger in queue_loggers.items():
         stats = queue_logger.get_stats()
-        logger.info(f"   {name}: Daily Counter {stats['daily_counter']} (Reset: {stats['last_reset_date']})")
+        logger.info(
+            f"   {name}: Daily Counter {stats['daily_counter']} (Reset: {stats['last_reset_date']})"
+        )
 
     logger.info("=" * 60)

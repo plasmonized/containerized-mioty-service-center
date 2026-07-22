@@ -2,7 +2,9 @@ import uuid
 from typing import Any
 
 
-def build_connection_response(opID: int, snscuuid_arr: list[int] | None = None) -> dict[str, object]:
+def build_connection_response(
+    opID: int, snscuuid_arr: list[int] | None = None
+) -> dict[str, object]:
     """Build BSSCI conRsp.
 
     Per BSSCI spec, the Service Center must provide its OWN session UUID

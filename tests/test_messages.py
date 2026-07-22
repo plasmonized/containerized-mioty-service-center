@@ -6,7 +6,7 @@ same dict. They are the easiest and most valuable things to test.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -33,7 +33,7 @@ from messages import (
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-SENSOR = {
+SENSOR: dict[str, Any] = {
     "eui": "A1B2C3D4E5F6",
     "bidi": True,
     "nwKey": "00" * 8,
@@ -60,7 +60,6 @@ class TestBuildConnectionResponse:
         assert result["command"] == "conRsp"
         assert result["opId"] == op_id
         assert result["snScUuid"] == uuid_arr
-
 
     def test_forwards_empty_uuid_array(self) -> None:
         result = build_connection_response(0, [])
@@ -152,9 +151,7 @@ class TestBuildDetachRequest:
         result = build_detach_request("A1B2C3D4E5F6", 5)
         assert result["command"] == "detPrp"
         assert result["opId"] == 5
-        assert result["epEui"] == int.from_bytes(
-            bytes.fromhex("A1B2C3D4E5F6"), "big"
-        )
+        assert result["epEui"] == int.from_bytes(bytes.fromhex("A1B2C3D4E5F6"), "big")
 
 
 class TestBuildDetachComplete:
@@ -237,10 +234,23 @@ class TestBuildVmStatusResponse:
 class TestBuildVmDlData:
     """Tests for build_vm_dl_data — the most complex message builder."""
 
-    REQUIRED_KEYS = {
-        "command", "opId", "macType", "userData", "trxTime", "sysTime",
-        "freqOff", "ulSnr", "ulRssi", "carrOffRange", "carrSpace",
-        "ulCrc", "tsi", "syncBurst", "dualChan", "repetition",
+    REQUIRED_KEYS: ClassVar[set[str]] = {
+        "command",
+        "opId",
+        "macType",
+        "userData",
+        "trxTime",
+        "sysTime",
+        "freqOff",
+        "ulSnr",
+        "ulRssi",
+        "carrOffRange",
+        "carrSpace",
+        "ulCrc",
+        "tsi",
+        "syncBurst",
+        "dualChan",
+        "repetition",
         "longBlkDist",
     }
 

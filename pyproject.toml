@@ -66,6 +66,7 @@ exclude_lines = [
 [tool.ruff]
 target-version = "py312"
 line-length = 100
+extend-exclude = [".cache", ".pythonlibs", ".local", "attached_assets"]
 
 [tool.ruff.lint]
 select = [
@@ -100,6 +101,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "attached_assets/*" = ["ALL"]
+"messages.py" = ["N803"]  # opID argument names mirror BSSCI protocol field names
 
 [tool.ruff.format]
 quote-style = "double"

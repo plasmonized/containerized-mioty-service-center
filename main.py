@@ -12,6 +12,9 @@ logger = logging.getLogger(__name__)
 # Global TLS server instance for web UI access
 tls_server_instance = None
 
+# Keep references to background tasks so they are not garbage collected
+_background_tasks: set[asyncio.Task] = set()
+
 
 async def main() -> None:
     global tls_server_instance
@@ -24,7 +27,9 @@ async def main() -> None:
     # Setup queue logging to monitor queue usage
     from queue_logger import log_all_queue_stats, setup_queue_logging
 
-    queue_loggers = setup_queue_logging({"mqtt_out_queue": mqtt_out_queue, "mqtt_in_queue": mqtt_in_queue})
+    queue_loggers = setup_queue_logging(
+        {"mqtt_out_queue": mqtt_out_queue, "mqtt_in_queue": mqtt_in_queue}
+    )
 
     logger.info("🔍 Queue Instance Analysis:")
     logger.info("   mqtt_out_queue Daily Counter: Starting fresh")
@@ -57,8 +62,10 @@ async def main() -> None:
             await asyncio.sleep(60)  # Log stats every minute
             log_all_queue_stats(queue_loggers)
 
-    # Start the stats reporter task
-    asyncio.create_task(queue_stats_reporter())
+    # Start the stats reporter task (keep a reference so it is not GC'd)
+    stats_task = asyncio.create_task(queue_stats_reporter())
+    _background_tasks.add(stats_task)
+    stats_task.add_done_callback(_background_tasks.discard)
 
     logger.info("Starting BSSCI Service Center...")
     logger.info("✓ Both TLS Server and MQTT Interface are starting...")

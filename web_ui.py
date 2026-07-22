@@ -68,7 +68,12 @@ def _validate_eui(eui):
 def _safe_certs_path(*parts: str) -> Path:
     for part in parts:
         part_path = Path(part)
-        if not part or part_path.is_absolute() or len(part_path.parts) > 1 or ".." in part_path.parts:
+        if (
+            not part
+            or part_path.is_absolute()
+            or len(part_path.parts) > 1
+            or ".." in part_path.parts
+        ):
             logger.warning(
                 "Blocked invalid certificate path part",
                 extra={"error_code": ERROR_CODES["WEB_UI_CERT_PATH_INVALID"]},
@@ -190,6 +195,8 @@ def _generate_bs_certificate(eui):
         save_base_station_config(config)
     return True, "Certificate generated successfully"
 
+
+GITHUB_REPO = "plasmonized/containerized-mioty-Service-Center"
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "bssci-service-secret-key-change-me")
@@ -612,7 +619,9 @@ def get_sensors():
                     try:
                         # Thread-safe access to registered sensors data
                         registered_dict = getattr(tls_server, "registered_sensors", {})
-                        print(f"Accessing registration data for {len(registered_dict)} registered sensors")
+                        print(
+                            f"Accessing registration data for {len(registered_dict)} registered sensors"
+                        )
 
                         for sensor_eui, reg_data in list(registered_dict.items()):
                             if sensor_eui in sensor_status:
@@ -622,7 +631,9 @@ def get_sensors():
                                     registrations_list = reg_data.get("registrations", [])
 
                                     # Calculate missing registrations
-                                    missing_bases = [bs for bs in connected_bases if bs not in base_stations_list]
+                                    missing_bases = [
+                                        bs for bs in connected_bases if bs not in base_stations_list
+                                    ]
 
                                     sensor_status[sensor_eui].update(
                                         {
@@ -632,7 +643,9 @@ def get_sensors():
                                             "total_registrations": len(base_stations_list),
                                             "registration_info": {
                                                 "status": reg_data.get("status", "unknown"),
-                                                "last_update": reg_data.get("registration_time", "Unknown"),
+                                                "last_update": reg_data.get(
+                                                    "registration_time", "Unknown"
+                                                ),
                                                 "registrations": registrations_list,
                                             },
                                         }
@@ -643,7 +656,9 @@ def get_sensors():
                                     )
 
                                 except Exception as e:
-                                    print(f"Error processing registration data for sensor {sensor_eui}: {e}")
+                                    print(
+                                        f"Error processing registration data for sensor {sensor_eui}: {e}"
+                                    )
 
                     except Exception as e:
                         print(f"Error accessing TLS server registration data: {e}")
@@ -653,7 +668,9 @@ def get_sensors():
                     if not sensor_status[sensor_eui]["base_stations"]:
                         sensor_status[sensor_eui]["missing_registrations"] = connected_bases.copy()
 
-                print(f"Processed sensor status for {len(sensor_status)} sensors with registration data")
+                print(
+                    f"Processed sensor status for {len(sensor_status)} sensors with registration data"
+                )
                 return jsonify(sensor_status)
         except FileNotFoundError:
             sensor_file = getattr(bssci_config, "SENSOR_CONFIG_FILE", "endpoints.json")
@@ -716,7 +733,10 @@ def add_sensor():
                 tls_server.reload_sensor_config()
 
                 # Force attach to connected base stations if any
-                if hasattr(tls_server, "connected_base_stations") and tls_server.connected_base_stations:
+                if (
+                    hasattr(tls_server, "connected_base_stations")
+                    and tls_server.connected_base_stations
+                ):
                     print(
                         f"Triggering attach for new sensor {data['eui']} to {len(tls_server.connected_base_stations)} base stations"
                     )
@@ -810,7 +830,10 @@ def attach_sensor(eui):
         if not tls_server:
             return jsonify({"success": False, "message": "TLS server not available"})
 
-        if not hasattr(tls_server, "connected_base_stations") or not tls_server.connected_base_stations:
+        if (
+            not hasattr(tls_server, "connected_base_stations")
+            or not tls_server.connected_base_stations
+        ):
             return jsonify({"success": False, "message": "No base stations connected"})
 
         if hasattr(tls_server, "attach_sensor_sync"):
@@ -915,12 +938,22 @@ def get_sensor_details(eui):
             downlink_path = tls_server.preferred_downlink_paths.get(eui_upper, {})
 
         # Calculate derived metrics
-        avg_snr = stats.get("snr_sum", 0) / stats.get("snr_count", 1) if stats.get("snr_count", 0) > 0 else 0
-        avg_rssi = stats.get("rssi_sum", 0) / stats.get("rssi_count", 1) if stats.get("rssi_count", 0) > 0 else 0
+        avg_snr = (
+            stats.get("snr_sum", 0) / stats.get("snr_count", 1)
+            if stats.get("snr_count", 0) > 0
+            else 0
+        )
+        avg_rssi = (
+            stats.get("rssi_sum", 0) / stats.get("rssi_count", 1)
+            if stats.get("rssi_count", 0) > 0
+            else 0
+        )
         packets_received = stats.get("packets_received", 0)
         packets_lost = stats.get("packets_lost", 0)
         packet_loss_rate = (
-            (packets_lost / (packets_received + packets_lost) * 100) if (packets_received + packets_lost) > 0 else 0
+            (packets_lost / (packets_received + packets_lost) * 100)
+            if (packets_received + packets_lost) > 0
+            else 0
         )
 
         # Calculate send interval (based on last 10 messages if history available)
@@ -964,7 +997,9 @@ def get_sensor_details(eui):
         first_seen = stats.get("first_seen", 0)
         last_seen = stats.get("last_seen", 0)
         observation_time_s = (last_seen - first_seen) if first_seen and last_seen else 1
-        duty_cycle = (total_airtime_ms / 1000 / observation_time_s * 100) if observation_time_s > 0 else 0
+        duty_cycle = (
+            (total_airtime_ms / 1000 / observation_time_s * 100) if observation_time_s > 0 else 0
+        )
 
         response = {
             "success": True,
@@ -982,14 +1017,20 @@ def get_sensor_details(eui):
             "min_rssi": stats.get("min_rssi", 0),
             "max_rssi": stats.get("max_rssi", 0),
             "current_rssi": (
-                stats.get("rssi_sum", 0) / stats.get("rssi_count", 1) if stats.get("rssi_count", 0) > 0 else 0
+                stats.get("rssi_sum", 0) / stats.get("rssi_count", 1)
+                if stats.get("rssi_count", 0) > 0
+                else 0
             ),
             "send_interval": round(send_interval, 1),
             "gateway_count": gateway_count,
             "primary_gateway": topology.get("primary_bs", ""),
-            "receiving_gateways": (list(topology.get("receiving_bases", {}).keys()) if topology else []),
+            "receiving_gateways": (
+                list(topology.get("receiving_bases", {}).keys()) if topology else []
+            ),
             "receiving_bases_details": (
-                _convert_topology_timestamps(topology.get("receiving_bases", {}), last_seen) if topology else {}
+                _convert_topology_timestamps(topology.get("receiving_bases", {}), last_seen)
+                if topology
+                else {}
             ),
             "signal_score": round(signal_score, 1),
             "energy_score": round(energy_score, 1),
@@ -998,7 +1039,9 @@ def get_sensor_details(eui):
             "frequency_mhz": round(stats.get("frequency_mhz", 0), 3),
             "frame_counter": stats.get("frame_counter", 0),
             "last_airtime_ms": round(stats.get("last_airtime_ms", 0), 2),
-            "avg_airtime_ms": (round(total_airtime_ms / packets_received, 2) if packets_received > 0 else 0),
+            "avg_airtime_ms": (
+                round(total_airtime_ms / packets_received, 2) if packets_received > 0 else 0
+            ),
             "total_airtime_ms": round(total_airtime_ms, 2),
             "duty_cycle": round(duty_cycle, 4),
             "snr_history": stats.get("snr_history", [])[-50:],
@@ -1036,7 +1079,10 @@ def attach_all_sensors():
         if not tls_server:
             return jsonify({"success": False, "message": "TLS server not available"})
 
-        if not hasattr(tls_server, "connected_base_stations") or not tls_server.connected_base_stations:
+        if (
+            not hasattr(tls_server, "connected_base_stations")
+            or not tls_server.connected_base_stations
+        ):
             return jsonify({"success": False, "message": "No base stations connected"})
 
         # Get all sensors from config file
@@ -1056,7 +1102,9 @@ def attach_all_sensors():
         if hasattr(tls_server, "attach_all_sensors_sync"):
             attached_count = tls_server.attach_all_sensors_sync()
             bs_count = len(tls_server.connected_base_stations)
-            message = f"Sent attach requests for {attached_count} sensors to {bs_count} base stations"
+            message = (
+                f"Sent attach requests for {attached_count} sensors to {bs_count} base stations"
+            )
             return jsonify({"success": True, "message": message})
         else:
             return jsonify(
@@ -1226,7 +1274,8 @@ def import_sensors():
         # Check if first row is header
         header = rows[0]
         has_header = any(
-            h.lower() in ["eui", "nwkey", "shortaddr", "bidi", "network_key", "short_addr"] for h in header
+            h.lower() in ["eui", "nwkey", "shortaddr", "bidi", "network_key", "short_addr"]
+            for h in header
         )
 
         if has_header:
@@ -1237,11 +1286,19 @@ def import_sensors():
                 0,
             )
             nwkey_idx = next(
-                (i for i, h in enumerate(header_lower) if h in ["nwkey", "network_key", "key", "networkkey"]),
+                (
+                    i
+                    for i, h in enumerate(header_lower)
+                    if h in ["nwkey", "network_key", "key", "networkkey"]
+                ),
                 1,
             )
             shortaddr_idx = next(
-                (i for i, h in enumerate(header_lower) if h in ["shortaddr", "short_addr", "shortaddress", "addr"]),
+                (
+                    i
+                    for i, h in enumerate(header_lower)
+                    if h in ["shortaddr", "short_addr", "shortaddress", "addr"]
+                ),
                 2,
             )
             bidi_idx = next(
@@ -1365,7 +1422,9 @@ def config():
             "DEDUPLICATION_DELAY": getattr(bssci_config, "DEDUPLICATION_DELAY", 2.0),
             "AUTO_DETACH_ENABLED": getattr(bssci_config, "AUTO_DETACH_ENABLED", True),
             "AUTO_DETACH_TIMEOUT": getattr(bssci_config, "AUTO_DETACH_TIMEOUT", 259200),
-            "AUTO_DETACH_WARNING_TIMEOUT": getattr(bssci_config, "AUTO_DETACH_WARNING_TIMEOUT", 129600),
+            "AUTO_DETACH_WARNING_TIMEOUT": getattr(
+                bssci_config, "AUTO_DETACH_WARNING_TIMEOUT", 129600
+            ),
             "AUTO_DETACH_CHECK_INTERVAL": getattr(bssci_config, "AUTO_DETACH_CHECK_INTERVAL", 3600),
             "TIMEZONE": getattr(bssci_config, "TIMEZONE", "Europe/Berlin"),
             "UPDATE_CHANNEL": getattr(bssci_config, "UPDATE_CHANNEL", "stable"),
@@ -1499,7 +1558,9 @@ SECRET_KEY=your-secret-key-here"""
         bssci_config.BASE_TOPIC = data.get("BASE_TOPIC", "bssci/")
         bssci_config.STATUS_INTERVAL = int(data.get("STATUS_INTERVAL", 30))
         bssci_config.DEDUPLICATION_DELAY = float(data.get("DEDUPLICATION_DELAY", 2.0))
-        bssci_config.AUTO_DETACH_ENABLED = str(data.get("AUTO_DETACH_ENABLED", True)).lower() == "true"
+        bssci_config.AUTO_DETACH_ENABLED = (
+            str(data.get("AUTO_DETACH_ENABLED", True)).lower() == "true"
+        )
         bssci_config.TIMEZONE = data.get("TIMEZONE", "Europe/Berlin")
 
         return jsonify(
@@ -1588,10 +1649,12 @@ def get_health_stats():
 
             result["system"]["total_sensors"] = len(tls_server_instance.sensor_config)
             result["system"]["active_sensors"] = tls_server_instance.get_sensor_online_count()
-            result["system"]["total_base_stations"] = len(tls_server_instance.connected_base_stations) + len(
-                tls_server_instance.connecting_base_stations
+            result["system"]["total_base_stations"] = len(
+                tls_server_instance.connected_base_stations
+            ) + len(tls_server_instance.connecting_base_stations)
+            result["system"]["connected_base_stations"] = len(
+                tls_server_instance.connected_base_stations
             )
-            result["system"]["connected_base_stations"] = len(tls_server_instance.connected_base_stations)
 
             # Aggregate packet stats
             total_received = 0
@@ -2015,7 +2078,9 @@ def get_bs_certificates_status():
             status = "missing"
             if cert_exists and cert_expires:
                 try:
-                    exp_dt = datetime.strptime(cert_expires, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=UTC)
+                    exp_dt = datetime.strptime(cert_expires, "%Y-%m-%dT%H:%M:%S").replace(
+                        tzinfo=UTC
+                    )
                     now = datetime.now(UTC)
                     if exp_dt < now:
                         status = "expired"
@@ -2101,7 +2166,7 @@ def add_base_station():
         generate_cert = data.get("generate_cert", True)
         cert_download_url = None
         if generate_cert:
-            success, msg = _generate_bs_certificate(eui)
+            success, _msg = _generate_bs_certificate(eui)
             if success:
                 cert_download_url = f"/api/base-stations/{eui}/certificate/download"
 
@@ -2253,7 +2318,9 @@ def get_logs():
         filtered_logs = [log for log in filtered_logs if log["level"] == level_filter]
 
     if logger_filter != "all":
-        filtered_logs = [log for log in filtered_logs if logger_filter.lower() in log["logger"].lower()]
+        filtered_logs = [
+            log for log in filtered_logs if logger_filter.lower() in log["logger"].lower()
+        ]
 
     # Return the most recent logs (up to limit)
     recent_logs = filtered_logs[-limit:] if len(filtered_logs) > limit else filtered_logs
@@ -2366,7 +2433,6 @@ def get_current_version():
 def get_remote_version(channel="stable"):
     """Get latest remote version - checks releases first, then commits.
     Returns a tuple (version_string, is_prerelease)."""
-    GITHUB_REPO = "plasmonized/containerized-mioty-Service-Center"
 
     try:
         import ssl
@@ -2381,7 +2447,9 @@ def get_remote_version(channel="stable"):
                 best_prerelease = False
 
                 releases_url = f"https://api.github.com/repos/{GITHUB_REPO}/releases?per_page=30"
-                req = urllib.request.Request(releases_url, headers={"User-Agent": "BSSCI-Service-Center"})
+                req = urllib.request.Request(
+                    releases_url, headers={"User-Agent": "BSSCI-Service-Center"}
+                )
                 with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
                     releases = json.loads(response.read().decode())
                     for rel in releases:
@@ -2394,7 +2462,9 @@ def get_remote_version(channel="stable"):
                                 best_prerelease = rel.get("prerelease", False)
 
                 tags_url = f"https://api.github.com/repos/{GITHUB_REPO}/tags?per_page=30"
-                req = urllib.request.Request(tags_url, headers={"User-Agent": "BSSCI-Service-Center"})
+                req = urllib.request.Request(
+                    tags_url, headers={"User-Agent": "BSSCI-Service-Center"}
+                )
                 with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
                     tags = json.loads(response.read().decode())
                     for tag_obj in tags:
@@ -2404,7 +2474,11 @@ def get_remote_version(channel="stable"):
                             if best_version is None or ver > best_version:
                                 best_version = ver
                                 best_tag = tag
-                                best_prerelease = "beta" in tag.lower() or "rc" in tag.lower() or "alpha" in tag.lower()
+                                best_prerelease = (
+                                    "beta" in tag.lower()
+                                    or "rc" in tag.lower()
+                                    or "alpha" in tag.lower()
+                                )
 
                 if best_tag:
                     version = best_tag if best_tag.startswith("v") else f"v{best_tag}"
@@ -2414,7 +2488,9 @@ def get_remote_version(channel="stable"):
         else:
             try:
                 releases_url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
-                req = urllib.request.Request(releases_url, headers={"User-Agent": "BSSCI-Service-Center"})
+                req = urllib.request.Request(
+                    releases_url, headers={"User-Agent": "BSSCI-Service-Center"}
+                )
                 with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
                     data = json.loads(response.read().decode())
                     tag_name = data.get("tag_name", "")
@@ -2462,11 +2538,17 @@ def get_remote_version(channel="stable"):
 
             default_branch = get_default_branch()
             subprocess.run(
-                ["git", "fetch", "--tags", "origin", default_branch], capture_output=True, text=True, timeout=30
+                ["git", "fetch", "--tags", "origin", default_branch],
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
 
             result = subprocess.run(
-                ["git", "rev-parse", "--short", f"origin/{default_branch}"], capture_output=True, text=True, timeout=10
+                ["git", "rev-parse", "--short", f"origin/{default_branch}"],
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             if result.returncode == 0:
                 return (f"commit-{result.stdout.strip()}", False)
@@ -2555,13 +2637,13 @@ def parse_version(version_str):
             suffix = parts[1].lower()
             m = re.search(r"(\d+)", suffix)
             suffix_num = int(m.group(1)) if m else 1
-            return base_parts + (0, suffix_num)
+            return (*base_parts, 0, suffix_num)
         elif has_letter_suffix:
             letter = re.search(r"[a-zA-Z]+", base)
             letter_val = ord(letter.group(0)[0].lower()) - ord("a") + 1 if letter else 1
-            return base_parts + (500, letter_val)
+            return (*base_parts, 500, letter_val)
         else:
-            return base_parts + (1000, 0)
+            return (*base_parts, 1000, 0)
     except:
         return (0,)
 
@@ -2574,10 +2656,12 @@ def check_for_updates(force=False):
     import time as _time
 
     now = _time.time()
-    if not force and _update_cache["result"] and (now - _update_cache["timestamp"]) < _update_cache["ttl"]:
+    if (
+        not force
+        and _update_cache["result"]
+        and (now - _update_cache["timestamp"]) < _update_cache["ttl"]
+    ):
         return _update_cache["result"]
-
-    GITHUB_REPO = "plasmonized/containerized-mioty-Service-Center"
 
     try:
         try:
@@ -2671,7 +2755,9 @@ def create_backup():
     try:
         # Use /tmp for Docker compatibility, fallback to current dir
         backup_base = "/tmp" if os.path.exists("/tmp") and os.access("/tmp", os.W_OK) else "."
-        backup_dir = os.path.join(backup_base, f"bssci_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+        backup_dir = os.path.join(
+            backup_base, f"bssci_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        )
 
         # Create backup directory
         os.makedirs(backup_dir, exist_ok=True)
@@ -2705,7 +2791,6 @@ def get_default_branch():
     The repo's default branch is 'release', not 'main' - hardcoding 'main'
     caused updates to check out a stale local branch and break the install.
     """
-    GITHUB_REPO = "plasmonized/containerized-mioty-Service-Center"
     now = time.time()
     if _default_branch_cache["branch"] and now - _default_branch_cache["time"] < 300:
         return _default_branch_cache["branch"]
@@ -2717,7 +2802,8 @@ def get_default_branch():
 
         ctx = _ssl.create_default_context()
         req = urllib.request.Request(
-            f"https://api.github.com/repos/{GITHUB_REPO}", headers={"User-Agent": "BSSCI-Service-Center"}
+            f"https://api.github.com/repos/{GITHUB_REPO}",
+            headers={"User-Agent": "BSSCI-Service-Center"},
         )
         with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
             data = json.loads(response.read().decode())
@@ -2728,7 +2814,10 @@ def get_default_branch():
     if not branch:
         try:
             result = subprocess.run(
-                ["git", "ls-remote", "--symref", "origin", "HEAD"], capture_output=True, text=True, timeout=15
+                ["git", "ls-remote", "--symref", "origin", "HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=15,
             )
             for line in result.stdout.splitlines():
                 if line.startswith("ref:"):
@@ -2746,7 +2835,6 @@ def get_default_branch():
 
 def perform_update():
     """Perform update by downloading from GitHub"""
-    GITHUB_REPO = "plasmonized/containerized-mioty-Service-Center"
 
     try:
         try:
@@ -2792,21 +2880,33 @@ def perform_update():
                                 "git_output": result.stdout,
                             }
                         else:
-                            logger.error(f"Git checkout {remote} failed: {result.stderr}, trying ZIP fallback")
+                            logger.error(
+                                f"Git checkout {remote} failed: {result.stderr}, trying ZIP fallback"
+                            )
                             raise Exception(f"Git checkout {remote} failed, using ZIP fallback")
                     else:
                         logger.warning(f"Beta remote version not usable: {remote}")
                 else:
                     default_branch = get_default_branch()
-                    subprocess.run(["git", "reset", "--hard", "HEAD"], capture_output=True, timeout=30)
+                    subprocess.run(
+                        ["git", "reset", "--hard", "HEAD"], capture_output=True, timeout=30
+                    )
                     checkout_result = subprocess.run(
-                        ["git", "checkout", default_branch], capture_output=True, text=True, timeout=30
+                        ["git", "checkout", default_branch],
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
                     )
                     if checkout_result.returncode != 0:
-                        logger.error(f"Git checkout {default_branch} failed: {checkout_result.stderr}")
+                        logger.error(
+                            f"Git checkout {default_branch} failed: {checkout_result.stderr}"
+                        )
                         raise Exception(f"Git checkout {default_branch} failed, using ZIP fallback")
                     result = subprocess.run(
-                        ["git", "pull", "origin", default_branch], capture_output=True, text=True, timeout=60
+                        ["git", "pull", "origin", default_branch],
+                        capture_output=True,
+                        text=True,
+                        timeout=60,
                     )
                     if result.returncode == 0:
                         return {
@@ -2831,7 +2931,9 @@ def perform_update():
                 remote, _ = get_remote_version("beta")
                 if remote.startswith("v") and "unavailable" not in remote:
                     zip_url = f"https://github.com/{GITHUB_REPO}/archive/refs/tags/{remote}.zip"
-                    return _download_and_extract_zip(zip_url, ctx, backup_result, f"beta tag {remote}")
+                    return _download_and_extract_zip(
+                        zip_url, ctx, backup_result, f"beta tag {remote}"
+                    )
             except Exception as e:
                 logger.error(f"Beta channel ZIP download failed: {e}")
 
@@ -3017,12 +3119,18 @@ def get_bssci_service_status():
                 "error": "TLS server not available",
             }
 
-        runtime_snapshot = tls_server.get_runtime_snapshot() if hasattr(tls_server, "get_runtime_snapshot") else {}
+        runtime_snapshot = (
+            tls_server.get_runtime_snapshot() if hasattr(tls_server, "get_runtime_snapshot") else {}
+        )
         connected_euis = runtime_snapshot.get("connected_euis", [])
         connecting_euis = runtime_snapshot.get("connecting_euis", [])
 
-        connected_stations = [{"eui": eui, "address": "connected", "status": "connected"} for eui in connected_euis]
-        connecting_stations = [{"eui": eui, "address": "connecting", "status": "connecting"} for eui in connecting_euis]
+        connected_stations = [
+            {"eui": eui, "address": "connected", "status": "connected"} for eui in connected_euis
+        ]
+        connecting_stations = [
+            {"eui": eui, "address": "connecting", "status": "connecting"} for eui in connecting_euis
+        ]
 
         total_configured_bs = len(set(connected_euis + connecting_euis))
         try:
@@ -3065,7 +3173,9 @@ def get_bssci_service_status():
             "total_sensors": total_sensors,
             "registered_sensors": registered_sensors,
             "pending_requests": 0,
-            "sensor_status": runtime_snapshot.get("sensor_status", {"online": 0, "offline": 0, "total_tracked": 0}),
+            "sensor_status": runtime_snapshot.get(
+                "sensor_status", {"online": 0, "offline": 0, "total_tracked": 0}
+            ),
         }
 
         return response
@@ -3337,7 +3447,9 @@ def vm_activate():
 
         loop = asyncio.new_event_loop()
         try:
-            success = loop.run_until_complete(tls_server_instance.vm_activate(mac_type, only_vm_capable=True))
+            success = loop.run_until_complete(
+                tls_server_instance.vm_activate(mac_type, only_vm_capable=True)
+            )
         finally:
             loop.close()
 
@@ -3378,7 +3490,9 @@ def vm_deactivate():
 
         loop = asyncio.new_event_loop()
         try:
-            success = loop.run_until_complete(tls_server_instance.vm_deactivate(mac_type, only_vm_capable=True))
+            success = loop.run_until_complete(
+                tls_server_instance.vm_deactivate(mac_type, only_vm_capable=True)
+            )
         finally:
             loop.close()
 
@@ -3419,7 +3533,9 @@ def vm_query_status():
 
         loop = asyncio.new_event_loop()
         try:
-            success = loop.run_until_complete(tls_server_instance.vm_status(only_vm_capable=not discover))
+            success = loop.run_until_complete(
+                tls_server_instance.vm_status(only_vm_capable=not discover)
+            )
         finally:
             loop.close()
 
@@ -3510,7 +3626,9 @@ def vm_send_data_to_sensor(eui):
         if not data or "data" not in data:
             return jsonify({"success": False, "message": "Missing data field"}), 400
 
-        payload = bytes.fromhex(data["data"]) if isinstance(data["data"], str) else bytes(data["data"])
+        payload = (
+            bytes.fromhex(data["data"]) if isinstance(data["data"], str) else bytes(data["data"])
+        )
         port = data.get("port", 1)
 
         import asyncio
@@ -3563,7 +3681,9 @@ def get_certificate_status():
                             cert_data = f.read()
                             cert = x509.load_pem_x509_certificate(cert_data, default_backend())
                             expiry = cert.not_valid_after
-                            status["certificates"][f"{cert_type}_expires"] = expiry.strftime("%Y-%m-%d %H:%M:%S")
+                            status["certificates"][f"{cert_type}_expires"] = expiry.strftime(
+                                "%Y-%m-%d %H:%M:%S"
+                            )
                 except:
                     pass  # If we can't read the certificate, just mark as present
             else:

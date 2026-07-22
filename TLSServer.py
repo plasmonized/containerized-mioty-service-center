@@ -5,7 +5,7 @@ import ssl
 import threading
 import warnings
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, ClassVar
 
 import bssci_config
 import messages
@@ -49,7 +49,11 @@ class TLSServer:
         # message_key -> {message, timestamp, snr, bs_eui}
         self.deduplication_buffer: dict[str, dict[str, Any]] = {}
         self.deduplication_delay = bssci_config.DEDUPLICATION_DELAY
-        self.deduplication_stats = {"total_messages": 0, "duplicate_messages": 0, "published_messages": 0}
+        self.deduplication_stats = {
+            "total_messages": 0,
+            "duplicate_messages": 0,
+            "published_messages": 0,
+        }
 
         # Traffic metrics for visualization
         self.traffic_metrics = {
@@ -128,18 +132,21 @@ class TLSServer:
         self.vm_periodic_status_enabled = True  # Enable by default
         self.vm_periodic_status_interval = 60  # Query every 60 seconds
 
+        # Keep references to background tasks so they are not garbage collected
+        self._background_tasks: set[asyncio.Task] = set()
+
         # Start the deduplication task
-        asyncio.create_task(self.process_deduplication_buffer())
+        self._spawn_background_task(self.process_deduplication_buffer())
 
         # Start periodic VM status query
-        asyncio.create_task(self.periodic_vm_status_query())
+        self._spawn_background_task(self.periodic_vm_status_query())
 
         # Start auto-detach monitoring if enabled
         if getattr(bssci_config, "AUTO_DETACH_ENABLED", True):
-            asyncio.create_task(self.auto_detach_monitor())
+            self._spawn_background_task(self.auto_detach_monitor())
 
         # Start heartbeat monitor for online/offline tracking
-        asyncio.create_task(self.heartbeat_monitor())
+        self._spawn_background_task(self.heartbeat_monitor())
 
         try:
             with open(sensor_config_file) as f:
@@ -163,6 +170,13 @@ class TLSServer:
     def _get_utc_time(self) -> str:
         """Return current time in UTC for internal correlation."""
         return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
+    def _spawn_background_task(self, coro) -> asyncio.Task:
+        """Create a background task and keep a reference so it is not GC'd."""
+        task = asyncio.create_task(coro)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
 
     async def start_server(self) -> None:
         logger.info("🔐 Setting up SSL/TLS context for BSSCI server...")
@@ -193,22 +207,27 @@ class TLSServer:
                 logger.warning("   TLS compatibility mode: ENABLED (SECLEVEL=1, min TLSv1.2)")
 
             # Log SSL context details
-            logger.info(f"   TLS Protocol versions: {ssl_ctx.minimum_version.name} - {ssl_ctx.maximum_version.name}")
+            logger.info(
+                f"   TLS Protocol versions: {ssl_ctx.minimum_version.name} - {ssl_ctx.maximum_version.name}"
+            )
             logger.info("✓ SSL context configured successfully")
 
         except FileNotFoundError as e:
             logger.error(
-                f"❌ SSL certificate file not found: {e}", extra={"error_code": ERROR_CODES["TLS_CERT_FILE_MISSING"]}
+                f"❌ SSL certificate file not found: {e}",
+                extra={"error_code": ERROR_CODES["TLS_CERT_FILE_MISSING"]},
             )
             raise
         except ssl.SSLError as e:
             logger.error(
-                f"❌ SSL configuration error: {e}", extra={"error_code": ERROR_CODES["TLS_CONFIGURATION_ERROR"]}
+                f"❌ SSL configuration error: {e}",
+                extra={"error_code": ERROR_CODES["TLS_CONFIGURATION_ERROR"]},
             )
             raise
         except Exception as e:
             logger.error(
-                f"❌ Unexpected error setting up SSL: {e}", extra={"error_code": ERROR_CODES["TLS_SERVER_START_FAILED"]}
+                f"❌ Unexpected error setting up SSL: {e}",
+                extra={"error_code": ERROR_CODES["TLS_SERVER_START_FAILED"]},
             )
             raise
 
@@ -234,7 +253,11 @@ class TLSServer:
                         peer = transport.get_extra_info("peername")
                 except Exception:
                     pass
-                if isinstance(exc, ssl.SSLError) or "ssl" in msg.lower() or "handshake" in msg.lower():
+                if (
+                    isinstance(exc, ssl.SSLError)
+                    or "ssl" in msg.lower()
+                    or "handshake" in msg.lower()
+                ):
                     logger.error("🔒 TLS HANDSHAKE FAILURE detected!")
                     logger.error(f"   Peer (base station): {peer}")
                     logger.error(f"   Message: {msg}")
@@ -242,15 +265,24 @@ class TLSServer:
                     if exc is not None:
                         err_str = str(exc)
                         if "certificate" in err_str.lower():
-                            logger.error("   💡 Hint: Client certificate problem - check cert on base station")
+                            logger.error(
+                                "   💡 Hint: Client certificate problem - check cert on base station"
+                            )
                             logger.error("      or test with TLS_REQUIRE_CLIENT_CERT=false")
-                        elif "handshake" in err_str.lower() or "cipher" in err_str.lower() or "protocol" in err_str.lower():
-                            logger.error("   💡 Hint: TLS version/cipher mismatch - test with TLS_COMPAT_MODE=true")
+                        elif (
+                            "handshake" in err_str.lower()
+                            or "cipher" in err_str.lower()
+                            or "protocol" in err_str.lower()
+                        ):
+                            logger.error(
+                                "   💡 Hint: TLS version/cipher mismatch - test with TLS_COMPAT_MODE=true"
+                            )
                 else:
                     if prev_exception_handler is not None:
                         prev_exception_handler(loop_, context)
                     else:
                         loop_.default_exception_handler(context)
+
             loop.set_exception_handler(_tls_exception_handler)
             loop._bssci_tls_handler = True  # type: ignore[attr-defined]
             logger.info("🔍 TLS handshake failure logging enabled")
@@ -266,14 +298,18 @@ class TLSServer:
             except Exception:
                 pass
 
-        async def _tls_connection_handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        async def _tls_connection_handler(
+            reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+        ) -> None:
             peer = writer.get_extra_info("peername")
             logger.info(f"🔌 Incoming TCP connection from {peer} - starting TLS handshake...")
             try:
                 await writer.start_tls(ssl_ctx, ssl_handshake_timeout=15.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.error(f"🔒 TLS HANDSHAKE TIMEOUT from {peer} (no handshake within 15s)")
-                logger.error("   💡 Hint: Client connected but never started TLS - wrong port/protocol on base station?")
+                logger.error(
+                    "   💡 Hint: Client connected but never started TLS - wrong port/protocol on base station?"
+                )
                 await _close_writer(writer)
                 return
             except ssl.SSLError as e:
@@ -281,16 +317,28 @@ class TLSServer:
                 logger.error(f"🔒 TLS HANDSHAKE FAILED from {peer}")
                 logger.error(f"   Error: {err_str}")
                 if "certificate" in err_str.lower():
-                    logger.error("   💡 Hint: Client certificate problem - check the cert installed on the base station")
+                    logger.error(
+                        "   💡 Hint: Client certificate problem - check the cert installed on the base station"
+                    )
                     logger.error("      or test with TLS_REQUIRE_CLIENT_CERT=false in .env")
-                elif any(k in err_str.lower() for k in ("handshake", "cipher", "protocol", "version")):
-                    logger.error("   💡 Hint: TLS version/cipher mismatch - test with TLS_COMPAT_MODE=true in .env")
+                elif any(
+                    k in err_str.lower() for k in ("handshake", "cipher", "protocol", "version")
+                ):
+                    logger.error(
+                        "   💡 Hint: TLS version/cipher mismatch - test with TLS_COMPAT_MODE=true in .env"
+                    )
                 await _close_writer(writer)
                 return
             except (ConnectionResetError, BrokenPipeError, EOFError) as e:
-                logger.error(f"🔒 TLS HANDSHAKE ABORTED by {peer}: connection closed during handshake ({e!r})")
-                logger.error("   💡 Hint: Base station rejected our server certificate OR could not provide a client certificate")
-                logger.error("      Check: CA cert on base station, client cert on base station, TLS version support")
+                logger.error(
+                    f"🔒 TLS HANDSHAKE ABORTED by {peer}: connection closed during handshake ({e!r})"
+                )
+                logger.error(
+                    "   💡 Hint: Base station rejected our server certificate OR could not provide a client certificate"
+                )
+                logger.error(
+                    "      Check: CA cert on base station, client cert on base station, TLS version support"
+                )
                 await _close_writer(writer)
                 return
             except Exception as e:
@@ -308,13 +356,15 @@ class TLSServer:
         )
 
         logger.info("📨 Starting MQTT inbound processor task...")
-        asyncio.create_task(self.process_mqtt_messages())
+        self._spawn_background_task(self.process_mqtt_messages())
 
         logger.info("✓ BSSCI TLS Server is ready and listening for base station connections")
         async with server:
             await server.serve_forever()
 
-    async def send_attach_request(self, writer: asyncio.streams.StreamWriter, sensor: dict[str, Any]) -> None:
+    async def send_attach_request(
+        self, writer: asyncio.streams.StreamWriter, sensor: dict[str, Any]
+    ) -> None:
         bs_eui = self.connected_base_stations.get(writer, "unknown")
         correlation_id = self.connection_correlation_ids.get(writer)
         try:
@@ -338,7 +388,9 @@ class TLSServer:
                     int(sensor["eui"], 16)  # Test hex validity
                     logger.info(f"   ✓ EUI format valid: {sensor['eui']}")
                 except ValueError:
-                    validation_errors.append(f"EUI contains invalid hex characters: {sensor['eui']}")
+                    validation_errors.append(
+                        f"EUI contains invalid hex characters: {sensor['eui']}"
+                    )
 
             # Network Key validation and normalization
             original_nw_key = sensor["nwKey"]
@@ -346,26 +398,38 @@ class TLSServer:
 
             if len(original_nw_key) != 32:
                 if len(original_nw_key) > 32:
-                    validation_warnings.append(f"Network key truncated from {len(original_nw_key)} to 32 characters")
-                    logger.warning(f"   ⚠️  Network key too long, truncating: {original_nw_key} -> {nw_key}")
+                    validation_warnings.append(
+                        f"Network key truncated from {len(original_nw_key)} to 32 characters"
+                    )
+                    logger.warning(
+                        f"   ⚠️  Network key too long, truncating: {original_nw_key} -> {nw_key}"
+                    )
                 else:
-                    validation_errors.append(f"Network key length {len(original_nw_key)} < 32 characters required")
+                    validation_errors.append(
+                        f"Network key length {len(original_nw_key)} < 32 characters required"
+                    )
             else:
                 try:
                     int(nw_key, 16)  # Test hex validity
                     logger.info(f"   ✓ Network key format valid: {nw_key[:8]}...{nw_key[-8:]}")
                 except ValueError:
-                    validation_errors.append(f"Network key contains invalid hex characters: {nw_key}")
+                    validation_errors.append(
+                        f"Network key contains invalid hex characters: {nw_key}"
+                    )
 
             # Short Address validation
             if len(sensor["shortAddr"]) != 4:
-                validation_errors.append(f"Short address length {len(sensor['shortAddr'])} != 4 characters")
+                validation_errors.append(
+                    f"Short address length {len(sensor['shortAddr'])} != 4 characters"
+                )
             else:
                 try:
                     int(sensor["shortAddr"], 16)  # Test hex validity
                     logger.info(f"   ✓ Short address format valid: {sensor['shortAddr']}")
                 except ValueError:
-                    validation_errors.append(f"Short address contains invalid hex characters: {sensor['shortAddr']}")
+                    validation_errors.append(
+                        f"Short address contains invalid hex characters: {sensor['shortAddr']}"
+                    )
 
             # Bidirectional flag validation
             bidi_value = sensor.get("bidi", False)
@@ -490,9 +554,13 @@ class TLSServer:
                 eui_upper = sensor["eui"].upper()
                 if eui_upper in self.registered_sensors:
                     reg_info = self.registered_sensors[eui_upper]
-                    if reg_info.get("status") == "registered" and bs_eui in reg_info.get("base_stations", []):
+                    if reg_info.get("status") == "registered" and bs_eui in reg_info.get(
+                        "base_stations", []
+                    ):
                         skipped_attachments += 1
-                        logger.debug(f"   ⏭️  Sensor {sensor['eui']} already attached to {bs_eui} - skipping")
+                        logger.debug(
+                            f"   ⏭️  Sensor {sensor['eui']} already attached to {bs_eui} - skipping"
+                        )
                         continue
 
                 logger.info(f"   Processing sensor {i}/{len(self.sensor_config)}: {sensor['eui']}")
@@ -502,8 +570,12 @@ class TLSServer:
                 await asyncio.sleep(0.1)
 
             except (ConnectionResetError, ConnectionError, BrokenPipeError, AttributeError) as e:
-                logger.warning(f"   🔌 Connection lost to {bs_eui} during batch attach - aborting remaining sensors")
-                logger.warning(f"     Last sensor attempted: {sensor.get('eui', 'unknown')}, error: {e}")
+                logger.warning(
+                    f"   🔌 Connection lost to {bs_eui} during batch attach - aborting remaining sensors"
+                )
+                logger.warning(
+                    f"     Last sensor attempted: {sensor.get('eui', 'unknown')}, error: {e}"
+                )
                 failed_attachments += len(self.sensor_config) - i
                 break
             except Exception as e:
@@ -518,9 +590,13 @@ class TLSServer:
         logger.info(f"   Total processed: {len(self.sensor_config)}")
 
         if failed_attachments > 0:
-            logger.warning(f"   ⚠️  {failed_attachments} sensors failed to attach - check individual sensor logs above")
+            logger.warning(
+                f"   ⚠️  {failed_attachments} sensors failed to attach - check individual sensor logs above"
+            )
 
-    async def send_detach_request(self, writer: asyncio.streams.StreamWriter, sensor_eui: str) -> bool:
+    async def send_detach_request(
+        self, writer: asyncio.streams.StreamWriter, sensor_eui: str
+    ) -> bool:
         """Send detach request for a specific sensor"""
         bs_eui = self.connected_base_stations.get(writer, "unknown")
         logger.info(f"🔌 DETACHING SENSOR from base station {bs_eui}")
@@ -562,7 +638,9 @@ class TLSServer:
                     # If no base stations left, mark as not registered
                     if not self.registered_sensors[eui_key]["base_stations"]:
                         self.registered_sensors[eui_key]["registered"] = False
-                        logger.info(f"   ✅ Sensor {sensor_eui} fully detached from all base stations")
+                        logger.info(
+                            f"   ✅ Sensor {sensor_eui} fully detached from all base stations"
+                        )
                     else:
                         logger.info(
                             f"   ✅ Sensor {sensor_eui} detached from {bs_eui}, still connected to {len(self.registered_sensors[eui_key]['base_stations'])} other base stations"
@@ -622,7 +700,8 @@ class TLSServer:
         registered_euis = [
             eui
             for eui in self.registered_sensors.keys()
-            if not eui.endswith("_failure") and self.registered_sensors[eui].get("registered", False)
+            if not eui.endswith("_failure")
+            and self.registered_sensors[eui].get("registered", False)
         ]
 
         logger.info(f"   Total registered sensors to detach: {len(registered_euis)}")
@@ -651,7 +730,9 @@ class TLSServer:
         self.sensor_config = []
 
         # Clear registered sensors
-        old_registered = len([k for k in self.registered_sensors.keys() if not k.endswith("_failure")])
+        old_registered = len(
+            [k for k in self.registered_sensors.keys() if not k.endswith("_failure")]
+        )
         self.registered_sensors.clear()
 
         # Clear pending requests
@@ -695,7 +776,8 @@ class TLSServer:
             registered_euis = [
                 eui
                 for eui in self.registered_sensors.keys()
-                if not eui.endswith("_failure") and self.registered_sensors[eui].get("registered", False)
+                if not eui.endswith("_failure")
+                and self.registered_sensors[eui].get("registered", False)
             ]
 
             logger.info(f"   Total registered sensors to detach: {len(registered_euis)}")
@@ -710,7 +792,9 @@ class TLSServer:
                     logger.error(f"   ❌ Failed to sync detach sensor {sensor_eui}: {e}")
 
             logger.info("✅ SYNC BULK DETACH completed")
-            logger.info(f"   Successfully detached: {detached_count}/{len(registered_euis)} sensors")
+            logger.info(
+                f"   Successfully detached: {detached_count}/{len(registered_euis)} sensors"
+            )
 
             return detached_count
 
@@ -756,7 +840,9 @@ class TLSServer:
                         try:
                             await self.send_attach_request(writer, sensor_config)
                             success_count += 1
-                            logger.info(f"   ✅ Attach request sent to {self.connected_base_stations[writer]}")
+                            logger.info(
+                                f"   ✅ Attach request sent to {self.connected_base_stations[writer]}"
+                            )
                         except Exception as e:
                             logger.error(
                                 f"   ❌ Failed to send attach to {self.connected_base_stations.get(writer, 'unknown')}: {e}"
@@ -767,7 +853,9 @@ class TLSServer:
                 loop.close()
 
             logger.info(f"✅ SYNC SENSOR ATTACH completed for {sensor_eui}")
-            logger.info(f"   Successful attachments: {success_count}/{len(self.connected_base_stations)} base stations")
+            logger.info(
+                f"   Successful attachments: {success_count}/{len(self.connected_base_stations)} base stations"
+            )
 
             return success_count
 
@@ -823,7 +911,9 @@ class TLSServer:
 
             expected_total = len(self.sensor_config) * len(self.connected_base_stations)
             logger.info("✅ SYNC BULK ATTACH completed")
-            logger.info(f"   Successful attachments: {total_attachments}/{expected_total} total requests")
+            logger.info(
+                f"   Successful attachments: {total_attachments}/{expected_total} total requests"
+            )
             logger.info(f"   Sensors processed: {len(self.sensor_config)}")
             logger.info(f"   Base stations: {len(self.connected_base_stations)}")
 
@@ -856,7 +946,11 @@ class TLSServer:
                             op_id = self._get_next_op_id(writer)
                             status_message = messages.build_status_request(op_id)
                             msg_pack = encode_message(status_message)
-                            full_message = IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack
+                            full_message = (
+                                IDENTIFIER
+                                + len(msg_pack).to_bytes(4, byteorder="little")
+                                + msg_pack
+                            )
 
                             writer.write(full_message)
                             await writer.drain()
@@ -898,7 +992,9 @@ class TLSServer:
             self._status_task_running = False
             raise
 
-    async def handle_client(self, reader: asyncio.streams.StreamReader, writer: asyncio.streams.StreamWriter) -> None:
+    async def handle_client(
+        self, reader: asyncio.streams.StreamReader, writer: asyncio.streams.StreamWriter
+    ) -> None:
         addr = writer.get_extra_info("peername")
         ssl_obj = writer.get_extra_info("ssl_object")
 
@@ -917,7 +1013,9 @@ class TLSServer:
                                 break
                     logger.info(f"   ✓ SSL handshake successful - Client certificate CN: {cn}")
                 else:
-                    logger.warning("   ⚠️  SSL handshake completed but no client certificate provided")
+                    logger.warning(
+                        "   ⚠️  SSL handshake completed but no client certificate provided"
+                    )
             else:
                 logger.error("   ❌ No SSL object found - connection may not be encrypted")
 
@@ -956,7 +1054,9 @@ class TLSServer:
                         # Send a NEW SC session UUID (never echo snBsUuid back -
                         # the BS would treat that as a session resume and expect
                         # opIds to continue from the previous session)
-                        msg = encode_message(messages.build_connection_response(message.get("opId", "")))
+                        msg = encode_message(
+                            messages.build_connection_response(message.get("opId", ""))
+                        )
                         writer.write(IDENTIFIER + len(msg).to_bytes(4, byteorder="little") + msg)
                         await writer.drain()
                         bs_eui = int(message["bsEui"]).to_bytes(8, byteorder="big").hex().upper()
@@ -993,11 +1093,17 @@ class TLSServer:
                             # Deduplicate: Remove any existing connection with the same EUI
                             with self.state_lock:
                                 old_writers = [
-                                    w for w, eui in list(self.connected_base_stations.items()) if eui == bs_eui
+                                    w
+                                    for w, eui in list(self.connected_base_stations.items())
+                                    if eui == bs_eui
                                 ]
                             for old_writer in old_writers:
-                                logger.warning(f"🔄 REPLACING duplicate connection for base station {bs_eui}")
-                                logger.warning(f"   Closing old connection, keeping new connection from {addr}")
+                                logger.warning(
+                                    f"🔄 REPLACING duplicate connection for base station {bs_eui}"
+                                )
+                                logger.warning(
+                                    f"   Closing old connection, keeping new connection from {addr}"
+                                )
                                 try:
                                     old_writer.close()
                                 except Exception as e:
@@ -1016,7 +1122,9 @@ class TLSServer:
                                 if event_correlation_id is None:
                                     event_correlation_id = generate_correlation_id()
                                     self.connection_correlation_ids[writer] = event_correlation_id
-                            connection_time = asyncio.get_event_loop().time() - connection_start_time
+                            connection_time = (
+                                asyncio.get_event_loop().time() - connection_start_time
+                            )
                             self.connection_timeline.add_event(
                                 "connection_established",
                                 correlation_id=event_correlation_id,
@@ -1031,17 +1139,25 @@ class TLSServer:
                             logger.info("   =====================================")
                             logger.info(f"   Base Station EUI: {bs_eui}")
                             logger.info(f"   Connection established at: {self._get_utc_time()}")
-                            logger.info(f"   Connection setup duration: {connection_time:.2f} seconds")
+                            logger.info(
+                                f"   Connection setup duration: {connection_time:.2f} seconds"
+                            )
                             logger.info(f"   Client address: {addr}")
-                            logger.info(f"   Total connected base stations: {len(self.connected_base_stations)}")
-                            logger.info(f"   All connected stations: {list(self.connected_base_stations.values())}")
+                            logger.info(
+                                f"   Total connected base stations: {len(self.connected_base_stations)}"
+                            )
+                            logger.info(
+                                f"   All connected stations: {list(self.connected_base_stations.values())}"
+                            )
 
                             logger.info("🔗 INITIATING SENSOR ATTACHMENT PROCESS")
                             logger.info(f"   Total sensors to attach: {len(self.sensor_config)}")
                             if self.sensor_config:
                                 logger.info("   Sensors to be attached:")
                                 for i, sensor in enumerate(self.sensor_config, 1):
-                                    logger.info(f"     {i:2d}. EUI: {sensor['eui']}, Short Addr: {sensor['shortAddr']}")
+                                    logger.info(
+                                        f"     {i:2d}. EUI: {sensor['eui']}, Short Addr: {sensor['shortAddr']}"
+                                    )
                             else:
                                 logger.warning("   ⚠️  No sensors configured for attachment")
                             logger.info("   =====================================")
@@ -1050,12 +1166,19 @@ class TLSServer:
                             await self.attach_file(writer)
 
                             # Always ensure status request task is running
-                            if not hasattr(self, "_status_task_running") or not self._status_task_running:
-                                logger.info("📊 Starting periodic status request task for all base stations")
+                            if (
+                                not hasattr(self, "_status_task_running")
+                                or not self._status_task_running
+                            ):
+                                logger.info(
+                                    "📊 Starting periodic status request task for all base stations"
+                                )
                                 self._status_task_running = True
-                                asyncio.create_task(self.send_status_requests())
+                                self._spawn_background_task(self.send_status_requests())
                             else:
-                                logger.info("📊 Status request task already running, will include this base station")
+                                logger.info(
+                                    "📊 Status request task already running, will include this base station"
+                                )
                         else:
                             logger.warning(
                                 "⚠️  Received connection complete from unknown or already connected base station"
@@ -1063,8 +1186,12 @@ class TLSServer:
 
                     elif msg_type == "ping":
                         logger.debug(f"Ping request received from {addr}")
-                        msg_pack = encode_message(messages.build_ping_response(message.get("opId", "")))
-                        writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
+                        msg_pack = encode_message(
+                            messages.build_ping_response(message.get("opId", ""))
+                        )
+                        writer.write(
+                            IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack
+                        )
                         await writer.drain()
 
                     elif msg_type == "pingCmp":
@@ -1097,8 +1224,12 @@ class TLSServer:
 
                         # Parse timestamp
                         try:
-                            bs_time = datetime.fromtimestamp(message["time"] / 1_000_000_000, tz=UTC)
-                            logger.info(f"   Base Station Time: {bs_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+                            bs_time = datetime.fromtimestamp(
+                                message["time"] / 1_000_000_000, tz=UTC
+                            )
+                            logger.info(
+                                f"   Base Station Time: {bs_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}"
+                            )
                         except:
                             logger.info(f"   Base Station Time: {message['time']} (raw)")
 
@@ -1145,8 +1276,12 @@ class TLSServer:
                             logger.info(f"   Queue size after add: {self.mqtt_out_queue.qsize()}")
                         except Exception as mqtt_err:
                             logger.error(f"❌ Failed to queue MQTT message: {mqtt_err}")
-                        msg_pack = encode_message(messages.build_status_complete(message.get("opId", "")))
-                        writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
+                        msg_pack = encode_message(
+                            messages.build_status_complete(message.get("opId", ""))
+                        )
+                        writer.write(
+                            IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack
+                        )
                         await writer.drain()
                         logger.debug(f"📤 STATUS COMPLETE sent for opID {op_id}")
 
@@ -1160,7 +1295,9 @@ class TLSServer:
                         logger.info("   =====================================")
                         logger.info(f"   Operation ID: {op_id}")
                         logger.info(f"   Raw message: {message}")
-                        logger.info("   Note: Per BSSCI spec, attach response contains only command and opId")
+                        logger.info(
+                            "   Note: Per BSSCI spec, attach response contains only command and opId"
+                        )
 
                         # Try to correlate with pending attach request
                         pending_request = self.pending_attach_requests.get(op_id)
@@ -1174,7 +1311,9 @@ class TLSServer:
                             logger.info("✅ ATTACH RESPONSE CORRELATED with pending request")
                             logger.info(f"   Sensor EUI: {sensor_eui}")
                             logger.info(f"   Base station: {bs_eui}")
-                            logger.info(f"   Processing duration: {processing_duration:.3f} seconds")
+                            logger.info(
+                                f"   Processing duration: {processing_duration:.3f} seconds"
+                            )
                             logger.info("   Sensor Configuration:")
                             logger.info(f"     EUI: {sensor_config['eui']}")
                             logger.info(
@@ -1209,7 +1348,9 @@ class TLSServer:
                                 self.registered_sensors[eui_key]["timestamp"] = response_time
 
                             logger.info("✅ SENSOR REGISTRATION SUCCESSFUL")
-                            logger.info(f"   Sensor {sensor_eui} is now REGISTERED to base station {bs_eui}")
+                            logger.info(
+                                f"   Sensor {sensor_eui} is now REGISTERED to base station {bs_eui}"
+                            )
                             logger.info(f"   Registration completed at: {self._get_utc_time()}")
                             logger.info(
                                 f"   Total base stations for this sensor: {len(self.registered_sensors[eui_key]['base_stations'])}"
@@ -1245,7 +1386,9 @@ class TLSServer:
 
                             # Try to find a matching pending request by checking recent requests
                             # This is a fallback for when op_id correlation fails
-                            recent_requests = [(k, v) for k, v in self.pending_attach_requests.items()]
+                            recent_requests = [
+                                (k, v) for k, v in self.pending_attach_requests.items()
+                            ]
                             if recent_requests:
                                 # Use the most recent request as fallback
                                 fallback_op_id, fallback_request = recent_requests[-1]
@@ -1277,7 +1420,9 @@ class TLSServer:
                                             "fallback_used": True,
                                         }
                                     )
-                                    self.registered_sensors[eui_key]["timestamp"] = asyncio.get_event_loop().time()
+                                    self.registered_sensors[eui_key]["timestamp"] = (
+                                        asyncio.get_event_loop().time()
+                                    )
 
                                 logger.warning(
                                     f"   ✅ FALLBACK REGISTRATION: Sensor {sensor_eui} registered to {bs_eui}"
@@ -1289,8 +1434,12 @@ class TLSServer:
                         logger.info(f"   Response received at: {self._get_utc_time()}")
                         logger.info("   =====================================")
 
-                        msg_pack = encode_message(messages.build_attach_complete(message.get("opId", "")))
-                        writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
+                        msg_pack = encode_message(
+                            messages.build_attach_complete(message.get("opId", ""))
+                        )
+                        writer.write(
+                            IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack
+                        )
                         await writer.drain()
                         logger.debug(f"📤 BSSCI ATTACH COMPLETE sent for opID {op_id}")
 
@@ -1303,11 +1452,17 @@ class TLSServer:
                         logger.info("   =====================================")
                         logger.info(f"   Operation ID: {op_id}")
                         logger.info(f"   Raw message: {message}")
-                        logger.info("   Note: Per BSSCI spec, detach response contains only command and opId")
+                        logger.info(
+                            "   Note: Per BSSCI spec, detach response contains only command and opId"
+                        )
 
                         # Send detach complete response
-                        msg_pack = encode_message(messages.build_detach_complete(message.get("opId", "")))
-                        writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
+                        msg_pack = encode_message(
+                            messages.build_detach_complete(message.get("opId", ""))
+                        )
+                        writer.write(
+                            IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack
+                        )
                         await writer.drain()
                         logger.info(f"📤 BSSCI DETACH COMPLETE sent for opID {op_id}")
                         logger.info("✅ Detach operation completed successfully")
@@ -1338,7 +1493,10 @@ class TLSServer:
                         current_time = asyncio.get_event_loop().time()
 
                         if eui_upper not in self.sensor_topology:
-                            self.sensor_topology[eui_upper] = {"primary_bs": bs_eui, "receiving_bases": {}}
+                            self.sensor_topology[eui_upper] = {
+                                "primary_bs": bs_eui,
+                                "receiving_bases": {},
+                            }
 
                         # Update or add this base station as a receiver
                         if bs_eui not in self.sensor_topology[eui_upper]["receiving_bases"]:
@@ -1366,7 +1524,9 @@ class TLSServer:
                                     f"   Previous SNR: {existing_message['snr']:.2f} dB (via {existing_message['bs_eui']})"
                                 )
                                 logger.debug(f"   New SNR: {snr:.2f} dB (via {bs_eui})")
-                                logger.debug(f"   Updating preferred path: {existing_message['bs_eui']} → {bs_eui}")
+                                logger.debug(
+                                    f"   Updating preferred path: {existing_message['bs_eui']} → {bs_eui}"
+                                )
 
                                 # Update preferred downlink path in sensor config
                                 self.update_preferred_downlink_path(eui, bs_eui, snr)
@@ -1389,8 +1549,14 @@ class TLSServer:
                                 self.traffic_metrics["messages_dropped"] += 1
 
                                 # Send acknowledgment but don't queue for MQTT
-                                msg_pack = encode_message(messages.build_ul_response(message.get("opId", "")))
-                                writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
+                                msg_pack = encode_message(
+                                    messages.build_ul_response(message.get("opId", ""))
+                                )
+                                writer.write(
+                                    IDENTIFIER
+                                    + len(msg_pack).to_bytes(4, byteorder="little")
+                                    + msg_pack
+                                )
                                 await writer.drain()
                                 continue  # Skip processing this duplicate
 
@@ -1434,10 +1600,16 @@ class TLSServer:
                                     "rssi_count": 1,
                                     "first_seen": current_timestamp,
                                     "last_seen": current_timestamp,
-                                    "last_airtime_ms": airtime_ms / 1000 if airtime_ms > 1000 else airtime_ms,
-                                    "total_airtime_ms": airtime_ms / 1000 if airtime_ms > 1000 else airtime_ms,
+                                    "last_airtime_ms": airtime_ms / 1000
+                                    if airtime_ms > 1000
+                                    else airtime_ms,
+                                    "total_airtime_ms": airtime_ms / 1000
+                                    if airtime_ms > 1000
+                                    else airtime_ms,
                                     "spreading_factor": spreading_factor,
-                                    "frequency_mhz": frequency_hz / 1000000 if frequency_hz > 1000000 else frequency_hz,
+                                    "frequency_mhz": frequency_hz / 1000000
+                                    if frequency_hz > 1000000
+                                    else frequency_hz,
                                     "data_rate": data_rate,
                                     "frame_counter": packet_cnt,
                                     "min_snr": snr,
@@ -1471,10 +1643,14 @@ class TLSServer:
                                 stats["last_seen"] = current_timestamp
                                 airtime_val = airtime_ms / 1000 if airtime_ms > 1000 else airtime_ms
                                 stats["last_airtime_ms"] = airtime_val
-                                stats["total_airtime_ms"] = stats.get("total_airtime_ms", 0) + airtime_val
+                                stats["total_airtime_ms"] = (
+                                    stats.get("total_airtime_ms", 0) + airtime_val
+                                )
                                 stats["spreading_factor"] = spreading_factor
                                 stats["frequency_mhz"] = (
-                                    frequency_hz / 1000000 if frequency_hz > 1000000 else frequency_hz
+                                    frequency_hz / 1000000
+                                    if frequency_hz > 1000000
+                                    else frequency_hz
                                 )
                                 stats["data_rate"] = data_rate
                                 stats["frame_counter"] = packet_cnt
@@ -1522,7 +1698,9 @@ class TLSServer:
                         logger.debug(f"   Packet Counter: {packet_cnt}")
                         logger.debug("   Payload:")
                         logger.debug(f"     Length: {len(message['userData'])} bytes")
-                        logger.debug(f"     Data (hex): {' '.join(f'{b:02x}' for b in message['userData'])}")
+                        logger.debug(
+                            f"     Data (hex): {' '.join(f'{b:02x}' for b in message['userData'])}"
+                        )
                         logger.debug(f"     Data (dec): {message['userData']}")
 
                         # Check if this sensor is registered
@@ -1534,7 +1712,9 @@ class TLSServer:
                                 f"     Registered to {len(reg_info.get('base_stations', []))} base station(s): {reg_info.get('base_stations', [])}"
                             )
                             logger.debug(f"     Data received via: {bs_eui}")
-                            logger.debug(f"     Registration time: {reg_info.get('registration_time', 'unknown')}")
+                            logger.debug(
+                                f"     Registration time: {reg_info.get('registration_time', 'unknown')}"
+                            )
                         else:
                             logger.debug("   Registration Status: ⚠️  NOT REGISTERED")
                             logger.debug("     This sensor may not be configured in endpoints.json")
@@ -1547,8 +1727,12 @@ class TLSServer:
                         logger.debug(f"   Buffer size: {len(self.deduplication_buffer)} messages")
                         logger.debug("   =================================")
 
-                        msg_pack = encode_message(messages.build_ul_response(message.get("opId", "")))
-                        writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
+                        msg_pack = encode_message(
+                            messages.build_ul_response(message.get("opId", ""))
+                        )
+                        writer.write(
+                            IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack
+                        )
                         await writer.drain()
                         # Update last seen timestamp for auto-detach functionality
                         self.sensor_last_seen[eui.upper()] = datetime.now(UTC).timestamp()
@@ -1594,15 +1778,21 @@ class TLSServer:
                         mac_type = pending.get("mac_type", 0) if pending else 0
 
                         if code == 0:
-                            logger.info(f"✅ VM ACTIVATE SUCCESS on base station {bs_eui}, macType={mac_type}")
-                            self._add_vm_log("vm.activateRsp received", f"SUCCESS macType={mac_type}", bs_eui)
+                            logger.info(
+                                f"✅ VM ACTIVATE SUCCESS on base station {bs_eui}, macType={mac_type}"
+                            )
+                            self._add_vm_log(
+                                "vm.activateRsp received", f"SUCCESS macType={mac_type}", bs_eui
+                            )
                             self.vm_capable_base_stations.add(bs_eui)
                             logger.info(f"   📡 Base station {bs_eui} confirmed VM-capable")
                         else:
                             logger.warning(
                                 f"❌ VM ACTIVATE response code={code} on base station {bs_eui}, macType={mac_type}"
                             )
-                            self._add_vm_log("vm.activateRsp received", f"code={code} macType={mac_type}", bs_eui)
+                            self._add_vm_log(
+                                "vm.activateRsp received", f"code={code} macType={mac_type}", bs_eui
+                            )
 
                         if self.mqtt_out_queue:
                             await self.mqtt_out_queue.put(
@@ -1625,7 +1815,9 @@ class TLSServer:
                         op_id = message.get("opId", "unknown")
                         bs_eui = self.connected_base_stations.get(writer, "unknown")
                         logger.info(f"📡 VM ACTIVATE COMPLETE - Operation {op_id}")
-                        self._add_vm_log("vm.activateCmp received", f"Operation {op_id} complete", bs_eui)
+                        self._add_vm_log(
+                            "vm.activateCmp received", f"Operation {op_id} complete", bs_eui
+                        )
 
                     elif msg_type in ("vm.deactivateRsp", "vmDeactRsp"):
                         op_id = message.get("opId", "unknown")
@@ -1636,13 +1828,21 @@ class TLSServer:
                         mac_type = pending.get("mac_type", 0) if pending else 0
 
                         if code == 0:
-                            logger.info(f"✅ VM DEACTIVATE SUCCESS on base station {bs_eui}, macType={mac_type}")
-                            self._add_vm_log("vm.deactivateRsp received", f"SUCCESS macType={mac_type}", bs_eui)
+                            logger.info(
+                                f"✅ VM DEACTIVATE SUCCESS on base station {bs_eui}, macType={mac_type}"
+                            )
+                            self._add_vm_log(
+                                "vm.deactivateRsp received", f"SUCCESS macType={mac_type}", bs_eui
+                            )
                         else:
                             logger.warning(
                                 f"❌ VM DEACTIVATE response code={code} on base station {bs_eui}, macType={mac_type}"
                             )
-                            self._add_vm_log("vm.deactivateRsp received", f"code={code} macType={mac_type}", bs_eui)
+                            self._add_vm_log(
+                                "vm.deactivateRsp received",
+                                f"code={code} macType={mac_type}",
+                                bs_eui,
+                            )
 
                         if self.mqtt_out_queue:
                             await self.mqtt_out_queue.put(
@@ -1678,7 +1878,9 @@ class TLSServer:
                             logger.info(f"   Active MAC Types: {mac_types}")
                             for mac_type in mac_types:
                                 logger.info(f"      - MAC Type {mac_type}")
-                            self._add_vm_log("vm.statusRsp received", f"Active MAC Types: {mac_types}", bs_eui)
+                            self._add_vm_log(
+                                "vm.statusRsp received", f"Active MAC Types: {mac_types}", bs_eui
+                            )
                         else:
                             logger.info("   No MAC Types active (VM reception not enabled)")
                             self._add_vm_log("vm.statusRsp received", "No MAC Types active", bs_eui)
@@ -1703,25 +1905,33 @@ class TLSServer:
                         op_id = message.get("opId", "unknown")
                         bs_eui = self.connected_base_stations.get(writer, "unknown")
                         logger.info(f"📊 VM STATUS COMPLETE - Operation {op_id}")
-                        self._add_vm_log("vm.statusCmp received", f"Operation {op_id} complete", bs_eui)
+                        self._add_vm_log(
+                            "vm.statusCmp received", f"Operation {op_id} complete", bs_eui
+                        )
 
                     elif msg_type in ("vm.deactivateCmp", "vmDeactCmp"):
                         op_id = message.get("opId", "unknown")
                         bs_eui = self.connected_base_stations.get(writer, "unknown")
                         logger.info(f"📡 VM DEACTIVATE COMPLETE - Operation {op_id}")
-                        self._add_vm_log("vm.deactivateCmp received", f"Operation {op_id} complete", bs_eui)
+                        self._add_vm_log(
+                            "vm.deactivateCmp received", f"Operation {op_id} complete", bs_eui
+                        )
 
                     elif msg_type in ("vm.dlDataCmp", "vmDlDataCmp"):
                         op_id = message.get("opId", "unknown")
                         bs_eui = self.connected_base_stations.get(writer, "unknown")
                         logger.info(f"📤 VM DOWNLINK DATA COMPLETE - Operation {op_id}")
-                        self._add_vm_log("vm.dlDataCmp received", f"Operation {op_id} complete", bs_eui)
+                        self._add_vm_log(
+                            "vm.dlDataCmp received", f"Operation {op_id} complete", bs_eui
+                        )
 
                     elif msg_type in ("vm.ulDataCmp", "vmUlDataCmp"):
                         op_id = message.get("opId", "unknown")
                         bs_eui = self.connected_base_stations.get(writer, "unknown")
                         logger.info(f"📨 VM UPLINK DATA COMPLETE - Operation {op_id}")
-                        self._add_vm_log("vm.ulDataCmp received", f"Operation {op_id} complete", bs_eui)
+                        self._add_vm_log(
+                            "vm.ulDataCmp received", f"Operation {op_id} complete", bs_eui
+                        )
 
                     elif msg_type in ("vm.ulData", "vmUlData"):
                         bs_eui = self.connected_base_stations.get(writer, "unknown")
@@ -1731,18 +1941,13 @@ class TLSServer:
                         data = message.get("userData", message.get("data", []))
                         snr = message.get("snr", 0)
                         rssi = message.get("rssi", 0)
-                        trx_time = message.get("trxTime", 0)
-                        sys_time = message.get("sysTime", 0)
                         freq_off = message.get("freqOff", 0)
                         eq_snr = message.get("eqSnr", None)
                         carr_space = message.get("carrSpace", 1)
-                        patt_grp = message.get("pattGrp", 0)
-                        patt_num = message.get("pattNum", 0)
                         # Legacy support for epEui (some implementations may use it)
                         eui = ""
                         if "epEui" in message:
                             eui = int(message["epEui"]).to_bytes(8, byteorder="big").hex()
-                        port = message.get("port", 1)
 
                         logger.info(f"📨 VM UPLINK DATA received (macType={mac_type})")
                         logger.info(f"   Operation ID: {op_id}")
@@ -1753,11 +1958,15 @@ class TLSServer:
                         logger.info(f"   SNR: {snr} dB, RSSI: {rssi} dBm")
                         if eq_snr is not None:
                             logger.info(f"   Equivalent SNR: {eq_snr} dB")
-                        logger.info(f"   Carrier spacing: {carr_space} (0=narrow, 1=standard, 2=wide)")
+                        logger.info(
+                            f"   Carrier spacing: {carr_space} (0=narrow, 1=standard, 2=wide)"
+                        )
 
                         # Parse OMS meter info from WMBUS payload
                         data_hex = bytes(data).hex() if isinstance(data, list) else data
-                        data_list: list = data if isinstance(data, list) else list(bytes.fromhex(data))
+                        data_list: list = (
+                            data if isinstance(data, list) else list(bytes.fromhex(data))
+                        )
                         meter_info = self._extract_oms_meter_info(data_list)
 
                         if meter_info:
@@ -1798,12 +2007,13 @@ class TLSServer:
 
                         # Send acknowledgment (vm.ulDataRsp)
                         msg_pack = encode_message(messages.build_vm_ul_data_response(op_id))
-                        writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
+                        writer.write(
+                            IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack
+                        )
                         await writer.drain()
 
                         # Update last seen (use meter_id if no EUI available)
                         meter_id = meter_info["meter_id"] if meter_info else None
-                        identifier = eui.upper() if eui else (meter_id or f"vm_{op_id}")
                         if eui:
                             self.sensor_last_seen[eui.upper()] = datetime.now(UTC).timestamp()
 
@@ -1847,13 +2057,17 @@ class TLSServer:
                             payload_json = json.dumps(mqtt_payload)
 
                             logger.info("📤 MQTT PUBLICATION - VM/OMS UPLINK DATA")
-                            logger.info(f"   Topic: {bssci_config.BASE_TOPIC.rstrip('/')}/{mqtt_topic}")
+                            logger.info(
+                                f"   Topic: {bssci_config.BASE_TOPIC.rstrip('/')}/{mqtt_topic}"
+                            )
                             logger.info(
                                 f"   OMS: {meter_info['manufacturer_code']} Serial {meter_info['serial']} ({meter_info['device_type_name']})"
                             )
                             logger.info(f"   SNR={snr:.1f}dB, RSSI={rssi:.1f}dBm")
 
-                            await self.mqtt_out_queue.put({"topic": mqtt_topic, "payload": payload_json})
+                            await self.mqtt_out_queue.put(
+                                {"topic": mqtt_topic, "payload": payload_json}
+                            )
                             self.traffic_metrics["messages_out"] += 1
                             self.traffic_metrics["bytes_out"] += len(payload_json)
 
@@ -1866,9 +2080,13 @@ class TLSServer:
                             eui = pending.get("eui", "unknown")
 
                             if code == 0:
-                                logger.info(f"✅ VM DOWNLINK DATA SENT successfully to sensor {eui}")
+                                logger.info(
+                                    f"✅ VM DOWNLINK DATA SENT successfully to sensor {eui}"
+                                )
                             else:
-                                logger.warning(f"❌ VM DOWNLINK DATA FAILED for sensor {eui}, code: {code}")
+                                logger.warning(
+                                    f"❌ VM DOWNLINK DATA FAILED for sensor {eui}, code: {code}"
+                                )
 
                             if self.mqtt_out_queue:
                                 await self.mqtt_out_queue.put(
@@ -1895,7 +2113,9 @@ class TLSServer:
                         )
 
                     else:
-                        logger.warning(f"[WARN] Unknown message type: {msg_type} - Message: {message}")
+                        logger.warning(
+                            f"[WARN] Unknown message type: {msg_type} - Message: {message}"
+                        )
 
                     # except Exception as e:
                     #    print(f"[ERROR] Fehler beim Dekodieren der Nachricht: {e}")
@@ -1941,7 +2161,9 @@ class TLSServer:
                         f"❌ Base station {bs_eui} disconnected",
                         extra={"correlation_id": event_correlation_id},
                     )
-                    logger.info(f"   Remaining connected base stations: {len(self.connected_base_stations)}")
+                    logger.info(
+                        f"   Remaining connected base stations: {len(self.connected_base_stations)}"
+                    )
                 if writer in self.connecting_base_stations:
                     self.connecting_base_stations.pop(writer)
                 self.connection_correlation_ids.pop(writer, None)
@@ -1951,7 +2173,9 @@ class TLSServer:
 
     async def process_deduplication_buffer(self) -> None:
         """Processes the deduplication buffer, forwards best messages, and cleans up old entries."""
-        logger.info(f"🧠 Starting deduplication buffer processing task with delay: {self.deduplication_delay}s")
+        logger.info(
+            f"🧠 Starting deduplication buffer processing task with delay: {self.deduplication_delay}s"
+        )
         while True:
             await asyncio.sleep(self.deduplication_delay)
             current_time = asyncio.get_event_loop().time()
@@ -2068,7 +2292,9 @@ class TLSServer:
         if was_offline:
             hb["warning_active"] = False
             hb["last_state_change"] = current_time
-            logger.info(f"💚 SENSOR ONLINE: {eui_upper} is back online (avg interval: {hb['avg_interval']:.0f}s)")
+            logger.info(
+                f"💚 SENSOR ONLINE: {eui_upper} is back online (avg interval: {hb['avg_interval']:.0f}s)"
+            )
 
     def get_sensor_online_count(self) -> int:
         return sum(1 for s in self.sensor_heartbeat.values() if s.get("state") == "online")
@@ -2125,13 +2351,18 @@ class TLSServer:
                                     }
                                 )
                             except Exception as e:
-                                logger.error(f"❌ Failed to send offline MQTT warning for {eui}: {e}")
+                                logger.error(
+                                    f"❌ Failed to send offline MQTT warning for {eui}: {e}"
+                                )
 
                 for eui_key, sensor_info in list(self.registered_sensors.items()):
                     if eui_key.endswith("_failure") or not sensor_info.get("registered", False):
                         continue
                     eui_upper = eui_key.upper()
-                    if eui_upper not in self.sensor_heartbeat and eui_upper in self.sensor_last_seen:
+                    if (
+                        eui_upper not in self.sensor_heartbeat
+                        and eui_upper in self.sensor_last_seen
+                    ):
                         self.sensor_heartbeat[eui_upper] = {
                             "avg_interval": self.HEARTBEAT_DEFAULT_INTERVAL,
                             "last_seen": self.sensor_last_seen[eui_upper],
@@ -2155,7 +2386,9 @@ class TLSServer:
         logger.info(
             f"   Auto-detach timeout: {getattr(bssci_config, 'AUTO_DETACH_TIMEOUT', 259200)} seconds ({getattr(bssci_config, 'AUTO_DETACH_TIMEOUT', 259200) / 3600:.1f} hours)"
         )
-        logger.info(f"   Check interval: {getattr(bssci_config, 'AUTO_DETACH_CHECK_INTERVAL', 3600)} seconds")
+        logger.info(
+            f"   Check interval: {getattr(bssci_config, 'AUTO_DETACH_CHECK_INTERVAL', 3600)} seconds"
+        )
 
         try:
             while True:
@@ -2178,7 +2411,9 @@ class TLSServer:
                         if offline_duration > auto_detach_timeout:
                             sensors_to_detach.append((eui_key, offline_duration))
                     elif not hb:
-                        last_seen = self.sensor_last_seen.get(eui_key, sensor_info.get("timestamp", 0))
+                        last_seen = self.sensor_last_seen.get(
+                            eui_key, sensor_info.get("timestamp", 0)
+                        )
                         time_since_last_seen = current_time - last_seen
                         if time_since_last_seen > auto_detach_timeout:
                             sensors_to_detach.append((eui_key, time_since_last_seen))
@@ -2250,7 +2485,9 @@ class TLSServer:
         logger.warning("🔌 AUTO-DETACH TRIGGERED")
         logger.warning(f"   Sensor EUI: {eui}")
         logger.warning(f"   Inactive for: {hours_inactive:.1f} hours")
-        logger.warning(f"   Threshold: {getattr(bssci_config, 'AUTO_DETACH_TIMEOUT', 259200) / 3600:.1f} hours")
+        logger.warning(
+            f"   Threshold: {getattr(bssci_config, 'AUTO_DETACH_TIMEOUT', 259200) / 3600:.1f} hours"
+        )
 
         # Perform detach
         success = await self.detach_sensor(eui)
@@ -2326,7 +2563,12 @@ class TLSServer:
 
     def _add_vm_log(self, event: str, details: str, bs_eui: str | None = None) -> None:
         """Add an entry to the VM log"""
-        log_entry = {"timestamp": datetime.now(UTC).isoformat(), "event": event, "details": details, "bs_eui": bs_eui}
+        log_entry = {
+            "timestamp": datetime.now(UTC).isoformat(),
+            "event": event,
+            "details": details,
+            "bs_eui": bs_eui,
+        }
         self.vm_log.append(log_entry)
         if len(self.vm_log) > self._max_vm_log_entries:
             self.vm_log = self.vm_log[-self._max_vm_log_entries :]
@@ -2347,7 +2589,9 @@ class TLSServer:
             mac_type: MAC type for VM activation
             only_vm_capable: If True, only send to base stations known to support VM
         """
-        logger.info(f"📡 VM ACTIVATE request, macType {mac_type}, only_vm_capable={only_vm_capable}")
+        logger.info(
+            f"📡 VM ACTIVATE request, macType {mac_type}, only_vm_capable={only_vm_capable}"
+        )
 
         if not self.connected_base_stations:
             logger.warning("   No base stations connected")
@@ -2362,7 +2606,9 @@ class TLSServer:
 
             # Log warning if sending to unconfirmed base station
             if bs_eui not in self.vm_capable_base_stations:
-                logger.warning(f"   ⚠️ Sending to base station {bs_eui} without confirmed VM support")
+                logger.warning(
+                    f"   ⚠️ Sending to base station {bs_eui} without confirmed VM support"
+                )
 
             try:
                 op_id = self._get_next_op_id(writer)
@@ -2398,7 +2644,9 @@ class TLSServer:
             mac_type: MAC-Type to deactivate (0=OMS metering)
             only_vm_capable: If True, only send to base stations known to support VM
         """
-        logger.info(f"📡 VM DEACTIVATE request, macType={mac_type}, only_vm_capable={only_vm_capable}")
+        logger.info(
+            f"📡 VM DEACTIVATE request, macType={mac_type}, only_vm_capable={only_vm_capable}"
+        )
 
         if not self.connected_base_stations:
             logger.warning("   No base stations connected")
@@ -2413,7 +2661,9 @@ class TLSServer:
 
             # Log warning if sending to unconfirmed base station
             if bs_eui not in self.vm_capable_base_stations:
-                logger.warning(f"   ⚠️ Sending to base station {bs_eui} without confirmed VM support")
+                logger.warning(
+                    f"   ⚠️ Sending to base station {bs_eui} without confirmed VM support"
+                )
 
             try:
                 op_id = self._get_next_op_id(writer)
@@ -2449,7 +2699,9 @@ class TLSServer:
         Args:
             only_vm_capable: If True, only send to base stations known to support VM
         """
-        logger.info(f"📊 VM STATUS request - querying active MAC types, only_vm_capable={only_vm_capable}")
+        logger.info(
+            f"📊 VM STATUS request - querying active MAC types, only_vm_capable={only_vm_capable}"
+        )
 
         if not self.connected_base_stations:
             logger.warning("   No base stations connected")
@@ -2464,7 +2716,9 @@ class TLSServer:
 
             # Log warning if sending to unconfirmed base station
             if bs_eui not in self.vm_capable_base_stations:
-                logger.warning(f"   ⚠️ Sending to base station {bs_eui} without confirmed VM support")
+                logger.warning(
+                    f"   ⚠️ Sending to base station {bs_eui} without confirmed VM support"
+                )
 
             try:
                 op_id = self._get_next_op_id(writer)
@@ -2503,7 +2757,9 @@ class TLSServer:
 
         # Initial discovery: query ALL base stations to find VM-capable ones
         if self.connected_base_stations:
-            logger.info("📊 INITIAL VM DISCOVERY - querying ALL base stations to detect VM capability")
+            logger.info(
+                "📊 INITIAL VM DISCOVERY - querying ALL base stations to detect VM capability"
+            )
             logger.info(f"   Connected base stations: {len(self.connected_base_stations)}")
             await self.vm_status(only_vm_capable=False)  # Query ALL
             self._add_vm_log("VM Discovery", "Initial query sent to all base stations", "system")
@@ -2518,7 +2774,7 @@ class TLSServer:
                 for bs in self.vm_capable_base_stations:
                     logger.info(f"      - {bs}")
             else:
-                logger.info("ℹ️  VM DISCOVERY COMPLETE - No VM-capable base stations found")
+                logger.info("📋 VM DISCOVERY COMPLETE - No VM-capable base stations found")
 
         # Periodic queries: only query VM-capable base stations
         while True:
@@ -2561,7 +2817,7 @@ class TLSServer:
         if not target_writer:
             # Use any connected base station if preferred one not found
             if self.connected_base_stations:
-                target_writer = list(self.connected_base_stations.keys())[0]
+                target_writer = next(iter(self.connected_base_stations.keys()))
             else:
                 logger.warning("   No base stations connected")
                 return False
@@ -2576,7 +2832,9 @@ class TLSServer:
             }
 
             msg_pack = encode_message(messages.build_vm_dl_data(op_id, mac_type, user_data, port))
-            target_writer.write(IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack)
+            target_writer.write(
+                IDENTIFIER + len(msg_pack).to_bytes(4, byteorder="little") + msg_pack
+            )
             await target_writer.drain()
 
             bs_eui = self.connected_base_stations.get(target_writer, "unknown")
@@ -2588,7 +2846,10 @@ class TLSServer:
 
     def get_vm_status(self) -> dict:
         """Get VM sub-channel status for all sensors"""
-        return {"active_sensors": dict(self.vm_active_sensors), "pending_operations": len(self.pending_vm_operations)}
+        return {
+            "active_sensors": dict(self.vm_active_sensors),
+            "pending_operations": len(self.pending_vm_operations),
+        }
 
     def get_traffic_metrics(self) -> dict:
         """Get traffic metrics for visualization"""
@@ -2712,13 +2973,16 @@ class TLSServer:
         """
         with self.state_lock:
             connected_euis = sorted({eui.upper() for eui in self.connected_base_stations.values()})
-            connecting_euis = sorted({eui.upper() for eui in self.connecting_base_stations.values()})
+            connecting_euis = sorted(
+                {eui.upper() for eui in self.connecting_base_stations.values()}
+            )
             total_sensors = len(self.sensor_config)
             registered_sensors = len(
                 [
                     k
                     for k, v in self.registered_sensors.items()
-                    if not k.endswith(REGISTERED_SENSOR_FAILURE_SUFFIX) and v.get("status") == "registered"
+                    if not k.endswith(REGISTERED_SENSOR_FAILURE_SUFFIX)
+                    and v.get("status") == "registered"
                 ]
             )
 
@@ -2759,7 +3023,7 @@ class TLSServer:
             logger.error(f"Failed to reload sensor configuration: {e}")
 
     # OMS/WMBUS Manufacturer codes (from m-bus.de)
-    OMS_MANUFACTURERS = {
+    OMS_MANUFACTURERS: ClassVar[dict[str, tuple[str, str]]] = {
         "0442": ("ABB", "ABB AB"),
         "0465": ("ACE", "Actaris (Elektrizität)"),
         "0467": ("ACG", "Actaris (Gas)"),
@@ -2875,7 +3139,7 @@ class TLSServer:
     }
 
     # OMS/WMBUS Device types
-    OMS_DEVICE_TYPES = {
+    OMS_DEVICE_TYPES: ClassVar[dict[int, str]] = {
         0x00: "Other",
         0x01: "Oil",
         0x02: "Electricity",
@@ -2972,7 +3236,7 @@ class TLSServer:
             return ("???", None)
 
     # Valid wMBUS C-field values for meter telegrams
-    WMBUS_VALID_C_FIELDS = {0x44, 0x46, 0x48}  # SND-NR, SND-IR, SND-NKE
+    WMBUS_VALID_C_FIELDS: ClassVar[set[int]] = {0x44, 0x46, 0x48}  # SND-NR, SND-IR, SND-NKE
 
     def _find_wmbus_frame_offset(self, data: list) -> int:
         """Find the start offset of the wMBUS frame in the data.
@@ -3036,7 +3300,9 @@ class TLSServer:
             # Version at offset+8, Device type at offset+9
             version = data[offset + 8]
             device_type = data[offset + 9]
-            device_type_name = self.OMS_DEVICE_TYPES.get(device_type, f"Unknown (0x{device_type:02X})")
+            device_type_name = self.OMS_DEVICE_TYPES.get(
+                device_type, f"Unknown (0x{device_type:02X})"
+            )
 
             # Combined meter ID for tracking (manufacturer hex + serial hex)
             meter_id = f"{man_hex}{serial_hex}"
@@ -3107,7 +3373,9 @@ class TLSServer:
                     activity_status = "warning"
                     warning_info = {
                         "hours_inactive": round(hours_since_last_seen, 1),
-                        "hours_until_detach": round((detach_timeout - time_since_last_seen) / 3600, 1),
+                        "hours_until_detach": round(
+                            (detach_timeout - time_since_last_seen) / 3600, 1
+                        ),
                         "warning_sent": self.sensor_warning_sent.get(eui, False),
                     }
 
@@ -3144,7 +3412,9 @@ class TLSServer:
         self.sensor_config = []
 
         # Clear registered sensors
-        old_registered = len([k for k in self.registered_sensors.keys() if not k.endswith("_failure")])
+        old_registered = len(
+            [k for k in self.registered_sensors.keys() if not k.endswith("_failure")]
+        )
         self.registered_sensors.clear()
 
         # Clear pending requests
@@ -3264,7 +3534,9 @@ class TLSServer:
                         asyncio.set_event_loop(loop)
 
                     # Schedule the coroutine
-                    asyncio.ensure_future(self.mqtt_in_queue.put(sensor_data), loop=loop)
+                    future = asyncio.ensure_future(self.mqtt_in_queue.put(sensor_data), loop=loop)
+                    self._background_tasks.add(future)
+                    future.add_done_callback(self._background_tasks.discard)
                     logger.info(f"✅ Sensor {sensor_data['eui']} queued for processing via UI")
                 except Exception as e:
                     logger.error(f"Failed to queue sensor in thread: {e}")
@@ -3286,7 +3558,9 @@ class TLSServer:
         message_count = 0
         try:
             while True:
-                logger.debug(f"⏳ Waiting for MQTT message (queue size: {self.mqtt_in_queue.qsize()})")
+                logger.debug(
+                    f"⏳ Waiting for MQTT message (queue size: {self.mqtt_in_queue.qsize()})"
+                )
                 message = await self.mqtt_in_queue.get()
                 message_count += 1
 
@@ -3305,10 +3579,14 @@ class TLSServer:
                         # Process configuration messages
                         # Validate required fields
                         required_fields = ["eui", "nwKey", "shortAddr"]
-                        missing_fields = [field for field in required_fields if field not in message]
+                        missing_fields = [
+                            field for field in required_fields if field not in message
+                        ]
 
                         if missing_fields:
-                            logger.error(f"❌ Invalid sensor configuration - missing fields: {missing_fields}")
+                            logger.error(
+                                f"❌ Invalid sensor configuration - missing fields: {missing_fields}"
+                            )
                             continue
 
                         # Process the sensor configuration
@@ -3332,7 +3610,9 @@ class TLSServer:
 
         # Send attach requests to connected base stations
         if self.connected_base_stations:
-            logger.info(f"📤 PROPAGATING to {len(self.connected_base_stations)} connected base stations")
+            logger.info(
+                f"📤 PROPAGATING to {len(self.connected_base_stations)} connected base stations"
+            )
             for writer, bs_eui in self.connected_base_stations.items():
                 logger.info(f"   Sending attach request to base station: {bs_eui}")
                 try:
@@ -3341,7 +3621,9 @@ class TLSServer:
                     logger.error(f"Failed to send attach request to {bs_eui}: {e}")
         else:
             logger.warning("⚠️  NO BASE STATIONS CONNECTED")
-            logger.warning("   Configuration saved but attach requests will be sent when base stations connect")
+            logger.warning(
+                "   Configuration saved but attach requests will be sent when base stations connect"
+            )
 
         # Update local configuration
         logger.info("💾 UPDATING local configuration file")
@@ -3488,7 +3770,9 @@ class TLSServer:
             avg_snr = round(total_snr / count, 2) if count > 0 else 0.0
             avg_rssi = round(total_rssi / count, 2) if count > 0 else 0.0
 
-        self.snr_rssi_history.append({"timestamp": current_time, "avg_snr": avg_snr, "avg_rssi": avg_rssi})
+        self.snr_rssi_history.append(
+            {"timestamp": current_time, "avg_snr": avg_snr, "avg_rssi": avg_rssi}
+        )
 
         # Keep last 288 entries (24 hours of data at 5 min intervals)
         if len(self.snr_rssi_history) > 288:
@@ -3510,7 +3794,9 @@ class TLSServer:
 
         # If base stations are connected, trigger an attach request for this sensor
         if self.connected_base_stations:
-            logger.info(f"📤 Sending attach request for updated sensor {eui} to all connected base stations")
+            logger.info(
+                f"📤 Sending attach request for updated sensor {eui} to all connected base stations"
+            )
             for writer, bs_eui in self.connected_base_stations.items():
                 try:
                     await self.send_attach_request(writer, config)
@@ -3518,4 +3804,6 @@ class TLSServer:
                 except Exception as e:
                     logger.error(f"Failed to send attach request for {eui} to {bs_eui}: {e}")
         else:
-            logger.warning(f"⚠️  No base stations connected, attach request for {eui} will be sent when they connect.")
+            logger.warning(
+                f"⚠️  No base stations connected, attach request for {eui} will be sent when they connect."
+            )

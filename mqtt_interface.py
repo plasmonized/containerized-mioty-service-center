@@ -28,7 +28,9 @@ class MQTTClient:
             self.base_topic = BASE_TOPIC[:-1]
         else:
             self.base_topic = BASE_TOPIC
-        self.config_topic = self.base_topic + "/ep/+/config"  # Legacy support, wird durch register ersetzt
+        self.config_topic = (
+            self.base_topic + "/ep/+/config"
+        )  # Legacy support, wird durch register ersetzt
         self.register_topic = self.base_topic + "/ep/+/register"
         self.command_topic = self.base_topic + "/ep/+/cmd"
         self.mqtt_out_queue = mqtt_out_queue
@@ -42,8 +44,12 @@ class MQTTClient:
     def log_queue_info(self) -> None:
         """Log queue information for debugging"""
         logger.info("🔍 MQTT Client Queue Information:")
-        logger.info(f"   mqtt_out_queue ID: {id(self.mqtt_out_queue)}, size: {self.mqtt_out_queue.qsize()}")
-        logger.info(f"   mqtt_in_queue ID: {id(self.mqtt_in_queue)}, size: {self.mqtt_in_queue.qsize()}")
+        logger.info(
+            f"   mqtt_out_queue ID: {id(self.mqtt_out_queue)}, size: {self.mqtt_out_queue.qsize()}"
+        )
+        logger.info(
+            f"   mqtt_in_queue ID: {id(self.mqtt_in_queue)}, size: {self.mqtt_in_queue.qsize()}"
+        )
 
     async def start(self) -> None:
         """Start MQTT client with simple connection pattern"""
@@ -57,7 +63,9 @@ class MQTTClient:
                 logger.info("=" * 60)
                 logger.info(f"📡 Broker: {self.broker_host}:{MQTT_PORT}")
                 logger.info(f"👤 Username: {MQTT_USERNAME}")
-                logger.info(f"🔐 Password: {'*' * len(MQTT_PASSWORD) if MQTT_PASSWORD else 'NOT SET'}")
+                logger.info(
+                    f"🔐 Password: {'*' * len(MQTT_PASSWORD) if MQTT_PASSWORD else 'NOT SET'}"
+                )
                 logger.info(f"🎯 Config Topic: {self.config_topic}")
                 logger.info(f"🏠 Base Topic: {self.base_topic}")
 
@@ -100,7 +108,9 @@ class MQTTClient:
                 logger.error("=" * 60)
                 logger.error("❌ MQTT CONNECTION FAILED")
                 logger.error("=" * 60)
-                logger.error(f"🚨 Error: {e}", extra={"error_code": ERROR_CODES["MQTT_CONNECTION_FAILED"]})
+                logger.error(
+                    f"🚨 Error: {e}", extra={"error_code": ERROR_CODES["MQTT_CONNECTION_FAILED"]}
+                )
                 logger.error(f"🔍 Error Type: {type(e).__name__}")
 
                 logger.error("⏰ RETRY INFORMATION:")
@@ -156,7 +166,7 @@ class MQTTClient:
                         eui = topic_parts[len(base_parts) + 1].upper()
                         logger.info(f"🔑 Extracted EUI: {eui}")
 
-                        if hasattr(message.payload, "decode"):
+                        if isinstance(message.payload, (bytes, bytearray)):
                             payload_str = message.payload.decode("utf-8")
                         else:
                             payload_str = str(message.payload)
@@ -171,7 +181,9 @@ class MQTTClient:
 
                         # Check if this is a register message (Legacy support)
                         if "/register" in str(message.topic):
-                            await self.handle_register_message(str(message.topic), payload_dict, eui)
+                            await self.handle_register_message(
+                                str(message.topic), payload_dict, eui
+                            )
                             continue
 
                         # This is a config message (alternative method)
@@ -209,7 +221,9 @@ class MQTTClient:
 
                 # Send a test message to verify connection
                 test_topic = f"{self.base_topic}/health_check"
-                test_payload = f'{{"timestamp": "{asyncio.get_event_loop().time()}", "status": "alive"}}'
+                test_payload = (
+                    f'{{"timestamp": "{asyncio.get_event_loop().time()}", "status": "alive"}}'
+                )
 
                 logger.debug("💓 Performing MQTT health check...")
                 await client.publish(test_topic, test_payload)
@@ -229,7 +243,9 @@ class MQTTClient:
             while True:
                 msg = None
                 try:
-                    logger.debug(f"⏳ WAITING FOR MQTT MESSAGE in queue (size: {self.mqtt_out_queue.qsize()})")
+                    logger.debug(
+                        f"⏳ WAITING FOR MQTT MESSAGE in queue (size: {self.mqtt_out_queue.qsize()})"
+                    )
                     msg = await self.mqtt_out_queue.get()
                     message_count += 1
                     topic = f"{self.base_topic}/{msg['topic']}"
@@ -301,7 +317,11 @@ class MQTTClient:
 
             # Send acknowledgment
             ack_topic = f"ep/{eui.upper()}/response"
-            ack_payload = {"command": command, "status": "received", "timestamp": asyncio.get_event_loop().time()}
+            ack_payload = {
+                "command": command,
+                "status": "received",
+                "timestamp": asyncio.get_event_loop().time(),
+            }
 
             await self.mqtt_out_queue.put({"topic": ack_topic, "payload": json.dumps(ack_payload)})
 
@@ -364,7 +384,9 @@ class MQTTClient:
 
             await self.mqtt_out_queue.put({"topic": ack_topic, "payload": json.dumps(ack_payload)})
 
-            logger.info(f"📤 Legacy registration acknowledgment sent to {self.base_topic}/{ack_topic}")
+            logger.info(
+                f"📤 Legacy registration acknowledgment sent to {self.base_topic}/{ack_topic}"
+            )
 
         except Exception as e:
             logger.error(f"❌ Error handling legacy registration message: {e}")
@@ -408,7 +430,9 @@ if __name__ == "__main__":
             ],
         }
         while True:
-            await mqtt_out_queue.put({"topic": f"ep/{eui.upper()}/ul", "payload": json.dumps(data_dict)})
+            await mqtt_out_queue.put(
+                {"topic": f"ep/{eui.upper()}/ul", "payload": json.dumps(data_dict)}
+            )
             await asyncio.sleep(5)
 
     async def main() -> None:

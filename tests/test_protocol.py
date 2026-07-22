@@ -6,13 +6,12 @@ messages. These tests verify round-trip stability and edge-case handling.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
 import msgpack
 import pytest
 
 from protocol import decode_message, decode_messages, encode_message
-
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -153,7 +152,7 @@ class TestAttachRequestWireFormat:
     'syncBurst'. nwkSnKey stays Numeric[16] (array) in both versions.
     """
 
-    SENSOR = {
+    SENSOR: ClassVar[dict[str, Any]] = {
         "eui": "74731D000000138B",
         "bidi": False,
         "nwKey": "09DE6551000000000000000071B538A4",

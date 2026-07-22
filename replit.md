@@ -8,6 +8,8 @@ The BSSCI Service Center is a comprehensive IoT device management system that pr
 
 Preferred communication style: Simple, everyday language.
 
+After every bugfix/feature (version bump), automatically include a German changelog entry in the reply — suitable for GitHub release notes — without being asked.
+
 ## System Architecture
 
 ### Core Components

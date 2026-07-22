@@ -2890,16 +2890,15 @@ def _download_and_extract_zip(zip_url, ctx, backup_result, source_label):
     if extracted_folders:
         source_dir = os.path.join(extract_dir, extracted_folders[0])
 
-        files_to_update = [
-            "web_ui.py",
-            "TLSServer.py",
-            "main.py",
-            "web_main.py",
-            "mqtt_interface.py",
-            "messages.py",
-            "requirements.txt",
-            "VERSION",
-        ]
+        # Copy ALL Python modules from the release, plus metadata files.
+        # A fixed whitelist previously caused crash loops: newly added modules
+        # (e.g. observability.py) were imported by updated files but never
+        # copied. Exclusions protect locally modified/user data files.
+        excluded_files = {"bssci_config.py"}  # holds local settings (e.g. UPDATE_CHANNEL)
+        files_to_update = sorted(
+            f for f in os.listdir(source_dir) if f.endswith(".py") and f not in excluded_files
+        )
+        files_to_update += ["requirements.txt", "VERSION"]
         dirs_to_update = ["templates", "static"]
 
         for filename in files_to_update:

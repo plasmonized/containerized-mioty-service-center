@@ -10,3 +10,4 @@ python-dotenv==1.2.2
 flake8
 black
 isort
+pytest

@@ -28,7 +28,8 @@ def decode_message(data: bytes) -> dict[str, Any]:
         unpacker = msgpack.Unpacker(raw=False, strict_map_key=False)
         unpacker.feed(data)
         for msg in unpacker:
-            return msg
+            if isinstance(msg, dict):
+                return msg
         return {}
     except Exception as e:
         print(f"[ERROR] Error decoding message: {e}")

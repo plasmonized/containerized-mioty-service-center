@@ -1,7 +1,22 @@
+import uuid
 from typing import Any
 
 
-def build_connection_response(opID: int, snscuuid_arr: list[int]) -> dict[str, object]:
+def build_connection_response(opID: int, snscuuid_arr: list[int] | None = None) -> dict[str, object]:
+    """Build BSSCI conRsp.
+
+    Per BSSCI spec, the Service Center must provide its OWN session UUID
+    (snScUuid). Echoing the base station's snBsUuid makes the BS believe the
+    previous session is being resumed, so it expects SC opIds to continue
+    strictly decrementing from the previous session (snScOpId). Since our
+    per-connection opId counter restarts at -1, the BS then rejects the next
+    SC-initiated operation (e.g. attPrp) as malformed and drops the link.
+
+    We therefore always start a fresh session: snResume=False plus a new
+    random 16-byte session UUID.
+    """
+    if snscuuid_arr is None:
+        snscuuid_arr = list(uuid.uuid4().bytes)
     return {
         "command": "conRsp",
         "scEui": 8391082416558637055,

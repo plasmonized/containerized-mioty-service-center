@@ -3,3 +3,4 @@
 - [Replit shell git merges](replit-shell-git-merges.md) — merges must run as one compound shell line or the checkpoint system wipes the merge state between commands.
 - [Update system default branch](update-default-branch.md) — GitHub repo default branch is `release`, not `main`; update code must detect it dynamically; repo URL is now lowercase.
 - [Miromico/ifm EdgeCard firewall](miromico-edgecard-firewall.md) — gateway only forwards card traffic to dest port 16017; other SC ports silently dropped.
+- [BSSCI session resume vs opId](bssci-session-resume-opid.md) — never echo snBsUuid as snScUuid in conRsp; strict BS firmwares then expect resumed opId continuity → error 22 on attach.

@@ -949,9 +949,10 @@ class TLSServer:
                         logger.info(f"   Operation ID: {message.get('opId', 'unknown')}")
                         logger.info(f"   Base Station UUID: {message.get('snBsUuid', 'unknown')}")
 
-                        msg = encode_message(
-                            messages.build_connection_response(message.get("opId", ""), message.get("snBsUuid", ""))
-                        )
+                        # Send a NEW SC session UUID (never echo snBsUuid back -
+                        # the BS would treat that as a session resume and expect
+                        # opIds to continue from the previous session)
+                        msg = encode_message(messages.build_connection_response(message.get("opId", "")))
                         writer.write(IDENTIFIER + len(msg).to_bytes(4, byteorder="little") + msg)
                         await writer.drain()
                         bs_eui = int(message["bsEui"]).to_bytes(8, byteorder="big").hex().upper()
@@ -1875,6 +1876,15 @@ class TLSServer:
                                         ),
                                     }
                                 )
+
+                    elif msg_type == "error":
+                        err_code = message.get("code", "?")
+                        err_text = message.get("message", "")
+                        err_op_id = message.get("opId", "?")
+                        logger.error(
+                            f"❌ BSSCI ERROR from base station {self.connected_base_stations.get(writer, addr)}: "
+                            f"code={err_code}, opId={err_op_id}, message='{err_text}'"
+                        )
 
                     else:
                         logger.warning(f"[WARN] Unknown message type: {msg_type} - Message: {message}")

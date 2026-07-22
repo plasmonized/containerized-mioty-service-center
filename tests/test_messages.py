@@ -66,6 +66,18 @@ class TestBuildConnectionResponse:
         result = build_connection_response(0, [])
         assert result["snScUuid"] == []
 
+    def test_generates_fresh_16_byte_uuid_when_not_given(self) -> None:
+        result = build_connection_response(0)
+        sn_uuid = result["snScUuid"]
+        assert isinstance(sn_uuid, list)
+        assert len(sn_uuid) == 16
+        assert all(isinstance(b, int) and 0 <= b <= 255 for b in sn_uuid)
+        # Two calls must produce different session UUIDs (new session each time)
+        assert build_connection_response(0)["snScUuid"] != sn_uuid
+
+    def test_never_resumes_session(self) -> None:
+        assert build_connection_response(0)["snResume"] is False
+
 
 class TestBuildAttachRequest:
     """Tests for ``build_attach_request``."""

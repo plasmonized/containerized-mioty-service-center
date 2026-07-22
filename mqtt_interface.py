@@ -167,12 +167,12 @@ class MQTTClient:
                         # Check if this is a command message
                         if "/cmd" in str(message.topic):
                             await self.handle_command_message(str(message.topic), payload_dict, eui)
-                            return
+                            continue
 
                         # Check if this is a register message (Legacy support)
                         if "/register" in str(message.topic):
                             await self.handle_register_message(str(message.topic), payload_dict, eui)
-                            return
+                            continue
 
                         # This is a config message (alternative method)
                         config = payload_dict

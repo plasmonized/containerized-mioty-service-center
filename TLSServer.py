@@ -534,6 +534,31 @@ class TLSServer:
             logger.error("   =====================================")
             raise  # Re-raise to handle upstream
 
+    def _purge_bs_registrations(self, bs_eui: str) -> int:
+        """Remove a base station from all sensor registration records.
+
+        Since the SC always starts a fresh BSSCI session (snResume=False), a
+        (re)connecting base station has forgotten all previous attachments.
+        Purging our local records ensures attach_file() re-attaches every
+        sensor instead of skipping them as 'already attached'.
+        Returns the number of sensor records that were updated.
+        """
+        purged = 0
+        bs_upper = bs_eui.upper()
+        for eui_key, reg_info in self.registered_sensors.items():
+            if eui_key.endswith("_failure"):
+                continue
+            base_stations = reg_info.get("base_stations", [])
+            remaining = [bs for bs in base_stations if bs.upper() != bs_upper]
+            if len(remaining) != len(base_stations):
+                reg_info["base_stations"] = remaining
+                purged += 1
+        if purged:
+            logger.info(
+                f"🧹 Purged {purged} sensor registration(s) for base station {bs_eui} (fresh session)"
+            )
+        return purged
+
     async def attach_file(self, writer: asyncio.streams.StreamWriter) -> None:
         bs_eui = self.connected_base_stations.get(writer, "unknown")
         logger.info(f"🔗 BATCH SENSOR ATTACHMENT started for base station {bs_eui}")
@@ -1161,6 +1186,12 @@ class TLSServer:
                             else:
                                 logger.warning("   ⚠️  No sensors configured for attachment")
                             logger.info("   =====================================")
+
+                            # Fresh BSSCI session: the BS has forgotten all previous
+                            # attachments, so clear our local attach records for this
+                            # BS to force a full re-attach of every sensor.
+                            with self.state_lock:
+                                self._purge_bs_registrations(bs_eui)
 
                             # Start attachment process
                             await self.attach_file(writer)
@@ -2164,6 +2195,10 @@ class TLSServer:
                     logger.info(
                         f"   Remaining connected base stations: {len(self.connected_base_stations)}"
                     )
+                    # BS is gone - its attachments are no longer guaranteed.
+                    # Purge local records so the next connection re-attaches all sensors.
+                    if bs_eui not in self.connected_base_stations.values():
+                        self._purge_bs_registrations(bs_eui)
                 if writer in self.connecting_base_stations:
                     self.connecting_base_stations.pop(writer)
                 self.connection_correlation_ids.pop(writer, None)

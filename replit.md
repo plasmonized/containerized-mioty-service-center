@@ -95,6 +95,7 @@ Three user roles - Admin (full access), User (sensor/BS management), Viewer (rea
 
 ## Recent Changes
 
+- **v1.689 - CI & Ruff: `release`-Referenzen entfernt, Markdown aus Ruff-Scope ausgeschlossen**: GitHub Actions Workflow (main.yml) referenzierte noch `release` in Branch-Filtern und docker-pr-Bedingung — auf `main` bereinigt. Ruff hat Python-Code-Blöcke in Markdown-Dateien (CONTRIBUTING.md, README.md, docs/, .agents/) geprüft und CI zum Scheitern gebracht; `.agents`, `docs`, `CONTRIBUTING.md`, `README.md` zu `extend-exclude` in pyproject.toml hinzugefügt.
 - **v1.688 - Updater-Fallback branch `release` → `main`**: `get_default_branch()` in web_ui.py hat als letzten Fallback (wenn GitHub-API und git ls-remote nicht erreichbar) weiterhin `"release"` verwendet. Fallback und Docstring auf `"main"` aktualisiert.
 - **v1.687 - Branch umbenannt: release → main**: Der GitHub-Hauptbranch wurde von `release` in `main` umbenannt. CONTRIBUTING.md und docs aktualisiert; Updater erkennt den Default-Branch automatisch per GitHub-API.
 - **v1.686 - Local Timezone for User-Facing Timestamps**: Sensor/message timestamps in the web UI were shown 2h off (UTC instead of local). New `TLSServer._get_local_time()` uses configured TIMEZONE (bssci_config, default Europe/Berlin) for user-facing fields: registration_time, warning_sent_time, detach_time, preferredDownlinkPath.lastUpdated. sensors.html now displays the lastUpdated string directly (no `new Date()` re-parse of naive strings). `_get_utc_time()` stays UTC for internal correlation/logs.

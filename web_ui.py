@@ -2788,8 +2788,8 @@ _default_branch_cache = {"branch": None, "time": 0.0}
 def get_default_branch():
     """Detect the repository's default branch on GitHub (cached 5 min).
 
-    The repo's default branch is 'release', not 'main' - hardcoding 'main'
-    caused updates to check out a stale local branch and break the install.
+    The default branch was renamed from 'release' to 'main' (July 2026).
+    Detection via GitHub API is preferred; 'main' is the hardcoded fallback.
     """
     now = time.time()
     if _default_branch_cache["branch"] and now - _default_branch_cache["time"] < 300:
@@ -2826,7 +2826,7 @@ def get_default_branch():
         except Exception:
             pass
 
-    branch = branch or "release"
+    branch = branch or "main"
     _default_branch_cache["branch"] = branch
     _default_branch_cache["time"] = now
     logger.info(f"Default branch detected: {branch}")

@@ -28,10 +28,10 @@ uv run mypy . --ignore-missing-imports
 
 | Branch | Zweck |
 |--------|-------|
-| `release` | Stabiler Stand — hier werden PRs gemerged |
-| `feature/*` | Neue Features — von `release` abzweigen |
+| `main` | Stabiler Stand — hier werden PRs gemerged |
+| `feature/*` | Neue Features — von `main` abzweigen |
 
-Arbeite immer in einem Feature-Branch und erstelle einen PR gegen `release`.
+Arbeite immer in einem Feature-Branch und erstelle einen PR gegen `main`.
 
 ### 2. Commit Messages
 

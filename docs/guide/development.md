@@ -80,4 +80,4 @@ The GitHub Actions workflow (`.github/workflows/ci.yml`) runs:
 3. **Test** - pytest with coverage
 4. **Build** - Package build verification
 
-All branches are checked on push, main and release branches on pull requests.
+All branches are checked on push, main branch on pull requests.

@@ -2,9 +2,9 @@ name: Python CI
 
 on:
   push:
-    branches: [ "main", "release" ]
+    branches: [ "main" ]
   pull_request:
-    branches: [ "main", "release" ]
+    branches: [ "main" ]
 
 jobs:
   lint-test:
@@ -45,7 +45,7 @@ jobs:
 
   docker-pr:
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref != 'refs/heads/main' && github.ref != 'refs/heads/release')
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref != 'refs/heads/main')
     needs: lint-test
 
     steps:

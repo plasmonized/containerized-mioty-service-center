@@ -23,7 +23,7 @@
       "can_edit_config": true,
       "can_manage_certificates": true,
       "can_update_system": true,
-      "visible_tabs": ["dashboard", "sensors", "base_stations", "health", "network", "traffic", "oms", "logs", "config", "certificates"]
+      "visible_tabs": ["dashboard", "sensors", "base_stations", "app_centers", "health", "network", "traffic", "oms", "logs", "config", "certificates"]
     },
     "user": {
       "can_view_all": true,
@@ -31,7 +31,7 @@
       "can_edit_config": false,
       "can_manage_certificates": false,
       "can_update_system": false,
-      "visible_tabs": ["dashboard", "sensors", "base_stations", "health", "network", "traffic", "oms", "logs"]
+      "visible_tabs": ["dashboard", "sensors", "base_stations", "app_centers", "health", "network", "traffic", "oms", "logs"]
     },
     "viewer": {
       "can_view_all": false,

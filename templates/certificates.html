@@ -114,6 +114,43 @@
     </div>
 </div>
 
+<!-- Application Center Certificates -->
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0">Application Center Certificates (SCACI mTLS)</h5>
+        <button class="btn btn-sm btn-outline-secondary" onclick="loadAcCertificates()">
+            <i class="bi bi-arrow-clockwise"></i> Refresh
+        </button>
+    </div>
+    <div class="card-body">
+        <p class="text-muted mb-3">
+            Generate per-AC client certificates for the SCACI TLS interface. Each Application Center needs its own
+            CA-signed certificate to authenticate against the SCAServer.
+            Certificates are stored under <code>certs/ac_{eui}/</code> and valid for 10 years.
+        </p>
+
+        <!-- Generate form -->
+        <div class="row g-2 align-items-end mb-4">
+            <div class="col-md-5">
+                <label for="acEuiInput" class="form-label fw-semibold">AC EUI (16 hex chars, no separators)</label>
+                <input type="text" class="form-control font-monospace" id="acEuiInput"
+                    placeholder="e.g. aabbccddeeff0011" maxlength="16" pattern="[0-9a-fA-F]{16}">
+            </div>
+            <div class="col-md-auto">
+                <button class="btn btn-success" id="acGenBtn" onclick="generateAcCertificate()">
+                    Zertifikat erzeugen
+                </button>
+            </div>
+        </div>
+        <div id="ac-cert-alert" class="mb-3" style="display:none;"></div>
+
+        <!-- Existing AC certificates table -->
+        <div id="ac-cert-table-wrap">
+            <div class="text-muted small">Loading&hellip;</div>
+        </div>
+    </div>
+</div>
+
 <!-- Certificate Backup -->
 <div class="card">
     <div class="card-header">
@@ -278,9 +315,118 @@ function restoreFromBackup() {
     });
 }
 
-// Load certificate status when page loads
+/* ── Application Center certificates ─────────────────────────── */
+
+function showAcAlert(type, msg) {
+    const el = document.getElementById('ac-cert-alert');
+    el.className = `alert alert-${type}`;
+    el.textContent = msg;
+    el.style.display = '';
+    setTimeout(() => { el.style.display = 'none'; }, 8000);
+}
+
+function generateAcCertificate() {
+    const eui = document.getElementById('acEuiInput').value.trim().toLowerCase();
+    if (!eui) {
+        showAcAlert('warning', 'Bitte EUI eingeben.');
+        return;
+    }
+    if (!/^[0-9a-f]{16}$/.test(eui)) {
+        showAcAlert('danger', 'Ungültiges EUI-Format — genau 16 Hex-Zeichen ohne Trennzeichen erforderlich (z.B. aabbccddeeff0011).');
+        return;
+    }
+
+    const btn = document.getElementById('acGenBtn');
+    btn.disabled = true;
+    btn.textContent = 'Generiere…';
+
+    fetch('/api/ac-certificates/generate', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({eui})
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            showAcAlert('success', `Zertifikat für ${eui} erfolgreich erstellt.`);
+            document.getElementById('acEuiInput').value = '';
+            loadAcCertificates();
+            if (data.download_url) {
+                setTimeout(() => { window.location.href = data.download_url; }, 500);
+            }
+        } else {
+            showAcAlert('danger', 'Fehler: ' + data.message);
+        }
+    })
+    .catch(err => showAcAlert('danger', 'Netzwerkfehler: ' + err.message))
+    .finally(() => {
+        btn.disabled = false;
+        btn.textContent = 'Zertifikat erzeugen';
+    });
+}
+
+function loadAcCertificates() {
+    const wrap = document.getElementById('ac-cert-table-wrap');
+    wrap.innerHTML = '<div class="text-muted small">Lade&hellip;</div>';
+
+    fetch('/api/ac-certificates')
+        .then(r => r.json())
+        .then(data => {
+            if (!data.success) {
+                wrap.innerHTML = `<div class="alert alert-danger">Fehler: ${data.message}</div>`;
+                return;
+            }
+            const certs = data.certificates;
+            if (!certs.length) {
+                wrap.innerHTML = '<p class="text-muted mb-0">Noch keine AC-Zertifikate vorhanden.</p>';
+                return;
+            }
+            let rows = certs.map(c => `
+                <tr>
+                    <td class="font-monospace">${escHtml(c.name)}</td>
+                    <td>
+                        <span class="badge ${c.has_cert ? 'bg-success' : 'bg-danger'}">
+                            ${c.has_cert ? 'Vorhanden' : 'Fehlend'}
+                        </span>
+                    </td>
+                    <td><small>${escHtml(c.generated || '—')}</small></td>
+                    <td><small>${escHtml(c.expires || '—')}</small></td>
+                    <td>
+                        ${c.has_zip
+                            ? `<a href="${escHtml(c.download_url)}" class="btn btn-sm btn-outline-primary">ZIP herunterladen</a>`
+                            : '<span class="text-muted small">—</span>'}
+                    </td>
+                </tr>`).join('');
+            wrap.innerHTML = `
+                <table class="table table-sm table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>EUI / Name</th>
+                            <th>Zertifikat</th>
+                            <th>Ausgestellt</th>
+                            <th>Gültig bis</th>
+                            <th>Download</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>`;
+        })
+        .catch(err => {
+            wrap.innerHTML = `<div class="alert alert-danger">Fehler: ${err.message}</div>`;
+        });
+}
+
+function escHtml(str) {
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     loadCertificateStatus();
+    loadAcCertificates();
 });
 </script>
 {% endblock %}

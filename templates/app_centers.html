@@ -15,32 +15,32 @@
 <div id="scaciContent">
     <div class="row mb-3">
         <div class="col-md-3">
-            <div class="card text-white bg-primary">
-                <div class="card-body text-center">
+            <div class="card text-white bg-primary h-100">
+                <div class="card-body text-center d-flex flex-column justify-content-center">
                     <h2 id="acCount" class="display-4">—</h2>
                     <p class="mb-0">Verbundene ACs</p>
                 </div>
             </div>
         </div>
         <div class="col-md-3">
-            <div class="card text-white bg-success">
-                <div class="card-body text-center">
+            <div class="card text-white bg-success h-100">
+                <div class="card-body text-center d-flex flex-column justify-content-center">
                     <h2 id="epCount" class="display-4">—</h2>
                     <p class="mb-0">Registrierte Endpunkte</p>
                 </div>
             </div>
         </div>
         <div class="col-md-3">
-            <div class="card text-white bg-info">
-                <div class="card-body text-center">
-                    <h2 id="scaciPort" class="display-4 fs-3">—</h2>
+            <div class="card text-white bg-info h-100">
+                <div class="card-body text-center d-flex flex-column justify-content-center">
+                    <h2 id="scaciPort" class="display-4">—</h2>
                     <p class="mb-0">SCACI-Port</p>
                 </div>
             </div>
         </div>
         <div class="col-md-3">
-            <div class="card text-white bg-secondary">
-                <div class="card-body text-center">
+            <div class="card text-white bg-secondary h-100">
+                <div class="card-body text-center d-flex flex-column justify-content-center">
                     <h2 class="display-4"><i class="fas fa-check-circle"></i></h2>
                     <p class="mb-0">MIOTYA01</p>
                 </div>
@@ -74,21 +74,35 @@
         </div>
     </div>
 
-    <div class="card mb-4">
-        <div class="card-header"><h5 class="mb-0">Zertifikat für Application Center generieren</h5></div>
+    <div class="card mt-4 mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0"><i class="fas fa-certificate"></i> AC-Zertifikate (mTLS)</h5>
+            <button class="btn btn-sm btn-outline-secondary" onclick="loadAcCerts()">
+                <i class="fas fa-sync-alt"></i> Aktualisieren
+            </button>
+        </div>
         <div class="card-body">
             <p class="text-muted mb-3">
-                Erstellt ein CA-signiertes TLS-Client-Zertifikat für ein Application Center.
-                Das ZIP enthält <code>ca_cert.pem</code>, <code>&lt;name&gt;_cert.pem</code> und <code>&lt;name&gt;_key.pem</code>.
+                Jedes Application Center benötigt ein CA-signiertes TLS-Client-Zertifikat, um sich am SCACI-Server
+                zu authentifizieren. Zertifikate werden unter <code>certs/ac_&lt;eui&gt;/</code> gespeichert und sind
+                10 Jahre gültig. Das ZIP enthält <code>ca_cert.pem</code>, Zertifikat und privaten Schlüssel.
             </p>
-            <div class="input-group" style="max-width: 420px;">
-                <input type="text" id="acCertName" class="form-control" placeholder="AC-Name (z.B. ac_building_a)"
-                       pattern="[a-zA-Z0-9_\-]+" title="Nur Buchstaben, Ziffern, _ und -">
-                <button class="btn btn-primary" onclick="generateAcCert()">
-                    <i class="fas fa-certificate"></i> Generieren &amp; Download
-                </button>
+            <div class="row g-2 align-items-end mb-3">
+                <div class="col-md-5">
+                    <label for="acCertEui" class="form-label fw-semibold">AC EUI (16 Hex-Zeichen, ohne Trennzeichen)</label>
+                    <input type="text" id="acCertEui" class="form-control font-monospace" placeholder="z.B. aabbccddeeff0011"
+                           maxlength="16" pattern="[0-9a-fA-F]{16}">
+                </div>
+                <div class="col-md-auto">
+                    <button class="btn btn-primary" id="acCertGenBtn" onclick="generateAcCert()">
+                        <i class="fas fa-certificate"></i> Zertifikat erzeugen
+                    </button>
+                </div>
             </div>
-            <div id="certResult" class="mt-2"></div>
+            <div id="certResult" class="mb-3"></div>
+            <div id="acCertList">
+                <div class="text-muted small">Lade&hellip;</div>
+            </div>
         </div>
     </div>
 
@@ -165,43 +179,90 @@ function refreshStatus() {
 }
 
 function generateAcCert() {
-    const name = document.getElementById('acCertName').value.trim();
-    if (!name || !/^[a-zA-Z0-9_\-]+$/.test(name)) {
-        document.getElementById('certResult').innerHTML =
-            '<div class="alert alert-warning py-1">Bitte einen gültigen Namen eingeben (Buchstaben, Ziffern, _ und -).</div>';
+    const eui = document.getElementById('acCertEui').value.trim().toLowerCase();
+    const resultDiv = document.getElementById('certResult');
+    if (!/^[0-9a-f]{16}$/.test(eui)) {
+        resultDiv.innerHTML =
+            '<div class="alert alert-warning py-1">Bitte eine gültige EUI eingeben — genau 16 Hex-Zeichen ohne Trennzeichen (z.B. aabbccddeeff0011).</div>';
         return;
     }
-    document.getElementById('certResult').innerHTML =
+    const btn = document.getElementById('acCertGenBtn');
+    btn.disabled = true;
+    resultDiv.innerHTML =
         '<div class="alert alert-info py-1"><i class="fas fa-spinner fa-spin"></i> Generiere Zertifikat…</div>';
-    fetch('/api/app-centers/certificate/generate', {
+    fetch('/api/ac-certificates/generate', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({name})
+        body: JSON.stringify({eui})
     })
     .then(r => r.json())
     .then(data => {
         if (data.success) {
-            document.getElementById('certResult').innerHTML =
+            resultDiv.innerHTML =
                 `<div class="alert alert-success py-1">
-                    Zertifikat erstellt.
-                    <a href="/api/app-centers/certificate/download/${encodeURIComponent(name)}"
-                       class="btn btn-sm btn-success ms-2">
+                    Zertifikat für <code>${eui}</code> erstellt.
+                    <a href="${data.download_url}" class="btn btn-sm btn-success ms-2">
                         <i class="fas fa-download"></i> ZIP herunterladen
                     </a>
                 </div>`;
+            document.getElementById('acCertEui').value = '';
+            loadAcCerts();
         } else {
-            document.getElementById('certResult').innerHTML =
+            resultDiv.innerHTML =
                 `<div class="alert alert-danger py-1">Fehler: ${data.message}</div>`;
         }
     })
     .catch(err => {
-        document.getElementById('certResult').innerHTML =
+        resultDiv.innerHTML =
             `<div class="alert alert-danger py-1">Netzwerkfehler: ${err}</div>`;
-    });
+    })
+    .finally(() => { btn.disabled = false; });
+}
+
+function escHtml(str) {
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function loadAcCerts() {
+    const wrap = document.getElementById('acCertList');
+    fetch('/api/ac-certificates')
+        .then(r => r.json())
+        .then(data => {
+            if (!data.success) {
+                wrap.innerHTML = `<div class="alert alert-danger py-1">Fehler: ${escHtml(data.message || 'Unbekannt')}</div>`;
+                return;
+            }
+            const certs = data.certificates || [];
+            if (!certs.length) {
+                wrap.innerHTML = '<p class="text-muted mb-0">Noch keine AC-Zertifikate vorhanden.</p>';
+                return;
+            }
+            const rows = certs.map(c => `
+                <tr>
+                    <td class="font-monospace">${escHtml(c.name)}</td>
+                    <td><span class="badge ${c.has_cert ? 'bg-success' : 'bg-danger'}">${c.has_cert ? 'Vorhanden' : 'Fehlend'}</span></td>
+                    <td><small>${escHtml(c.generated || '—')}</small></td>
+                    <td><small>${escHtml(c.expires || '—')}</small></td>
+                    <td>${c.has_zip
+                        ? `<a href="${escHtml(c.download_url)}" class="btn btn-sm btn-outline-primary"><i class="fas fa-download"></i> ZIP</a>`
+                        : '<span class="text-muted small">—</span>'}</td>
+                </tr>`).join('');
+            wrap.innerHTML = `
+                <table class="table table-sm table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr><th>EUI / Name</th><th>Zertifikat</th><th>Ausgestellt</th><th>Gültig bis</th><th>Download</th></tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>`;
+        })
+        .catch(err => {
+            wrap.innerHTML = `<div class="alert alert-danger py-1">Fehler: ${escHtml(err.message)}</div>`;
+        });
 }
 
 document.addEventListener('DOMContentLoaded', () => {
     refreshStatus();
+    loadAcCerts();
     setInterval(refreshStatus, 10000);
 });
 </script>

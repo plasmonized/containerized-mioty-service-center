@@ -53,6 +53,11 @@
                         <a class="nav-link" href="{{ url_for('base_stations') }}">Base Stations</a>
                     </li>
                     {% endif %}
+                    {% if 'app_centers' in visible_tabs %}
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('app_centers') }}">App Centers</a>
+                    </li>
+                    {% endif %}
                     {% if 'health' in visible_tabs or 'traffic' in visible_tabs %}
                     <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('health') }}">Traffic</a>

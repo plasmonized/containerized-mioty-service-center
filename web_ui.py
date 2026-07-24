@@ -1600,7 +1600,7 @@ SECRET_KEY=your-secret-key-here"""
 @login_required
 @permission_required("can_manage_certificates")
 def certificates():
-    return redirect(url_for("base_stations"))
+    return render_template("certificates.html")
 
 
 @app.route("/logs")
@@ -4310,7 +4310,7 @@ def _generate_ac_certificate(name: str) -> tuple[bool, str]:
 
 @app.route("/api/app-centers/certificate/generate", methods=["POST"])
 @login_required
-@role_required("admin")
+@permission_required("can_manage_certificates")
 def generate_ac_certificate():
     """Generate a TLS client certificate for an Application Center."""
     data = request.get_json(silent=True) or {}
@@ -4319,7 +4319,17 @@ def generate_ac_certificate():
         return jsonify({"success": False, "message": "Name is required"}), 400
     success, result = _generate_ac_certificate(name)
     if success:
-        return jsonify({"success": True, "message": "Certificate generated", "zip": result})
+        import re as _re
+
+        name_clean = _re.sub(r"[^a-zA-Z0-9_\-]", "_", name).lower()
+        return jsonify(
+            {
+                "success": True,
+                "message": "Certificate generated",
+                "name": name_clean,
+                "download_url": f"/api/ac-certificates/{name_clean}/download",
+            }
+        )
     return jsonify({"success": False, "message": result}), 500
 
 
@@ -4339,6 +4349,93 @@ def download_ac_certificate(name: str):
         as_attachment=True,
         download_name=f"ac_{name_clean}_certificates.zip",
     )
+
+
+@app.route("/api/ac-certificates/generate", methods=["POST"])
+@login_required
+@permission_required("can_manage_certificates")
+def generate_ac_certificate_v2():
+    """Generate a CA-signed TLS client certificate for an Application Center (EUI-based)."""
+    data = request.get_json(silent=True) or {}
+    eui = str(data.get("eui", "")).strip().lower()
+    if not eui:
+        return jsonify({"success": False, "message": "EUI is required"}), 400
+    if not _validate_eui(eui):
+        return jsonify({"success": False, "message": "Invalid EUI format (expected 16 hex chars, e.g. aabbccddeeff0011)"}), 400
+    success, result = _generate_ac_certificate(eui)
+    if success:
+        return jsonify(
+            {
+                "success": True,
+                "message": "Certificate generated successfully",
+                "eui": eui,
+                "download_url": f"/api/ac-certificates/{eui}/download",
+            }
+        )
+    return jsonify({"success": False, "message": result}), 500
+
+
+@app.route("/api/ac-certificates/<eui>/download")
+@login_required
+@permission_required("can_manage_certificates")
+def download_ac_certificate_v2(eui: str):
+    """Download the ZIP certificate bundle for an Application Center identified by EUI."""
+    eui = eui.lower()
+    if not _validate_eui(eui):
+        return jsonify({"success": False, "message": "Invalid EUI format"}), 400
+    zip_path = _safe_certs_path(f"ac_{eui}", f"{eui}_certificates.zip")
+    if not zip_path.exists():
+        return jsonify({"success": False, "message": "Certificate not found — generate it first"}), 404
+    return send_file(
+        str(zip_path),
+        as_attachment=True,
+        download_name=f"ac_{eui}_certificates.zip",
+    )
+
+
+@app.route("/api/ac-certificates")
+@login_required
+@permission_required("can_manage_certificates")
+def list_ac_certificates():
+    """List all generated Application Center certificates."""
+    import re as _re
+
+    certs_dir = Path("certs")
+    results = []
+    if certs_dir.exists():
+        for entry in sorted(certs_dir.iterdir()):
+            if entry.is_dir() and entry.name.startswith("ac_"):
+                name = entry.name[3:]
+                cert_file = entry / f"{name}_cert.pem"
+                zip_file = entry / f"{name}_certificates.zip"
+                generated = None
+                expires = None
+                if cert_file.exists():
+                    try:
+                        r = subprocess.run(
+                            ["openssl", "x509", "-in", str(cert_file), "-noout", "-dates"],
+                            capture_output=True,
+                            text=True,
+                            timeout=10,
+                        )
+                        for line in r.stdout.splitlines():
+                            if line.startswith("notBefore="):
+                                generated = line.split("=", 1)[1].strip()
+                            elif line.startswith("notAfter="):
+                                expires = line.split("=", 1)[1].strip()
+                    except Exception:
+                        pass
+                results.append(
+                    {
+                        "name": name,
+                        "has_cert": cert_file.exists(),
+                        "has_zip": zip_file.exists(),
+                        "generated": generated,
+                        "expires": expires,
+                        "download_url": f"/api/ac-certificates/{name}/download",
+                    }
+                )
+    return jsonify({"success": True, "certificates": results})
 
 
 if __name__ == "__main__":

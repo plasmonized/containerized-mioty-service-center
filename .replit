@@ -39,3 +39,7 @@ args = "BSSCI Service"
 
 [agent]
 expertMode = true
+
+[postMerge]
+path = "scripts/post-merge.sh"
+timeoutMs = 60000

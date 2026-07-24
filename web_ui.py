@@ -4225,7 +4225,9 @@ def api_scaci_status():
     if sca_server_instance is None:
         return jsonify({"enabled": True, "connected": 0, "acs": [], "error": "server not ready"})
     try:
-        return jsonify(sca_server_instance.get_status())
+        status = sca_server_instance.get_status()
+        status["port"] = getattr(bssci_config, "SCACI_PORT", 16019)
+        return jsonify(status)
     except Exception as exc:
         logger.error("Error fetching SCACI status: %s", exc)
         return jsonify({"enabled": True, "connected": 0, "acs": [], "error": str(exc)}), 500
@@ -4323,6 +4325,7 @@ def generate_ac_certificate():
 
 @app.route("/api/app-centers/certificate/download/<name>")
 @login_required
+@permission_required("can_manage_certificates")
 def download_ac_certificate(name: str):
     """Download the ZIP certificate bundle for an Application Center."""
     import re as _re

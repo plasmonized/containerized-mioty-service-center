@@ -13,9 +13,8 @@ services:
       - "5056:5000"    # Web UI port
       - "16021:16020"    # SCACI TLS Server port
     volumes:
-      - ./certs:/app/certs:rw             # TLS certificates (writable for auto-generation)
+      - ./certs:/app/certs:rw
       - ./endpoints.json:/app/endpoints.json:rw
-      - ./bssci_config.py:/app/bssci_config.py:rw
       - ./.env:/app/.env:rw
       - ./base_stations.json:/app/data/base_stations.json:rw
       - ./logs:/app/logs

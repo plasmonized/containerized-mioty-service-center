@@ -48,7 +48,7 @@ class TLSServer:
         # Deduplication variables
         # message_key -> {message, timestamp, snr, bs_eui}
         self.deduplication_buffer: dict[str, dict[str, Any]] = {}
-        self.deduplication_delay = bssci_config.DEDUPLICATION_DELAY
+        self.deduplication_delay = getattr(bssci_config, "DEDUPLICATION_DELAY", 2.0)
         self.deduplication_stats = {
             "total_messages": 0,
             "duplicate_messages": 0,

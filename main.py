@@ -58,7 +58,10 @@ async def main() -> None:
         tls_server_instance.sca_server = sca_server_instance  # type: ignore[attr-defined]
         # Wire back: sca_server → tls_server for reg validation and downlink delivery
         sca_server_instance.tls_server = tls_server_instance
-        logger.info("SCACI interface ENABLED — listening on port %s", bssci_config.SCACI_PORT)
+        logger.info(
+            "SCACI interface ENABLED — listening on port %s",
+            getattr(bssci_config, "SCACI_PORT", 16019),
+        )
     else:
         logger.info("SCACI interface disabled (set SCACI_ENABLED=true to enable)")
 

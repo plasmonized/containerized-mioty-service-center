@@ -243,9 +243,14 @@ function loadAcCerts() {
                     <td><span class="badge ${c.has_cert ? 'bg-success' : 'bg-danger'}">${c.has_cert ? 'Vorhanden' : 'Fehlend'}</span></td>
                     <td><small>${escHtml(c.generated || '—')}</small></td>
                     <td><small>${escHtml(c.expires || '—')}</small></td>
-                    <td>${c.has_zip
-                        ? `<a href="${escHtml(c.download_url)}" class="btn btn-sm btn-outline-primary"><i class="fas fa-download"></i> ZIP</a>`
-                        : '<span class="text-muted small">—</span>'}</td>
+                    <td>
+                        ${c.has_zip
+                            ? `<a href="${escHtml(c.download_url)}" class="btn btn-sm btn-outline-primary"><i class="fas fa-download"></i> ZIP</a>`
+                            : '<span class="text-muted small">—</span>'}
+                        <button class="btn btn-sm btn-outline-danger ms-1" title="Zertifikat löschen" onclick="deleteAcCert('${escHtml(c.name)}')">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </td>
                 </tr>`).join('');
             wrap.innerHTML = `
                 <table class="table table-sm table-hover align-middle mb-0">
@@ -258,6 +263,20 @@ function loadAcCerts() {
         .catch(err => {
             wrap.innerHTML = `<div class="alert alert-danger py-1">Fehler: ${escHtml(err.message)}</div>`;
         });
+}
+
+function deleteAcCert(name) {
+    if (!confirm(`Zertifikat für "${name}" wirklich löschen? Der Download ist danach nicht mehr möglich.`)) return;
+    fetch(`/api/ac-certificates/${encodeURIComponent(name)}`, { method: 'DELETE' })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                loadAcCerts();
+            } else {
+                alert(`Löschen fehlgeschlagen: ${data.message || 'Unbekannter Fehler'}`);
+            }
+        })
+        .catch(err => alert(`Löschen fehlgeschlagen: ${err.message}`));
 }
 
 document.addEventListener('DOMContentLoaded', () => {

@@ -4393,6 +4393,28 @@ def download_ac_certificate_v2(eui: str):
     )
 
 
+@app.route("/api/ac-certificates/<name>", methods=["DELETE"])
+@login_required
+@permission_required("can_manage_certificates")
+def delete_ac_certificate(name: str):
+    """Delete an Application Center certificate (whole certs/ac_{name} directory)."""
+    import re as _re
+    import shutil
+
+    name_clean = name.lower()
+    if not name_clean or not _re.fullmatch(r"[a-z0-9_\-]+", name_clean):
+        return jsonify({"success": False, "message": "Invalid name"}), 400
+    cert_dir = Path("certs") / f"ac_{name_clean}"
+    if not cert_dir.is_dir():
+        return jsonify({"success": False, "message": "Certificate not found"}), 404
+    try:
+        shutil.rmtree(cert_dir)
+    except OSError as e:
+        return jsonify({"success": False, "message": f"Deletion failed: {e}"}), 500
+    logger.info(f"AC certificate deleted: {name_clean}")
+    return jsonify({"success": True, "message": f"Certificate {name_clean} deleted"})
+
+
 @app.route("/api/ac-certificates")
 @login_required
 @permission_required("can_manage_certificates")

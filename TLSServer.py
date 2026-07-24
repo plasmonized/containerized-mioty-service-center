@@ -367,8 +367,11 @@ class TLSServer:
             bssci_config.LISTEN_PORT,
         )
 
-        logger.info("📨 Starting MQTT inbound processor task...")
-        self._spawn_background_task(self.process_mqtt_messages())
+        if self.mqtt_in_queue is not None:
+            logger.info("📨 Starting MQTT inbound processor task...")
+            self._spawn_background_task(self.process_mqtt_messages())
+        else:
+            logger.info("📨 MQTT inbound processor skipped (MQTT disabled)")
 
         logger.info("✓ BSSCI TLS Server is ready and listening for base station connections")
         async with server:
@@ -696,7 +699,8 @@ class TLSServer:
                         }
                     ),
                 }
-                await self.mqtt_out_queue.put(detach_notification)
+                if self.mqtt_out_queue:
+                    await self.mqtt_out_queue.put(detach_notification)
 
             logger.info(f"✅ DETACH REQUEST sent for sensor {sensor_eui}")
             return True
@@ -1306,17 +1310,19 @@ class TLSServer:
                         logger.info(
                             f"   Status data: Code={data_dict['code']}, CPU={cpu_pct:.1f}%, Memory={mem_pct:.1f}%"
                         )
-                        logger.info(f"   Queue size before add: {self.mqtt_out_queue.qsize()}")
+                        if self.mqtt_out_queue:
+                            logger.info(f"   Queue size before add: {self.mqtt_out_queue.qsize()}")
 
                         try:
-                            await self.mqtt_out_queue.put(
-                                {
-                                    "topic": mqtt_topic,
-                                    "payload": payload,
-                                }
-                            )
-                            logger.info("✅ Base station status queued for MQTT publication")
-                            logger.info(f"   Queue size after add: {self.mqtt_out_queue.qsize()}")
+                            if self.mqtt_out_queue:
+                                await self.mqtt_out_queue.put(
+                                    {
+                                        "topic": mqtt_topic,
+                                        "payload": payload,
+                                    }
+                                )
+                                logger.info("✅ Base station status queued for MQTT publication")
+                                logger.info(f"   Queue size after add: {self.mqtt_out_queue.qsize()}")
                         except Exception as mqtt_err:
                             logger.error(f"❌ Failed to queue MQTT message: {mqtt_err}")
                         msg_pack = encode_message(
@@ -1809,7 +1815,8 @@ class TLSServer:
                                     }
                                 ),
                             }
-                            await self.mqtt_out_queue.put(detach_response_notification)
+                            if self.mqtt_out_queue:
+                                await self.mqtt_out_queue.put(detach_response_notification)
 
                     # Variable MAC (VM) Sub-Channel Message Handlers
                     elif msg_type in ("vm.activateRsp", "vmActRsp"):
@@ -2145,6 +2152,16 @@ class TLSServer:
                                         ),
                                     }
                                 )
+
+                            # Notify SCACI Application Centers about DL TX result
+                            _sca = getattr(self, "sca_server", None)
+                            if _sca is not None:
+                                try:
+                                    await _sca.send_dl_data_res(
+                                        eui.upper(), int(op_id) if str(op_id).lstrip("-").isdigit() else 0, code
+                                    )
+                                except Exception as _sca_err:
+                                    logger.debug("SCACI dlDataRes notify failed: %s", _sca_err)
 
                     elif msg_type == "error":
                         err_code = message.get("code", "?")
@@ -2559,9 +2576,10 @@ class TLSServer:
                 "timestamp": asyncio.get_event_loop().time(),
             }
 
-            await self.mqtt_out_queue.put(
-                {"topic": f"ep/{eui.upper()}/warning", "payload": json.dumps(warning_payload)}
-            )
+            if self.mqtt_out_queue:
+                await self.mqtt_out_queue.put(
+                    {"topic": f"ep/{eui.upper()}/warning", "payload": json.dumps(warning_payload)}
+                )
 
             logger.warning(f"📤 Inactivity warning notification sent via MQTT for {eui}")
 
@@ -3603,14 +3621,33 @@ class TLSServer:
             return False
 
     def add_sensor_via_ui(self, sensor_data: dict) -> bool:
-        """Add sensor via Web UI - sends to MQTT queue for processing"""
+        """Add sensor via Web UI - sends to processing queue or directly if MQTT disabled."""
         try:
             # Ensure EUI is uppercase
             sensor_data["eui"] = sensor_data["eui"].upper()
 
-            # Add to MQTT queue using thread-safe method
             import asyncio
             import threading
+
+            if self.mqtt_in_queue is None:
+                # MQTT disabled — schedule registration directly on the running event loop
+                # so that process_sensor_config_message wires the sensor to connected BSes.
+                loop = None
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    pass
+                if loop and loop.is_running():
+                    _task = asyncio.ensure_future(
+                        self.process_sensor_config_message(sensor_data), loop=loop
+                    )
+                    self._background_tasks.add(_task)
+                    _task.add_done_callback(self._background_tasks.discard)
+                    logger.info(f"✅ Sensor {sensor_data['eui']} scheduled for direct processing (MQTT disabled)")
+                else:
+                    logger.error("No running event loop — cannot register sensor (MQTT disabled)")
+                    return False
+                return True
 
             def queue_sensor():
                 try:
@@ -3622,7 +3659,7 @@ class TLSServer:
                         asyncio.set_event_loop(loop)
 
                     # Schedule the coroutine
-                    future = asyncio.ensure_future(self.mqtt_in_queue.put(sensor_data), loop=loop)
+                    future = asyncio.ensure_future(self.mqtt_in_queue.put(sensor_data), loop=loop)  # type: ignore[arg-type]
                     self._background_tasks.add(future)
                     future.add_done_callback(self._background_tasks.discard)
                     logger.info(f"✅ Sensor {sensor_data['eui']} queued for processing via UI")

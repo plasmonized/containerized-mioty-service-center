@@ -197,16 +197,29 @@ async def test_reg_returns_reg_rsp_and_reg_cmp(server: Any) -> None:
 
 @pytest.mark.asyncio
 async def test_reg_records_endpoint_in_ac_registered_eps(server: Any) -> None:
-    """reg must store the endpoint EUI in ac_registered_eps."""
-    frames_in = [
+    """reg stores endpoint in ac_registered_eps while connection is live; purged on disconnect."""
+    reader = LiveReader([
         {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
         {"command": "reg", "opId": 1, "epEui": EP_EUI_INT},
-    ]
-    await run_exchange(server, frames_in)
-    # Cleanup removes writer from connected_acs; ac_registered_eps persists
+    ])
+    writer = FakeWriter()
+    task = asyncio.create_task(server.handle_ac(reader, writer))
+
+    # Give handler time to process con + reg
+    await asyncio.sleep(0.05)
+
     ac_eui_str = int_to_eui(AC_EUI_INT)
     registered = server.ac_registered_eps.get(ac_eui_str, [])
-    assert EP_EUI.upper() in [e.upper() for e in registered]
+    assert EP_EUI.upper() in [e.upper() for e in registered], (
+        "ac_registered_eps should contain EP_EUI while connection is live"
+    )
+
+    # On disconnect, ac_registered_eps must be purged
+    task.cancel()
+    await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), timeout=1.0)
+    assert server.ac_registered_eps.get(ac_eui_str, []) == [], (
+        "ac_registered_eps must be cleared after AC disconnects"
+    )
 
 
 @pytest.mark.asyncio
@@ -348,46 +361,39 @@ async def test_broadcast_ul_data_to_connected_ac(server: Any) -> None:
 
 @pytest.mark.asyncio
 async def test_broadcast_ul_data_filtered_by_registered_ep(server: Any) -> None:
-    """With registrations in place, ac_registered_eps filters by endpoint correctly."""
+    """With registrations in place, ac_registered_eps filters by endpoint correctly (checked live)."""
     other_eui = "FFFFFFFFFFFFFFFF"
     other_eui_int = eui_to_int(other_eui)
     ac_eui_b = "0807060504030201"
     ac_eui_b_int = eui_to_int(ac_eui_b)
 
+    # Use LiveReader so connections stay open while we inspect state
+    reader_a = LiveReader([
+        {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
+        {"command": "reg", "opId": 1, "epEui": EP_EUI_INT},
+    ])
+    reader_b = LiveReader([
+        {"command": "con", "opId": 0, "acEui": ac_eui_b_int},
+        {"command": "reg", "opId": 1, "epEui": other_eui_int},
+    ])
     writer_a = FakeWriter()
     writer_b = FakeWriter()
 
-    task_a = asyncio.create_task(
-        server.handle_ac(
-            FakeReader(
-                [
-                    {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
-                    {"command": "reg", "opId": 1, "epEui": EP_EUI_INT},
-                ]
-            ),
-            writer_a,
-        )
-    )
-    task_b = asyncio.create_task(
-        server.handle_ac(
-            FakeReader(
-                [
-                    {"command": "con", "opId": 0, "acEui": ac_eui_b_int},
-                    # AC B registers a different endpoint
-                    {"command": "reg", "opId": 1, "epEui": other_eui_int},
-                ]
-            ),
-            writer_b,
-        )
-    )
+    task_a = asyncio.create_task(server.handle_ac(reader_a, writer_a))
+    task_b = asyncio.create_task(server.handle_ac(reader_b, writer_b))
 
-    await asyncio.gather(task_a, task_b, return_exceptions=True)
+    # Wait for both handlers to process con + reg
+    await asyncio.sleep(0.05)
 
-    # Verify registration filter state was captured correctly
+    # Verify registration filter state while connections are live
     ac_a_eps = server.ac_registered_eps.get(int_to_eui(AC_EUI_INT), [])
     ac_b_eps = server.ac_registered_eps.get(int_to_eui(ac_eui_b_int), [])
-    assert any(EP_EUI.upper() == e.upper() for e in ac_a_eps)
-    assert not any(EP_EUI.upper() == e.upper() for e in ac_b_eps)
+    assert any(EP_EUI.upper() == e.upper() for e in ac_a_eps), "AC A should have EP_EUI registered"
+    assert not any(EP_EUI.upper() == e.upper() for e in ac_b_eps), "AC B should NOT have EP_EUI"
+
+    task_a.cancel()
+    task_b.cancel()
+    await asyncio.gather(task_a, task_b, return_exceptions=True)
 
 
 # ---------------------------------------------------------------------------
@@ -460,6 +466,8 @@ async def test_reg_rejected_when_endpoint_unknown_in_sensor_config(server: Any) 
 
     class FakeTLSServer:
         sensor_config: ClassVar[list[dict[str, Any]]] = [{"eui": "AABBCCDD11223344"}]
+        registered_sensors: ClassVar[dict[str, Any]] = {}
+        connected_base_stations: ClassVar[dict[Any, str]] = {}
 
     server.tls_server = FakeTLSServer()
 
@@ -479,6 +487,8 @@ async def test_reg_accepted_when_endpoint_known_in_sensor_config(server: Any) ->
 
     class FakeTLSServer:
         sensor_config: ClassVar[list[dict[str, Any]]] = [{"eui": EP_EUI}]
+        registered_sensors: ClassVar[dict[str, Any]] = {}
+        connected_base_stations: ClassVar[dict[Any, str]] = {}
 
     server.tls_server = FakeTLSServer()
 

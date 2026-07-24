@@ -127,6 +127,8 @@ class SCAServer:
             stale = [k for k, v in self._pending_ops.items() if v.get("writer") is writer]
             for k in stale:
                 self._pending_ops.pop(k, None)
+            if ac_eui:
+                self.ac_registered_eps.pop(ac_eui, None)
         if ac_eui:
             logger.info("SCACI AC disconnected: %s", ac_eui)
 
@@ -325,6 +327,7 @@ class SCAServer:
             await self._send(writer, msg.build_error_response(op_id, _ENOTSUP))
         else:
             logger.warning("SCACI unknown command %s from %s", command, ac_label)
+            await self._send(writer, msg.build_error_response(op_id, _ENOTSUP))
 
     # ------------------------------------------------------------------
     # AC-initiated handlers
@@ -401,6 +404,25 @@ class SCAServer:
             eps = self.ac_registered_eps.setdefault(ac_eui, [])
             if ep_eui not in eps:
                 eps.append(ep_eui)
+
+        # If the endpoint is not yet attached to any BS, trigger an attach attempt.
+        tls = self.tls_server
+        if tls is not None:
+            eui_key = ep_eui.upper()
+            already_registered = tls.registered_sensors.get(eui_key, {}).get("registered", False)
+            if not already_registered:
+                sensor_cfg = next(
+                    (s for s in tls.sensor_config if s.get("eui", "").upper() == eui_key),
+                    None,
+                )
+                if sensor_cfg:
+                    for writer_bs in list(tls.connected_base_stations.keys()):
+                        try:
+                            await tls.send_attach_request(writer_bs, sensor_cfg)
+                        except Exception as exc:
+                            logger.warning(
+                                "SCACI reg: attach attempt failed for %s on BS: %s", ep_eui, exc
+                            )
 
         await self._send(writer, msg.build_reg_response(op_id, rc=0))
         await self._send(writer, msg.build_reg_complete(op_id))
@@ -567,6 +589,50 @@ class SCAServer:
                     "sent_at": time.monotonic(),
                 }
             await self._send(writer, ul_msg)
+
+    async def send_dl_data_res(
+        self,
+        ep_eui_hex: str,
+        dl_op_id: int,
+        rc: int,
+    ) -> None:
+        """Notify all ACs that registered this endpoint about a DL TX result (dlDataRes)."""
+        ep_eui_int = eui_to_int(ep_eui_hex) if len(ep_eui_hex) == 16 else 0
+
+        with self._state_lock:
+            writers = list(self.connected_acs.keys())
+            any_registrations = any(self.ac_registered_eps.values())
+            if any_registrations:
+                writers = [
+                    w
+                    for w in writers
+                    if ep_eui_hex.upper()
+                    in [
+                        e.upper()
+                        for e in self.ac_registered_eps.get(self.connected_acs.get(w, ""), [])
+                    ]
+                ]
+
+        for writer in writers:
+            op_id = self._next_op_id(writer)
+            dl_res_msg = msg.build_tx_data_res(
+                op_id=op_id,
+                ep_eui=ep_eui_int,
+                rc=rc,
+            )
+            with self._state_lock:
+                self._pending_ops[op_id] = {
+                    "writer": writer,
+                    "command": "dlDataRes",
+                    "sent_at": time.monotonic(),
+                }
+            await self._send(writer, dl_res_msg)
+            logger.debug(
+                "SCACI dlDataRes sent to AC for endpoint %s dl_op_id=%s rc=%s",
+                ep_eui_hex,
+                dl_op_id,
+                rc,
+            )
 
     async def send_ep_stat(
         self,

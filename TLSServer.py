@@ -218,6 +218,16 @@ class TLSServer:
                 ssl_ctx.minimum_version = ssl.TLSVersion.TLSv1_2
                 logger.warning("   TLS compatibility mode: ENABLED (SECLEVEL=1, min TLSv1.2)")
 
+            # Python 3.12+ / OpenSSL 3.x enforces that CA certs have keyUsage=keyCertSign.
+            # Legacy CA certs generated without that extension cause handshake failure.
+            # Clearing VERIFY_X509_STRICT restores the pre-3.12 behaviour while keeping
+            # all other chain / expiry / CN checks intact.
+            if hasattr(ssl, "VERIFY_X509_STRICT"):
+                ssl_ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT  # type: ignore[attr-defined]
+                logger.info(
+                    "   Legacy CA compatibility: relaxed X.509 strict mode (keyUsage not required)"
+                )
+
             # Log SSL context details
             logger.info(
                 f"   TLS Protocol versions: {ssl_ctx.minimum_version.name} - {ssl_ctx.maximum_version.name}"

@@ -239,6 +239,10 @@ class SCAServer:
             if compat_mode:
                 ssl_ctx.set_ciphers("DEFAULT:@SECLEVEL=1")
                 ssl_ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+
+            # Relax strict CA key-usage check for legacy certs (Python 3.12+ / OpenSSL 3.x)
+            if hasattr(ssl, "VERIFY_X509_STRICT"):
+                ssl_ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT  # type: ignore[attr-defined]
         except FileNotFoundError as exc:
             logger.error("SCACI cert file not found: %s — server not started", exc)
             return

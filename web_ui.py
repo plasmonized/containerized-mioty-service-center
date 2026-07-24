@@ -114,9 +114,15 @@ def _ensure_ca_exists():
             "-out",
             "certs/ca_cert.pem",
             "-days",
-            "365",
+            "3650",
             "-subj",
             "/C=US/ST=State/L=City/O=BSSCI/CN=BSSCI-CA",
+            "-addext",
+            "basicConstraints=critical,CA:true",
+            "-addext",
+            "keyUsage=critical,keyCertSign,cRLSign",
+            "-addext",
+            "subjectKeyIdentifier=hash",
         ],
         capture_output=True,
         text=True,
@@ -3816,7 +3822,7 @@ def generate_certificates():
                 }
             )
 
-        # Generate CA certificate
+        # Generate CA certificate (with proper extensions for Python 3.12+ / OpenSSL 3.x)
         result = subprocess.run(
             [
                 "openssl",
@@ -3828,9 +3834,15 @@ def generate_certificates():
                 "-out",
                 "certs/ca_cert.pem",
                 "-days",
-                "365",
+                "3650",
                 "-subj",
                 "/C=US/ST=State/L=City/O=BSSCI/CN=BSSCI-CA",
+                "-addext",
+                "basicConstraints=critical,CA:true",
+                "-addext",
+                "keyUsage=critical,keyCertSign,cRLSign",
+                "-addext",
+                "subjectKeyIdentifier=hash",
             ],
             capture_output=True,
             text=True,

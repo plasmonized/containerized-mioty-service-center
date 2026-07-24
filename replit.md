@@ -95,6 +95,8 @@ Three user roles - Admin (full access), User (sensor/BS management), Viewer (rea
 
 ## Recent Changes
 
+- **v1.691 - epStat-Propagation an verbundene ACs**: Online/Offline-Statuswechsel von Sensoren werden jetzt automatisch per `epStat` an alle verbundenen Application Centers propagiert. Beim Verbindungsaufbau eines neuen ACs sendet der SC sofort einen `epStat`-Burst mit dem aktuellen Status aller bekannten Sensoren (aus dem Heartbeat-Tracking). Kein Warten auf den nächsten Heartbeat-Zyklus. 8 neue Tests in `test_scaci_integration.py` (148 Tests gesamt, alle grün).
+
 - **v1.690 - SCACI Interface (SC ↔ Application Center)**: Neues MIOTYA01-Protokollmodul (`scaci_protocol.py`, `scaci_messages.py`) und TLS-Server `SCAServer.py` für die Anbindung von Application Centers. MQTT und SCACI sind unabhängig per `MQTT_ENABLED`/`SCACI_ENABLED` in der `.env` aktivierbar. ulData-Fan-out nach Deduplizierung an alle verbundenen ACs. Neue Web-UI-Seite `/app-centers` mit Echtzeit-Status. Konfigurationsseite mit Connector-Abschnitt (MQTT/SCACI-Toggles, SCACI-Port). 29 neue Tests für Codec, EUI-Konvertierung und Message-Builder. Vollständige Operationen: con/ping/reg/dereg/dlDataQue/dlDataRev (AC→SC) und status/ulData/epStat/dlDataRes (SC→AC); ulDataTx und rc.* antworten mit ENOTSUP (rc=95).
 
 - **v1.689 - CI & Ruff: `release`-Referenzen entfernt, Markdown aus Ruff-Scope ausgeschlossen**: GitHub Actions Workflow (main.yml) referenzierte noch `release` in Branch-Filtern und docker-pr-Bedingung — auf `main` bereinigt. Ruff hat Python-Code-Blöcke in Markdown-Dateien (CONTRIBUTING.md, README.md, docs/, .agents/) geprüft und CI zum Scheitern gebracht; `.agents`, `docs`, `CONTRIBUTING.md`, `README.md` zu `extend-exclude` in pyproject.toml hinzugefügt.

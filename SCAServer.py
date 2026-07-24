@@ -440,6 +440,9 @@ class SCAServer:
         await self._send(writer, msg.build_con_response(op_id))
         await self._send(writer, msg.build_con_complete(op_id))
 
+        # Send current endpoint status for all tracked sensors as an initial burst.
+        self._spawn(self._send_ep_stat_burst(writer))
+
     async def _handle_ping(
         self, writer: asyncio.streams.StreamWriter, frame: dict[str, Any]
     ) -> None:
@@ -855,6 +858,51 @@ class SCAServer:
             writers = list(self.connected_acs.keys())
 
         for writer in writers:
+            op_id = self._next_op_id(writer)
+            ep_msg = msg.build_ep_stat(
+                op_id=op_id,
+                ep_eui=ep_eui_int,
+                online=online,
+                last_seen_ns=last_seen_ns,
+            )
+            with self._state_lock:
+                self._pending_ops[op_id] = {
+                    "writer": writer,
+                    "command": "epStat",
+                    "sent_at": time.monotonic(),
+                }
+            await self._send(writer, ep_msg)
+
+    async def _send_ep_stat_burst(self, writer: asyncio.streams.StreamWriter) -> None:
+        """Send the current online/offline state for every tracked sensor to *writer*.
+
+        Called as a background task immediately after a new AC completes its
+        connection handshake (conRsp/conCmp).  This gives the AC an initial
+        snapshot of endpoint availability so it does not have to wait for the
+        next heartbeat-monitor cycle.
+        """
+        tls = self.tls_server
+        if tls is None:
+            return
+        try:
+            heartbeat: dict[str, dict] = dict(getattr(tls, "sensor_heartbeat", {}))
+        except Exception:
+            return
+        if not heartbeat:
+            return
+        ac_label = self._ac_label(writer)
+        logger.info(
+            "SCACI epStat burst: sending initial status for %d endpoint(s) to AC %s",
+            len(heartbeat),
+            ac_label,
+        )
+        for ep_eui_hex, hb in heartbeat.items():
+            if len(ep_eui_hex) != 16:
+                continue
+            online = hb.get("state") == "online"
+            last_seen = hb.get("last_seen")
+            last_seen_ns = int(last_seen * 1_000_000_000) if last_seen else None
+            ep_eui_int = eui_to_int(ep_eui_hex)
             op_id = self._next_op_id(writer)
             ep_msg = msg.build_ep_stat(
                 op_id=op_id,

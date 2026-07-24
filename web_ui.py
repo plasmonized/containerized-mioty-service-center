@@ -4231,5 +4231,112 @@ def api_scaci_status():
         return jsonify({"enabled": True, "connected": 0, "acs": [], "error": str(exc)}), 500
 
 
+def _generate_ac_certificate(name: str) -> tuple[bool, str]:
+    """Generate a CA-signed TLS client certificate for an Application Center.
+
+    Stores files in certs/ac_<name>/ and returns (success, message_or_zip_path).
+    """
+    import re as _re
+    import subprocess
+    import zipfile
+
+    name_clean = _re.sub(r"[^a-zA-Z0-9_\-]", "_", name).lower()
+    if not name_clean:
+        return False, "Invalid name"
+    if not _ensure_ca_exists():
+        return False, "Failed to ensure CA exists"
+
+    ac_cert_dir = _safe_certs_path(f"ac_{name_clean}")
+    ac_cert_dir.mkdir(parents=True, exist_ok=True)
+
+    key_path = _safe_certs_path(f"ac_{name_clean}", f"{name_clean}_key.pem")
+    csr_path = _safe_certs_path(f"ac_{name_clean}", f"{name_clean}.csr")
+    cert_path = _safe_certs_path(f"ac_{name_clean}", f"{name_clean}_cert.pem")
+
+    result = subprocess.run(
+        ["openssl", "genrsa", "-out", str(key_path), "2048"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        return False, f"Key generation failed: {result.stderr}"
+
+    result = subprocess.run(
+        [
+            "openssl", "req", "-new",
+            "-key", str(key_path),
+            "-out", str(csr_path),
+            "-subj", f"/O=SCACI-AC/CN={name_clean}",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        return False, f"CSR generation failed: {result.stderr}"
+
+    result = subprocess.run(
+        [
+            "openssl", "x509", "-req",
+            "-in", str(csr_path),
+            "-CA", "certs/ca_cert.pem",
+            "-CAkey", "certs/ca_key.pem",
+            "-CAcreateserial",
+            "-out", str(cert_path),
+            "-days", "3650",
+            "-sha256",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        return False, f"Certificate signing failed: {result.stderr}"
+
+    # Create ZIP archive in same directory
+    zip_path = _safe_certs_path(f"ac_{name_clean}", f"{name_clean}_certificates.zip")
+    with zipfile.ZipFile(str(zip_path), "w") as zf:
+        zf.write("certs/ca_cert.pem", "ca_cert.pem")
+        zf.write(str(cert_path), f"{name_clean}_cert.pem")
+        zf.write(str(key_path), f"{name_clean}_key.pem")
+
+    # Clean up CSR
+    csr_path.unlink(missing_ok=True)
+    return True, str(zip_path)
+
+
+@app.route("/api/app-centers/certificate/generate", methods=["POST"])
+@login_required
+@role_required("admin")
+def generate_ac_certificate():
+    """Generate a TLS client certificate for an Application Center."""
+    data = request.get_json(silent=True) or {}
+    name = str(data.get("name", "")).strip()
+    if not name:
+        return jsonify({"success": False, "message": "Name is required"}), 400
+    success, result = _generate_ac_certificate(name)
+    if success:
+        return jsonify({"success": True, "message": "Certificate generated", "zip": result})
+    return jsonify({"success": False, "message": result}), 500
+
+
+@app.route("/api/app-centers/certificate/download/<name>")
+@login_required
+def download_ac_certificate(name: str):
+    """Download the ZIP certificate bundle for an Application Center."""
+    import re as _re
+
+    name_clean = _re.sub(r"[^a-zA-Z0-9_\-]", "_", name).lower()
+    zip_path = _safe_certs_path(f"ac_{name_clean}", f"{name_clean}_certificates.zip")
+    if not zip_path.exists():
+        return jsonify({"success": False, "message": "Certificate not found — generate it first"}), 404
+    return send_file(
+        str(zip_path),
+        as_attachment=True,
+        download_name=f"ac_{name_clean}_certificates.zip",
+    )
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)

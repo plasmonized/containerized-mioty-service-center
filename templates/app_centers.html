@@ -64,14 +64,31 @@
                         <th>Peer</th>
                         <th>Verbunden seit</th>
                         <th>Endpunkte</th>
-                        <th>CPU</th>
-                        <th>RAM</th>
+                        <th>SC-Uptime (s)</th>
                     </tr>
                 </thead>
                 <tbody id="acTableBody">
-                    <tr><td colspan="7" class="text-center text-muted py-4">Lade Daten…</td></tr>
+                    <tr><td colspan="6" class="text-center text-muted py-4">Lade Daten…</td></tr>
                 </tbody>
             </table>
+        </div>
+    </div>
+
+    <div class="card mb-4">
+        <div class="card-header"><h5 class="mb-0">Zertifikat für Application Center generieren</h5></div>
+        <div class="card-body">
+            <p class="text-muted mb-3">
+                Erstellt ein CA-signiertes TLS-Client-Zertifikat für ein Application Center.
+                Das ZIP enthält <code>ca_cert.pem</code>, <code>&lt;name&gt;_cert.pem</code> und <code>&lt;name&gt;_key.pem</code>.
+            </p>
+            <div class="input-group" style="max-width: 420px;">
+                <input type="text" id="acCertName" class="form-control" placeholder="AC-Name (z.B. ac_building_a)"
+                       pattern="[a-zA-Z0-9_\-]+" title="Nur Buchstaben, Ziffern, _ und -">
+                <button class="btn btn-primary" onclick="generateAcCert()">
+                    <i class="fas fa-certificate"></i> Generieren &amp; Download
+                </button>
+            </div>
+            <div id="certResult" class="mt-2"></div>
         </div>
     </div>
 
@@ -124,29 +141,63 @@ function refreshStatus() {
 
             const tbody = document.getElementById('acTableBody');
             if (acs.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">Keine Application Centers verbunden</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">Keine Application Centers verbunden</td></tr>';
                 return;
             }
 
             tbody.innerHTML = acs.map(ac => {
                 const connAt = ac.connected_at ? new Date(ac.connected_at).toLocaleString('de-DE') : '—';
                 const eps = (ac.registered_eps || []).length;
-                const cpu = ac.last_status?.cpu != null ? ac.last_status.cpu.toFixed(1) + '%' : '—';
-                const mem = ac.last_status?.memory != null ? ac.last_status.memory.toFixed(1) + '%' : '—';
+                const uptime = data.uptime_s != null ? data.uptime_s + ' s' : '—';
                 return `<tr>
                     <td><code>${ac.eui || '—'}</code></td>
                     <td>${ac.version || '—'}</td>
                     <td><small class="text-muted">${ac.peer || '—'}</small></td>
                     <td>${connAt}</td>
                     <td><span class="badge bg-success">${eps}</span></td>
-                    <td>${cpu}</td>
-                    <td>${mem}</td>
+                    <td>${uptime}</td>
                 </tr>`;
             }).join('');
         })
         .catch(err => {
             console.error('SCACI status error:', err);
         });
+}
+
+function generateAcCert() {
+    const name = document.getElementById('acCertName').value.trim();
+    if (!name || !/^[a-zA-Z0-9_\-]+$/.test(name)) {
+        document.getElementById('certResult').innerHTML =
+            '<div class="alert alert-warning py-1">Bitte einen gültigen Namen eingeben (Buchstaben, Ziffern, _ und -).</div>';
+        return;
+    }
+    document.getElementById('certResult').innerHTML =
+        '<div class="alert alert-info py-1"><i class="fas fa-spinner fa-spin"></i> Generiere Zertifikat…</div>';
+    fetch('/api/app-centers/certificate/generate', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name})
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            document.getElementById('certResult').innerHTML =
+                `<div class="alert alert-success py-1">
+                    Zertifikat erstellt.
+                    <a href="/api/app-centers/certificate/download/${encodeURIComponent(name)}"
+                       class="btn btn-sm btn-success ms-2">
+                        <i class="fas fa-download"></i> ZIP herunterladen
+                    </a>
+                </div>`;
+        } else {
+            document.getElementById('certResult').innerHTML =
+                `<div class="alert alert-danger py-1">Fehler: ${data.message}</div>`;
+        }
+    })
+    .catch(err => {
+        document.getElementById('certResult').innerHTML =
+            `<div class="alert alert-danger py-1">Netzwerkfehler: ${err}</div>`;
+    });
 }
 
 document.addEventListener('DOMContentLoaded', () => {

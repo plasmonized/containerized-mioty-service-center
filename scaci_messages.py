@@ -86,9 +86,31 @@ def build_dl_data_rev_complete(op_id: int) -> dict[str, Any]:
     return {"command": "dlDataRevCmp", "opId": op_id}
 
 
-def build_error_response(op_id: int, rc: int = 95) -> dict[str, Any]:
-    """Generic error response (rc=95 = POSIX ENOTSUP — operation not supported)."""
-    return {"command": "error", "opId": op_id, "rc": rc}
+_POSIX_NAMES: dict[int, str] = {
+    0: "OK",
+    1: "EPERM",
+    2: "ENOENT",
+    3: "ESRCH",
+    12: "ENOMEM",
+    13: "EACCES",
+    16: "EBUSY",
+    22: "EINVAL",
+    28: "ENOSPC",
+    95: "ENOTSUP",
+}
+
+
+def build_error_response(op_id: int, rc: int = 95, message: str = "") -> dict[str, Any]:
+    """Generic error response with POSIX code and human-readable message.
+
+    rc=95 = POSIX ENOTSUP — operation not supported (default for unsupported/unknown commands).
+    """
+    return {
+        "command": "error",
+        "opId": op_id,
+        "rc": rc,
+        "message": message or _POSIX_NAMES.get(rc, f"errno {rc}"),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -97,14 +119,24 @@ def build_error_response(op_id: int, rc: int = 95) -> dict[str, Any]:
 
 
 def build_status_response(op_id: int, sc_info: dict[str, Any]) -> dict[str, Any]:
-    """statusRsp — SC replies to AC-initiated status query with SC health data."""
+    """statusRsp — SC replies to AC-initiated status query with SC health data.
+
+    Fields per SCACI v1.0.0:
+      rc=0 OK, message = human-readable status, timeNs = current UTC nanoseconds,
+      uptimeS = SC uptime in seconds, bsConnected/epRegistered/epOnline = counters,
+      basestations = per-BS detail objects.
+    """
     return {
         "command": "statusRsp",
         "opId": op_id,
+        "rc": sc_info.get("rc", 0),
+        "message": sc_info.get("message", "OK"),
+        "timeNs": sc_info.get("time_ns", ns_now()),
+        "uptimeS": sc_info.get("uptime_s", 0),
         "bsConnected": sc_info.get("bs_connected", 0),
         "epRegistered": sc_info.get("ep_registered", 0),
         "epOnline": sc_info.get("ep_online", 0),
-        "uptimeS": sc_info.get("uptime_s", 0),
+        "basestations": sc_info.get("basestations", []),
     }
 
 

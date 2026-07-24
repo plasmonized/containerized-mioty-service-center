@@ -133,7 +133,14 @@ class SCAServer:
             logger.info("SCACI AC disconnected: %s", ac_eui)
 
     def _sc_health(self) -> dict[str, Any]:
-        """Gather SC health info for statusRsp (best-effort, never raises)."""
+        """Gather SC health info for statusRsp (best-effort, never raises).
+
+        Returns fields required by SCACI v1.0.0 statusRsp:
+          rc, message, time_ns, uptime_s, bs_connected, ep_registered, ep_online,
+          basestations (per-BS detail list).
+        """
+        import time as _time
+
         tls = self.tls_server
         try:
             bs_connected = len(tls.connected_base_stations) if tls else 0
@@ -150,12 +157,30 @@ class SCAServer:
             ep_online = tls.get_sensor_online_count() if tls else 0
         except Exception:
             ep_online = 0
-        uptime_s = int(time.monotonic() - _STARTED_AT)
+        uptime_s = int(_time.monotonic() - _STARTED_AT)
+        try:
+            basestations: list[dict[str, Any]] = []
+            if tls and tls.connected_base_stations:
+                bsh: dict[str, dict] = getattr(tls, "base_station_health", {})
+                for _w, bs_eui in tls.connected_base_stations.items():
+                    bs_entry: dict[str, Any] = {"eui": bs_eui}
+                    health = bsh.get(bs_eui.lower(), {})
+                    if health:
+                        bs_entry["cpu"] = round(health.get("cpu", 0), 1)
+                        bs_entry["memory"] = round(health.get("memory_pct", 0), 1)
+                        bs_entry["dutyCycle"] = round(health.get("duty_cycle", 0), 1)
+                    basestations.append(bs_entry)
+        except Exception:
+            basestations = []
         return {
+            "rc": 0,
+            "message": "OK",
+            "time_ns": ns_now(),
             "bs_connected": bs_connected,
             "ep_registered": ep_registered,
             "ep_online": ep_online,
             "uptime_s": uptime_s,
+            "basestations": basestations,
         }
 
     def _is_known_endpoint(self, ep_eui: str) -> bool:
@@ -314,6 +339,18 @@ class SCAServer:
             await self._handle_ul_data_rsp(writer, frame)
         elif command == "epStatRsp":
             await self._handle_ep_stat_rsp(writer, frame)
+        elif command == "error":
+            # AC rejects one of our SC-initiated operations (e.g. ulData / epStat / dlDataRes)
+            logger.warning(
+                "SCACI error from AC %s opId=%s rc=%s msg=%s",
+                ac_label,
+                op_id,
+                frame.get("rc"),
+                frame.get("message", ""),
+            )
+            with self._state_lock:
+                self._pending_ops.pop(op_id, None)
+            await self._send(writer, {"command": "errorAck", "opId": op_id})
         elif command == "errorAck":
             # AC acknowledges an error response we sent — no further action needed
             logger.debug("SCACI errorAck from %s opId=%s", ac_label, op_id)
@@ -679,6 +716,7 @@ class SCAServer:
                         "connected_at": info.get("connected_at", ""),
                         "peer": info.get("peer", ""),
                         "registered_eps": self.ac_registered_eps.get(eui, []),
+                        "last_status": None,
                     }
                 )
             return {

@@ -4266,10 +4266,15 @@ def _generate_ac_certificate(name: str) -> tuple[bool, str]:
 
     result = subprocess.run(
         [
-            "openssl", "req", "-new",
-            "-key", str(key_path),
-            "-out", str(csr_path),
-            "-subj", f"/O=SCACI-AC/CN={name_clean}",
+            "openssl",
+            "req",
+            "-new",
+            "-key",
+            str(key_path),
+            "-out",
+            str(csr_path),
+            "-subj",
+            f"/O=SCACI-AC/CN={name_clean}",
         ],
         capture_output=True,
         text=True,
@@ -4280,13 +4285,20 @@ def _generate_ac_certificate(name: str) -> tuple[bool, str]:
 
     result = subprocess.run(
         [
-            "openssl", "x509", "-req",
-            "-in", str(csr_path),
-            "-CA", "certs/ca_cert.pem",
-            "-CAkey", "certs/ca_key.pem",
+            "openssl",
+            "x509",
+            "-req",
+            "-in",
+            str(csr_path),
+            "-CA",
+            "certs/ca_cert.pem",
+            "-CAkey",
+            "certs/ca_key.pem",
             "-CAcreateserial",
-            "-out", str(cert_path),
-            "-days", "3650",
+            "-out",
+            str(cert_path),
+            "-days",
+            "3650",
             "-sha256",
         ],
         capture_output=True,
@@ -4343,7 +4355,9 @@ def download_ac_certificate(name: str):
     name_clean = _re.sub(r"[^a-zA-Z0-9_\-]", "_", name).lower()
     zip_path = _safe_certs_path(f"ac_{name_clean}", f"{name_clean}_certificates.zip")
     if not zip_path.exists():
-        return jsonify({"success": False, "message": "Certificate not found — generate it first"}), 404
+        return jsonify(
+            {"success": False, "message": "Certificate not found — generate it first"}
+        ), 404
     return send_file(
         str(zip_path),
         as_attachment=True,
@@ -4361,7 +4375,12 @@ def generate_ac_certificate_v2():
     if not eui:
         return jsonify({"success": False, "message": "EUI is required"}), 400
     if not _validate_eui(eui):
-        return jsonify({"success": False, "message": "Invalid EUI format (expected 16 hex chars, e.g. aabbccddeeff0011)"}), 400
+        return jsonify(
+            {
+                "success": False,
+                "message": "Invalid EUI format (expected 16 hex chars, e.g. aabbccddeeff0011)",
+            }
+        ), 400
     success, result = _generate_ac_certificate(eui)
     if success:
         return jsonify(
@@ -4385,7 +4404,9 @@ def download_ac_certificate_v2(eui: str):
         return jsonify({"success": False, "message": "Invalid EUI format"}), 400
     zip_path = _safe_certs_path(f"ac_{eui}", f"{eui}_certificates.zip")
     if not zip_path.exists():
-        return jsonify({"success": False, "message": "Certificate not found — generate it first"}), 404
+        return jsonify(
+            {"success": False, "message": "Certificate not found — generate it first"}
+        ), 404
     return send_file(
         str(zip_path),
         as_attachment=True,

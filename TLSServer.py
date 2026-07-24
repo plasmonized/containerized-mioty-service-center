@@ -25,8 +25,8 @@ class TLSServer:
     def __init__(
         self,
         sensor_config_file: str,
-        mqtt_out_queue: asyncio.Queue[dict[str, str]],
-        mqtt_in_queue: asyncio.Queue[dict[str, str]],
+        mqtt_out_queue: asyncio.Queue[dict[str, str]] | None,
+        mqtt_in_queue: asyncio.Queue[dict[str, str]] | None,
     ) -> None:
         self.bs_op_ids: dict[asyncio.streams.StreamWriter, int] = {}
         self.bs_protocol_versions: dict[asyncio.streams.StreamWriter, str] = {}
@@ -1322,7 +1322,9 @@ class TLSServer:
                                     }
                                 )
                                 logger.info("✅ Base station status queued for MQTT publication")
-                                logger.info(f"   Queue size after add: {self.mqtt_out_queue.qsize()}")
+                                logger.info(
+                                    f"   Queue size after add: {self.mqtt_out_queue.qsize()}"
+                                )
                         except Exception as mqtt_err:
                             logger.error(f"❌ Failed to queue MQTT message: {mqtt_err}")
                         msg_pack = encode_message(
@@ -2160,9 +2162,7 @@ class TLSServer:
                             if _sca is not None:
                                 try:
                                     ac_dl_op_id = pending.get("ac_op_id", 0)
-                                    await _sca.send_dl_data_res(
-                                        eui.upper(), ac_dl_op_id, code
-                                    )
+                                    await _sca.send_dl_data_res(eui.upper(), ac_dl_op_id, code)
                                 except Exception as _sca_err:
                                     logger.debug("SCACI dlDataRes notify failed: %s", _sca_err)
 
@@ -2293,7 +2293,9 @@ class TLSServer:
 
                 try:
                     if self.mqtt_out_queue:
-                        await self.mqtt_out_queue.put({"topic": mqtt_topic, "payload": payload_json})
+                        await self.mqtt_out_queue.put(
+                            {"topic": mqtt_topic, "payload": payload_json}
+                        )
                         logger.info("✅ DEDUPLICATED MQTT message queued successfully")
                         logger.info(f"   Queue size after add: {self.mqtt_out_queue.qsize()}")
                     else:
@@ -2313,7 +2315,9 @@ class TLSServer:
                                 snr=float(snr),
                                 rssi=float(message.get("rssi", 0.0)),
                                 cnt=int(packet_cnt),
-                                bs_eui_hex=bs_eui if bs_eui and len(bs_eui) == 16 else "0000000000000000",
+                                bs_eui_hex=bs_eui
+                                if bs_eui and len(bs_eui) == 16
+                                else "0000000000000000",
                             )
                         )
 
@@ -3662,7 +3666,9 @@ class TLSServer:
                     )
                     self._background_tasks.add(_task)
                     _task.add_done_callback(self._background_tasks.discard)
-                    logger.info(f"✅ Sensor {sensor_data['eui']} scheduled for direct processing (MQTT disabled)")
+                    logger.info(
+                        f"✅ Sensor {sensor_data['eui']} scheduled for direct processing (MQTT disabled)"
+                    )
                 else:
                     logger.error("No running event loop — cannot register sensor (MQTT disabled)")
                     return False
@@ -3696,6 +3702,9 @@ class TLSServer:
 
     async def process_mqtt_messages(self) -> None:
         """Process incoming MQTT messages for sensor configuration and commands"""
+        if self.mqtt_in_queue is None or self.mqtt_out_queue is None:
+            logger.info("MQTT disabled — MQTT message processor not started")
+            return
         logger.info("🔄 MQTT MESSAGE PROCESSOR STARTING")
         logger.info(f"   Monitoring queue ID: {id(self.mqtt_in_queue)}")
 
@@ -3776,6 +3785,10 @@ class TLSServer:
 
     async def process_mqtt_command(self, command: dict) -> None:
         """Process MQTT command messages"""
+        out_queue = self.mqtt_out_queue
+        if out_queue is None:
+            logger.info("MQTT disabled — command responses cannot be published")
+            return
         eui = command.get("eui")
         action = command.get("action", "").lower()
 
@@ -3798,7 +3811,7 @@ class TLSServer:
                     "timestamp": asyncio.get_event_loop().time(),
                 }
 
-                await self.mqtt_out_queue.put(
+                await out_queue.put(
                     {"topic": f"ep/{eui.upper()}/response", "payload": json.dumps(response_payload)}
                 )
 
@@ -3837,7 +3850,7 @@ class TLSServer:
                     "timestamp": asyncio.get_event_loop().time(),
                 }
 
-                await self.mqtt_out_queue.put(
+                await out_queue.put(
                     {"topic": f"ep/{eui.upper()}/response", "payload": json.dumps(response_payload)}
                 )
 
@@ -3859,7 +3872,7 @@ class TLSServer:
                     "timestamp": asyncio.get_event_loop().time(),
                 }
 
-                await self.mqtt_out_queue.put(
+                await out_queue.put(
                     {"topic": f"ep/{eui.upper()}/response", "payload": json.dumps(response_payload)}
                 )
 
@@ -3876,7 +3889,7 @@ class TLSServer:
                     "timestamp": asyncio.get_event_loop().time(),
                 }
 
-                await self.mqtt_out_queue.put(
+                await out_queue.put(
                     {"topic": f"ep/{eui.upper()}/response", "payload": json.dumps(response_payload)}
                 )
 
@@ -3892,7 +3905,7 @@ class TLSServer:
                     "timestamp": asyncio.get_event_loop().time(),
                 }
 
-                await self.mqtt_out_queue.put(
+                await out_queue.put(
                     {"topic": f"ep/{eui.upper()}/response", "payload": json.dumps(response_payload)}
                 )
             except:

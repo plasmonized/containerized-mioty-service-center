@@ -32,9 +32,9 @@ from scaci_protocol import decode_frames, encode_frame, eui_to_int, int_to_eui, 
 configure_logging(__name__)
 logger = logging.getLogger(__name__)
 
-_ENOTSUP = 95   # POSIX ENOTSUP — operation not supported
-_ESRCH = 3      # POSIX ESRCH — endpoint not found in SC sensor config
-_EPROTO = 71    # POSIX EPROTO — protocol version not supported
+_ENOTSUP = 95  # POSIX ENOTSUP — operation not supported
+_ESRCH = 3  # POSIX ESRCH — endpoint not found in SC sensor config
+_EPROTO = 71  # POSIX EPROTO — protocol version not supported
 _STARTED_AT = time.monotonic()
 
 
@@ -155,10 +155,17 @@ class SCAServer:
         except Exception:
             bs_connected = 0
         try:
-            ep_registered = len([
-                v for v in tls.registered_sensors.values()
-                if v.get("registered") and not str(v).endswith("_failure")
-            ]) if tls else 0
+            ep_registered = (
+                len(
+                    [
+                        v
+                        for v in tls.registered_sensors.values()
+                        if v.get("registered") and not str(v).endswith("_failure")
+                    ]
+                )
+                if tls
+                else 0
+            )
         except Exception:
             ep_registered = 0
         try:
@@ -237,9 +244,7 @@ class SCAServer:
             logger.error("SCACI SSL config error: %s — server not started", exc)
             return
 
-        async def _handler(
-            reader: asyncio.StreamReader, writer: asyncio.StreamWriter
-        ) -> None:
+        async def _handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
             peer = writer.get_extra_info("peername")
             logger.info("SCACI incoming TCP from %s — starting TLS handshake", peer)
             try:
@@ -313,9 +318,7 @@ class SCAServer:
     # Message dispatcher
     # ------------------------------------------------------------------
 
-    async def _dispatch(
-        self, writer: asyncio.streams.StreamWriter, frame: dict[str, Any]
-    ) -> None:
+    async def _dispatch(self, writer: asyncio.streams.StreamWriter, frame: dict[str, Any]) -> None:
         command = frame.get("command", "")
         op_id = frame.get("opId", 0)
         ac_label = self._ac_label(writer)
@@ -415,7 +418,11 @@ class SCAServer:
             )
             await self._send(
                 writer,
-                msg.build_error_response(op_id, _EPROTO, f"Protocol version {version!r} not supported; SC requires major version 1"),
+                msg.build_error_response(
+                    op_id,
+                    _EPROTO,
+                    f"Protocol version {version!r} not supported; SC requires major version 1",
+                ),
             )
             await self._close(writer)
             return
@@ -456,9 +463,7 @@ class SCAServer:
         """Handle AC-initiated status query — reply with SC health data."""
         op_id = frame.get("opId", 0)
         health = self._sc_health()
-        logger.debug(
-            "SCACI status from %s → SC health: %s", self._ac_label(writer), health
-        )
+        logger.debug("SCACI status from %s → SC health: %s", self._ac_label(writer), health)
         await self._send(writer, msg.build_status_response(op_id, health))
         await self._send(writer, msg.build_status_complete(op_id))
 
@@ -616,7 +621,8 @@ class SCAServer:
                 self.pending_dl.setdefault(ep_eui, []).append(entry)
             logger.debug(
                 "SCACI dlDataQue: downlink queued for %s (op_id=%s, VM not active)",
-                ep_eui, op_id,
+                ep_eui,
+                op_id,
             )
 
         await self._send(writer, msg.build_dl_data_que_response(op_id, rc=0))
@@ -758,12 +764,15 @@ class SCAServer:
                         logger.info(
                             "pending_dl: dispatched queued downlink for %s (op_id=%s) via VM "
                             "on retry; awaiting BS vm.dlDataRsp for final dlDataRes",
-                            ep_eui, entry.get("op_id", 0),
+                            ep_eui,
+                            entry.get("op_id", 0),
                         )
                     elif age_s >= self._MAX_DL_TTL_S:
                         logger.warning(
                             "pending_dl: expired queued downlink for %s (op_id=%s) after %ds",
-                            ep_eui, entry.get("op_id", 0), int(age_s),
+                            ep_eui,
+                            entry.get("op_id", 0),
+                            int(age_s),
                         )
                         await self.send_dl_data_res(ep_eui, entry.get("op_id", 0), rc=110)
                     else:
@@ -809,7 +818,8 @@ class SCAServer:
                 logger.info(
                     "flush_pending_dl: dispatched queued downlink for %s (op_id=%s) via VM; "
                     "awaiting BS vm.dlDataRsp for final dlDataRes",
-                    ep_eui, entry.get("op_id", 0),
+                    ep_eui,
+                    entry.get("op_id", 0),
                 )
             else:
                 remaining.append(entry)

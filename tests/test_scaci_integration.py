@@ -104,9 +104,7 @@ def server() -> Any:
 # ---------------------------------------------------------------------------
 
 
-async def run_exchange(
-    server: Any, ac_frames: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
+async def run_exchange(server: Any, ac_frames: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Feed *ac_frames* into server.handle_ac and return decoded SC responses."""
     reader = FakeReader(ac_frames)
     writer = FakeWriter()
@@ -198,10 +196,12 @@ async def test_reg_returns_reg_rsp_and_reg_cmp(server: Any) -> None:
 @pytest.mark.asyncio
 async def test_reg_records_endpoint_in_ac_registered_eps(server: Any) -> None:
     """reg stores endpoint in ac_registered_eps while connection is live; purged on disconnect."""
-    reader = LiveReader([
-        {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
-        {"command": "reg", "opId": 1, "epEui": EP_EUI_INT},
-    ])
+    reader = LiveReader(
+        [
+            {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
+            {"command": "reg", "opId": 1, "epEui": EP_EUI_INT},
+        ]
+    )
     writer = FakeWriter()
     task = asyncio.create_task(server.handle_ac(reader, writer))
 
@@ -486,14 +486,18 @@ async def test_broadcast_ul_data_filtered_by_registered_ep(server: Any) -> None:
     ac_eui_b_int = eui_to_int(ac_eui_b)
 
     # Use LiveReader so connections stay open while we inspect state
-    reader_a = LiveReader([
-        {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
-        {"command": "reg", "opId": 1, "epEui": EP_EUI_INT},
-    ])
-    reader_b = LiveReader([
-        {"command": "con", "opId": 0, "acEui": ac_eui_b_int},
-        {"command": "reg", "opId": 1, "epEui": other_eui_int},
-    ])
+    reader_a = LiveReader(
+        [
+            {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
+            {"command": "reg", "opId": 1, "epEui": EP_EUI_INT},
+        ]
+    )
+    reader_b = LiveReader(
+        [
+            {"command": "con", "opId": 0, "acEui": ac_eui_b_int},
+            {"command": "reg", "opId": 1, "epEui": other_eui_int},
+        ]
+    )
     writer_a = FakeWriter()
     writer_b = FakeWriter()
 
@@ -761,16 +765,17 @@ async def test_ep_stat_burst_on_ac_connect(server: Any) -> None:
     now = _time.time()
 
     class FakeTLSServer:
-        sensor_heartbeat = {
-            ep_online: {
-                "state": "online",
-                "last_seen": now,
-            },
-            ep_offline: {
-                "state": "offline",
-                "last_seen": now - 3600,
-            },
-        }
+        def __init__(self) -> None:
+            self.sensor_heartbeat = {
+                ep_online: {
+                    "state": "online",
+                    "last_seen": now,
+                },
+                ep_offline: {
+                    "state": "offline",
+                    "last_seen": now - 3600,
+                },
+            }
 
     server.tls_server = FakeTLSServer()
 
@@ -802,7 +807,8 @@ async def test_ep_stat_burst_empty_when_no_heartbeat_data(server: Any) -> None:
     """If TLSServer has no tracked sensors, no epStat frames are sent on AC connect."""
 
     class FakeTLSServer:
-        sensor_heartbeat: dict[str, Any] = {}
+        def __init__(self) -> None:
+            self.sensor_heartbeat: dict[str, Any] = {}
 
     server.tls_server = FakeTLSServer()
 
@@ -869,6 +875,7 @@ async def test_heartbeat_offline_transition_calls_send_ep_stat() -> None:
 
     # Inject a sensor that is tracked as online but has been silent long enough to go offline.
     import time as _time
+
     now = _time.time()
     stale_eui = "AABBCCDDEEFF0011"
     tls.sensor_heartbeat[stale_eui] = {
@@ -1009,10 +1016,12 @@ async def test_dl_data_res_emitted_exactly_once_only_after_bs_confirmation(serve
     writer = FakeWriter()
     task = asyncio.create_task(
         server.handle_ac(
-            LiveReader([
-                {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
-                {"command": "reg", "opId": 1, "epEui": EP_EUI_INT},
-            ]),
+            LiveReader(
+                [
+                    {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
+                    {"command": "reg", "opId": 1, "epEui": EP_EUI_INT},
+                ]
+            ),
             writer,
         )
     )
@@ -1153,10 +1162,12 @@ async def test_send_dl_data_res_delivers_dl_data_res_to_registered_ac(server: An
     writer = FakeWriter()
     task = asyncio.create_task(
         server.handle_ac(
-            LiveReader([
-                {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
-                {"command": "reg", "opId": 1, "epEui": EP_EUI_INT},
-            ]),
+            LiveReader(
+                [
+                    {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
+                    {"command": "reg", "opId": 1, "epEui": EP_EUI_INT},
+                ]
+            ),
             writer,
         )
     )
@@ -1188,19 +1199,23 @@ async def test_send_dl_data_res_does_not_deliver_to_unregistered_ac(server: Any)
 
     task_a = asyncio.create_task(
         server.handle_ac(
-            LiveReader([
-                {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
-                {"command": "reg", "opId": 1, "epEui": EP_EUI_INT},
-            ]),
+            LiveReader(
+                [
+                    {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
+                    {"command": "reg", "opId": 1, "epEui": EP_EUI_INT},
+                ]
+            ),
             writer_a,
         )
     )
     task_b = asyncio.create_task(
         server.handle_ac(
-            LiveReader([
-                {"command": "con", "opId": 0, "acEui": ac_eui_b_int},
-                {"command": "reg", "opId": 1, "epEui": other_eui_int},
-            ]),
+            LiveReader(
+                [
+                    {"command": "con", "opId": 0, "acEui": ac_eui_b_int},
+                    {"command": "reg", "opId": 1, "epEui": other_eui_int},
+                ]
+            ),
             writer_b,
         )
     )
@@ -1229,10 +1244,12 @@ async def test_tx_data_res_rsp_triggers_tx_data_res_cmp(server: Any) -> None:
     writer = FakeWriter()
     task = asyncio.create_task(
         server.handle_ac(
-            LiveReader([
-                {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
-                {"command": "reg", "opId": 1, "epEui": EP_EUI_INT},
-            ]),
+            LiveReader(
+                [
+                    {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
+                    {"command": "reg", "opId": 1, "epEui": EP_EUI_INT},
+                ]
+            ),
             writer,
         )
     )

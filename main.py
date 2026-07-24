@@ -95,7 +95,7 @@ async def main() -> None:
     coros: list = [tls_server.start_server()]
 
     mqtt_enabled = getattr(bssci_config, "MQTT_ENABLED", True)
-    if mqtt_enabled:
+    if mqtt_enabled and mqtt_out_queue is not None and mqtt_in_queue is not None:
         mqtt_client = MQTTClient(mqtt_out_queue, mqtt_in_queue)
         coros.append(mqtt_client.start())
         logger.info("MQTT interface ENABLED — broker %s:%s", MQTT_BROKER, MQTT_PORT)

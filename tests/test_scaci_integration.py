@@ -563,16 +563,18 @@ async def test_reg_accepted_when_no_tls_server(server: Any) -> None:
 
 
 @pytest.mark.asyncio
-async def test_reg_rejected_when_endpoint_unknown_in_sensor_config(server: Any) -> None:
-    """When tls_server is wired, reg for an unknown endpoint returns rc=ESRCH (3)."""
+async def test_reg_provisions_via_tls_when_add_fails(server: Any) -> None:
+    """reg for an unknown endpoint returns rc=ESRCH when add_sensor_via_ui returns False."""
 
     class FakeTLSServer:
-        sensor_config: ClassVar[list[dict[str, Any]]] = [{"eui": "AABBCCDD11223344"}]
+        sensor_config: ClassVar[list[dict[str, Any]]] = []
         registered_sensors: ClassVar[dict[str, Any]] = {}
         connected_base_stations: ClassVar[dict[Any, str]] = {}
 
-    server.tls_server = FakeTLSServer()
+        def add_sensor_via_ui(self, sensor_data: dict[str, Any]) -> bool:
+            return False  # simulate failure (e.g. no event loop)
 
+    server.tls_server = FakeTLSServer()
     unknown_eui_int = eui_to_int("FFFFFFFFFFFFFFFF")
     frames_in = [
         {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
@@ -580,7 +582,47 @@ async def test_reg_rejected_when_endpoint_unknown_in_sensor_config(server: Any) 
     ]
     responses = await run_exchange(server, frames_in)
     rsp = next(f for f in responses if f["command"] == "regRsp")
-    assert rsp["rc"] == 3  # ESRCH
+    assert rsp["rc"] == 3  # ESRCH — provisioning failed
+    server.tls_server = None
+
+
+@pytest.mark.asyncio
+async def test_reg_provisions_unknown_endpoint_via_tls(server: Any) -> None:
+    """reg for an unknown endpoint with TLSServer wired calls add_sensor_via_ui and returns rc=0."""
+    provisioned: list[dict[str, Any]] = []
+
+    class FakeTLSServer:
+        sensor_config: ClassVar[list[dict[str, Any]]] = []
+        registered_sensors: ClassVar[dict[str, Any]] = {}
+        connected_base_stations: ClassVar[dict[Any, str]] = {}
+
+        def add_sensor_via_ui(self, sensor_data: dict[str, Any]) -> bool:
+            provisioned.append(sensor_data)
+            return True
+
+    server.tls_server = FakeTLSServer()
+
+    unknown_eui_int = eui_to_int("FFFFFFFFFFFFFFFF")
+    nwk_key = list(bytes(16))  # 16-byte zero key
+    frames_in = [
+        {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
+        {
+            "command": "reg",
+            "opId": 1,
+            "epEui": unknown_eui_int,
+            "nwkKey": nwk_key,
+            "shAddr": 0x1234,
+            "bidi": True,
+        },
+    ]
+    responses = await run_exchange(server, frames_in)
+    rsp = next(f for f in responses if f["command"] == "regRsp")
+    assert rsp["rc"] == 0, "provisioned unknown endpoint should return rc=0"
+    assert len(provisioned) == 1, "add_sensor_via_ui must be called once"
+    assert provisioned[0]["eui"] == "FFFFFFFFFFFFFFFF"
+    assert provisioned[0]["shortAddr"] == 0x1234
+    assert provisioned[0]["bidi"] is True
+    server.tls_server = None
 
 
 @pytest.mark.asyncio
@@ -592,6 +634,9 @@ async def test_reg_accepted_when_endpoint_known_in_sensor_config(server: Any) ->
         registered_sensors: ClassVar[dict[str, Any]] = {}
         connected_base_stations: ClassVar[dict[Any, str]] = {}
 
+        def add_sensor_via_ui(self, sensor_data: dict[str, Any]) -> bool:  # pragma: no cover
+            return True
+
     server.tls_server = FakeTLSServer()
 
     frames_in = [
@@ -601,3 +646,28 @@ async def test_reg_accepted_when_endpoint_known_in_sensor_config(server: Any) ->
     responses = await run_exchange(server, frames_in)
     rsp = next(f for f in responses if f["command"] == "regRsp")
     assert rsp["rc"] == 0
+    server.tls_server = None
+
+
+@pytest.mark.asyncio
+async def test_con_rejects_unsupported_version(server: Any) -> None:
+    """con with a non-1.x version must receive an error frame and the connection is closed."""
+    frames_in = [
+        {"command": "con", "opId": 0, "acEui": AC_EUI_INT, "version": "2.0.0"},
+    ]
+    responses = await run_exchange(server, frames_in)
+    errors = [f for f in responses if f["command"] == "error"]
+    assert errors, "SC must send an error frame for unsupported major version"
+    assert errors[0].get("rc") == 71  # EPROTO
+
+
+@pytest.mark.asyncio
+async def test_con_accepts_version_1_x(server: Any) -> None:
+    """con with version 1.1.0 (minor version bump) must be accepted — conRsp + conCmp returned."""
+    frames_in = [
+        {"command": "con", "opId": 0, "acEui": AC_EUI_INT, "version": "1.1.0"},
+    ]
+    responses = await run_exchange(server, frames_in)
+    commands = [f["command"] for f in responses]
+    assert "conRsp" in commands, "SC must send conRsp for version 1.1.0"
+    assert "conCmp" in commands, "SC must send conCmp for version 1.1.0"

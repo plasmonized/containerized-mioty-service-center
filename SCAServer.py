@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 
 _ENOTSUP = 95   # POSIX ENOTSUP — operation not supported
 _ESRCH = 3      # POSIX ESRCH — endpoint not found in SC sensor config
+_EPROTO = 71    # POSIX EPROTO — protocol version not supported
 _STARTED_AT = time.monotonic()
 
 
@@ -189,10 +190,16 @@ class SCAServer:
         }
 
     def _is_known_endpoint(self, ep_eui: str) -> bool:
-        """Return True if *ep_eui* is present in TLSServer's sensor_config."""
+        """Return True if *ep_eui* is present in TLSServer's sensor_config.
+
+        When tls_server is not wired (SCACI-only mode) returns True so that
+        reg is accepted optimistically without sensor_config validation.
+        Returns False only when tls_server is wired but the endpoint is absent
+        from sensor_config, triggering SCACI-driven provisioning in _handle_reg.
+        """
         tls = self.tls_server
         if tls is None:
-            return True  # no validation possible — accept optimistically
+            return True  # SCACI-only mode: no sensor_config to validate against
         try:
             cfg: list[dict[str, Any]] = getattr(tls, "sensor_config", [])
             return any(s.get("eui", "").upper() == ep_eui.upper() for s in cfg)
@@ -388,9 +395,34 @@ class SCAServer:
             )
         ac_eui_int = frame.get("acEui", frame.get("bsEui", 0))
         ac_eui = int_to_eui(ac_eui_int) if ac_eui_int else "UNKNOWN"
-        version = frame.get("version", frame.get("protVer", "1.0.0"))
+        version = str(frame.get("version", frame.get("protVer", "1.0.0")))
 
-        logger.info("SCACI con from AC %s (version=%s)", ac_eui, version)
+        # Version arbitration: SC supports MIOTYA01 major version 1 only.
+        try:
+            major = int(version.split(".")[0])
+        except (ValueError, IndexError):
+            major = -1
+        if major != 1:
+            logger.warning(
+                "SCACI con from AC %s: unsupported protocol version %r (major=%s) — rejecting",
+                ac_eui,
+                version,
+                major,
+            )
+            await self._send(
+                writer,
+                msg.build_error_response(op_id, _EPROTO, f"Protocol version {version!r} not supported; SC requires major version 1"),
+            )
+            await self._close(writer)
+            return
+        if version != "1.0.0":
+            logger.info(
+                "SCACI con from AC %s: version %r accepted (non-baseline 1.0.0, proceeding)",
+                ac_eui,
+                version,
+            )
+        else:
+            logger.info("SCACI con from AC %s (version=%s)", ac_eui, version)
 
         with self._state_lock:
             self.connected_acs[writer] = ac_eui
@@ -423,6 +455,15 @@ class SCAServer:
         await self._send(writer, msg.build_status_response(op_id, health))
         await self._send(writer, msg.build_status_complete(op_id))
 
+    @staticmethod
+    def _bytes_to_hex(raw: Any) -> str:
+        """Convert a list-of-ints or bytes key value from a SCACI frame to a hex string."""
+        if isinstance(raw, (list, bytes, bytearray)):
+            return bytes(raw).hex().upper()
+        if isinstance(raw, str):
+            return raw.upper()
+        return ""
+
     async def _handle_reg(
         self, writer: asyncio.streams.StreamWriter, frame: dict[str, Any]
     ) -> None:
@@ -434,21 +475,52 @@ class SCAServer:
         logger.info("SCACI reg: AC %s registers endpoint %s", ac_eui, ep_eui)
 
         if not self._is_known_endpoint(ep_eui):
-            logger.warning(
-                "SCACI reg: endpoint %s not found in sensor config — rejecting (rc=%d)",
-                ep_eui,
-                _ESRCH,
-            )
-            await self._send(writer, msg.build_reg_response(op_id, rc=_ESRCH))
-            await self._send(writer, msg.build_reg_complete(op_id))
-            return
+            # Endpoint is not yet in sensor_config — provision it from the reg frame.
+            tls_prov = self.tls_server
+            if tls_prov is None:
+                logger.warning(
+                    "SCACI reg: endpoint %s unknown and no TLSServer wired — rejecting (rc=%d)",
+                    ep_eui,
+                    _ESRCH,
+                )
+                await self._send(writer, msg.build_reg_response(op_id, rc=_ESRCH))
+                await self._send(writer, msg.build_reg_complete(op_id))
+                return
+
+            # Map SCACI reg fields → sensor_config entry.
+            raw_key = frame.get("nwkKey", frame.get("nwkSnKey", []))
+            nwk_key_hex = self._bytes_to_hex(raw_key)
+            sh_addr = frame.get("shAddr", 0)
+            bidi = bool(frame.get("bidi", False))
+            sensor_data: dict[str, Any] = {
+                "eui": ep_eui.upper(),
+                "nwKey": nwk_key_hex,
+                "shortAddr": sh_addr,
+                "bidi": bidi,
+            }
+            provisioned = tls_prov.add_sensor_via_ui(sensor_data)
+            if provisioned:
+                logger.info(
+                    "SCACI reg: provisioned new sensor %s via reg (nwKey=%s shAddr=%s bidi=%s)",
+                    ep_eui,
+                    nwk_key_hex or "(none)",
+                    sh_addr,
+                    bidi,
+                )
+            else:
+                logger.warning(
+                    "SCACI reg: provisioning of %s failed — rejecting (rc=%d)", ep_eui, _ESRCH
+                )
+                await self._send(writer, msg.build_reg_response(op_id, rc=_ESRCH))
+                await self._send(writer, msg.build_reg_complete(op_id))
+                return
 
         with self._state_lock:
             eps = self.ac_registered_eps.setdefault(ac_eui, [])
             if ep_eui not in eps:
                 eps.append(ep_eui)
 
-        # If the endpoint is not yet attached to any BS, trigger an attach attempt.
+        # If the endpoint is already in sensor_config and not yet attached, trigger attach.
         tls = self.tls_server
         if tls is not None:
             eui_key = ep_eui.upper()

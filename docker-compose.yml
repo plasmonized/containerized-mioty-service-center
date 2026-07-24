@@ -9,8 +9,9 @@ services:
     user: "0:0"  # Als root ausführen
     init: true
     ports:
-      - "16019:16018"  # TLS Server port
+      - "16019:16018"  # BSSCI TLS Server port
       - "5056:5000"    # Web UI port
+      - "16021:16020"    # SCACI TLS Server port
     volumes:
       - ./certs:/app/certs:rw             # TLS certificates (writable for auto-generation)
       - ./endpoints.json:/app/endpoints.json:rw

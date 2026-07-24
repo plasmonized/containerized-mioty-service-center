@@ -10,8 +10,9 @@ services:
         - GITHUB_SHA=${GITHUB_SHA:-dev}
         - GITHUB_HEAD_REF=${GITHUB_HEAD_REF:-local}
     ports:
-      - "16019:16018"
+      - "16020:16018"
       - "5056:5000"
+      - "16021:16019"
     environment:
       - GITHUB_PR_ID=${GITHUB_PR_ID:-}
       - GITHUB_SHA=${GITHUB_SHA:-}

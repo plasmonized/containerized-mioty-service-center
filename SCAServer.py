@@ -220,12 +220,14 @@ class SCAServer:
     # ------------------------------------------------------------------
 
     async def start_server(self) -> None:
-        host = getattr(bssci_config, "SCACI_HOST", "0.0.0.0")
-        port = getattr(bssci_config, "SCACI_PORT", 16019)
-        cert = getattr(bssci_config, "SCACI_CERT_FILE", bssci_config.CERT_FILE)
-        key = getattr(bssci_config, "SCACI_KEY_FILE", bssci_config.KEY_FILE)
-        ca = getattr(bssci_config, "SCACI_CA_FILE", bssci_config.CA_FILE)
-        require_cert = getattr(bssci_config, "SCACI_REQUIRE_CLIENT_CERT", True)
+        from config_compat import get_config
+
+        host = get_config("SCACI_HOST", "0.0.0.0")
+        port = get_config("SCACI_PORT", 16019)
+        cert = get_config("SCACI_CERT_FILE", bssci_config.CERT_FILE)
+        key = get_config("SCACI_KEY_FILE", bssci_config.KEY_FILE)
+        ca = get_config("SCACI_CA_FILE", bssci_config.CA_FILE)
+        require_cert = get_config("SCACI_REQUIRE_CLIENT_CERT", True)
 
         logger.info("Setting up SCACI TLS context (cert=%s, ca=%s)", cert, ca)
         try:

@@ -28,6 +28,7 @@ from flask import (
 )
 
 import bssci_config
+from config_compat import get_config
 from observability import ERROR_CODES, configure_logging
 
 # Global TLS server instance reference
@@ -1428,9 +1429,9 @@ def config():
             "AUTO_DETACH_CHECK_INTERVAL": getattr(bssci_config, "AUTO_DETACH_CHECK_INTERVAL", 3600),
             "TIMEZONE": getattr(bssci_config, "TIMEZONE", "Europe/Berlin"),
             "UPDATE_CHANNEL": getattr(bssci_config, "UPDATE_CHANNEL", "stable"),
-            "MQTT_ENABLED": getattr(bssci_config, "MQTT_ENABLED", True),
-            "SCACI_ENABLED": getattr(bssci_config, "SCACI_ENABLED", False),
-            "SCACI_PORT": getattr(bssci_config, "SCACI_PORT", 16019),
+            "MQTT_ENABLED": get_config("MQTT_ENABLED", True),
+            "SCACI_ENABLED": get_config("SCACI_ENABLED", False),
+            "SCACI_PORT": get_config("SCACI_PORT", 16019),
         }
         return render_template("config.html", config=config_data)
     except Exception as e:
@@ -4219,14 +4220,14 @@ def app_centers():
 def api_scaci_status():
     """Return current SCACI / Application Center status."""
     global sca_server_instance
-    enabled = getattr(bssci_config, "SCACI_ENABLED", False)
+    enabled = get_config("SCACI_ENABLED", False)
     if not enabled:
         return jsonify({"enabled": False, "connected": 0, "acs": []})
     if sca_server_instance is None:
         return jsonify({"enabled": True, "connected": 0, "acs": [], "error": "server not ready"})
     try:
         status = sca_server_instance.get_status()
-        status["port"] = getattr(bssci_config, "SCACI_PORT", 16019)
+        status["port"] = get_config("SCACI_PORT", 16019)
         return jsonify(status)
     except Exception as exc:
         logger.error("Error fetching SCACI status: %s", exc)

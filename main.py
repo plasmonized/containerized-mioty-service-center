@@ -1,8 +1,8 @@
 import asyncio
 import logging
 
-import bssci_config
 from bssci_config import LISTEN_PORT, MQTT_BROKER, MQTT_PORT, SENSOR_CONFIG_FILE
+from config_compat import get_config
 from mqtt_interface import MQTTClient
 from observability import ERROR_CODES, configure_logging
 from TLSServer import TLSServer
@@ -21,8 +21,8 @@ _background_tasks: set[asyncio.Task] = set()
 async def main() -> None:
     global tls_server_instance, sca_server_instance
 
-    mqtt_enabled = getattr(bssci_config, "MQTT_ENABLED", True)
-    scaci_enabled = getattr(bssci_config, "SCACI_ENABLED", False)
+    mqtt_enabled = get_config("MQTT_ENABLED", True)
+    scaci_enabled = get_config("SCACI_ENABLED", False)
 
     # Only create live queues when MQTT is enabled.  When MQTT is disabled we pass
     # None so that TLSServer's guarded puts are no-ops and no dead queue grows.
@@ -60,7 +60,7 @@ async def main() -> None:
         sca_server_instance.tls_server = tls_server_instance
         logger.info(
             "SCACI interface ENABLED — listening on port %s",
-            getattr(bssci_config, "SCACI_PORT", 16019),
+            get_config("SCACI_PORT", 16019),
         )
     else:
         logger.info("SCACI interface disabled (set SCACI_ENABLED=true to enable)")
@@ -94,7 +94,6 @@ async def main() -> None:
     # Collect coroutines to run concurrently
     coros: list = [tls_server.start_server()]
 
-    mqtt_enabled = getattr(bssci_config, "MQTT_ENABLED", True)
     if mqtt_enabled and mqtt_out_queue is not None and mqtt_in_queue is not None:
         mqtt_client = MQTTClient(mqtt_out_queue, mqtt_in_queue)
         coros.append(mqtt_client.start())

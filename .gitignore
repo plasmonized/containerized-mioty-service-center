@@ -10,3 +10,4 @@ base_stations.json
 dist/
 docs/.vitepress/cache/
 node_modules/
+certs/ca_cert.srl

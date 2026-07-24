@@ -263,9 +263,9 @@ async def test_dl_data_que_queues_payload(server: Any) -> None:
     ]
     await run_exchange(server, frames_in)
     ep_str = int_to_eui(EP_EUI_INT).upper()
-    match = server.pending_dl.get(ep_str) or server.pending_dl.get(EP_EUI.upper())
-    assert match is not None
-    assert match["data"] == [0xAA, 0xBB]
+    entry_list = server.pending_dl.get(ep_str) or server.pending_dl.get(EP_EUI.upper())
+    assert entry_list is not None and len(entry_list) == 1
+    assert entry_list[0]["data"] == [0xAA, 0xBB]
 
 
 @pytest.mark.asyncio
@@ -291,8 +291,9 @@ async def test_dl_data_que_stores_queued_at_mono(server: Any) -> None:
     ]
     await run_exchange(server, frames_in)
     ep_str = int_to_eui(EP_EUI_INT).upper()
-    entry = server.pending_dl.get(ep_str) or server.pending_dl.get(EP_EUI.upper())
-    assert entry is not None
+    entry_list = server.pending_dl.get(ep_str) or server.pending_dl.get(EP_EUI.upper())
+    assert entry_list is not None and len(entry_list) == 1
+    entry = entry_list[0]
     assert isinstance(entry.get("queued_at_mono"), float)
     assert entry.get("op_id") == 7
 
@@ -311,13 +312,15 @@ async def test_flush_pending_dl_delivers_and_clears(server: Any) -> None:
     import time
 
     ep_str = int_to_eui(EP_EUI_INT).upper()
-    server.pending_dl[ep_str] = {
-        "data": [0xAB, 0xCD],
-        "port": 1,
-        "op_id": 42,
-        "queued_at_mono": time.monotonic(),
-        "queued_at": 0,
-    }
+    server.pending_dl[ep_str] = [
+        {
+            "data": [0xAB, 0xCD],
+            "port": 1,
+            "op_id": 42,
+            "queued_at_mono": time.monotonic(),
+            "queued_at": 0,
+        }
+    ]
     server.tls_server = _FakeTLS()
     await server.flush_pending_dl(ep_str)
     assert server.pending_dl.get(ep_str) is None, "entry should be cleared after successful flush"
@@ -345,33 +348,42 @@ async def test_pending_dl_sweep_expires_stale_entry(server: Any) -> None:
     server.tls_server = _FakeTLS()
 
     ep_str = int_to_eui(EP_EUI_INT).upper()
-    # Inject a stale entry older than the TTL
-    server.pending_dl[ep_str] = {
-        "data": [0xFF],
-        "port": 1,
-        "op_id": 99,
-        "queued_at_mono": time.monotonic() - (server._MAX_DL_TTL_S + 1),
-        "queued_at": 0,
-    }
+    # Inject a stale entry older than the TTL (as a single-element list per new structure)
+    server.pending_dl[ep_str] = [
+        {
+            "data": [0xFF],
+            "port": 1,
+            "op_id": 99,
+            "queued_at_mono": time.monotonic() - (server._MAX_DL_TTL_S + 1),
+            "queued_at": 0,
+        }
+    ]
 
     # Run one sweep iteration manually (bypass asyncio.sleep)
-    entries = list(server.pending_dl.items())
-    for ep_eui, entry in entries:
-        age_s = time.monotonic() - entry.get("queued_at_mono", 0)
-        delivered = False
-        if age_s < server._MAX_DL_TTL_S:
-            try:
-                delivered = await server.tls_server.vm_send_data(
-                    ep_eui, bytes(entry["data"]), port=entry.get("port", 1)
-                )
-            except Exception:
-                pass
-        if delivered:
+    # Simulate one sweep iteration: pending_dl is now ep_eui → list[entry]
+    snapshot = {k: list(v) for k, v in server.pending_dl.items()}
+    for ep_eui, entry_list in snapshot.items():
+        remaining: list[dict[str, Any]] = []
+        for entry in entry_list:
+            age_s = time.monotonic() - entry.get("queued_at_mono", 0)
+            delivered = False
+            if age_s < server._MAX_DL_TTL_S:
+                try:
+                    delivered = await server.tls_server.vm_send_data(
+                        ep_eui, bytes(entry["data"]), port=entry.get("port", 1)
+                    )
+                except Exception:
+                    pass
+            if delivered:
+                await server.send_dl_data_res(ep_eui, entry.get("op_id", 0), rc=0)
+            elif age_s >= server._MAX_DL_TTL_S:
+                await server.send_dl_data_res(ep_eui, entry.get("op_id", 0), rc=110)
+            else:
+                remaining.append(entry)
+        if remaining:
+            server.pending_dl[ep_eui] = remaining
+        else:
             server.pending_dl.pop(ep_eui, None)
-            await server.send_dl_data_res(ep_eui, entry.get("op_id", 0), rc=0)
-        elif age_s >= server._MAX_DL_TTL_S:
-            server.pending_dl.pop(ep_eui, None)
-            await server.send_dl_data_res(ep_eui, entry.get("op_id", 0), rc=110)
 
     assert server.pending_dl.get(ep_str) is None, "expired entry must be cleared"
     assert dl_res_calls, "dlDataRes must have been called for expired entry"

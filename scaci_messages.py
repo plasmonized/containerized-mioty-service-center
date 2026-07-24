@@ -159,18 +159,31 @@ def build_ul_data(
     """ulData — SC forwards uplink sensor data to AC.
 
     rxTime is nanoseconds UTC (64-bit).  epEui and bsEui are integers.
+    rxInfo carries a per-BS reception array; even single-BS paths use a 1-element list
+    so ACs can process the structure uniformly.
     """
+    rx_info_entry: dict[str, Any] = {
+        "bsEui": bs_eui,
+        "rxTime": rx_time,
+        "snr": snr,
+        "rssi": rssi,
+    }
     return {
         "command": "ulData",
         "opId": op_id,
         "epEui": ep_eui,
+        # Top-level convenience fields (populated from the best/first BS)
         "bsEui": bs_eui,
         "rxTime": rx_time,
         "snr": snr,
         "rssi": rssi,
         "cnt": cnt,
         "shAddr": sh_addr,
+        # userData is the canonical spec field name; data is kept for back-compat
+        "userData": data,
         "data": data,
+        # Per-BS reception array
+        "rxInfo": [rx_info_entry],
     }
 
 
@@ -184,17 +197,31 @@ def build_ep_stat(
     ep_eui: int,
     online: bool,
     last_seen_ns: int | None = None,
+    attached: bool = False,
+    attached_bs_eui: int | None = None,
+    packet_cnt: int = 0,
 ) -> dict[str, Any]:
-    """epStat — SC sends endpoint status to AC."""
-    msg: dict[str, Any] = {
+    """epStat — SC sends endpoint status to AC.
+
+    Fields:
+    - online: True if the endpoint has been heard within its heartbeat window.
+    - lastSeen: last uplink reception time as nanoseconds UTC (omitted if unknown).
+    - attached: True if the endpoint is attached on at least one BS.
+    - attachedBsEui: EUI of the BS holding the attachment (best/first; 0 if unknown).
+    - packetCnt: total uplink packet count seen by the SC.
+    """
+    out: dict[str, Any] = {
         "command": "epStat",
         "opId": op_id,
         "epEui": ep_eui,
         "online": online,
+        "attached": attached,
+        "attachedBsEui": attached_bs_eui if attached_bs_eui is not None else 0,
+        "packetCnt": packet_cnt,
     }
     if last_seen_ns is not None:
-        msg["lastSeen"] = last_seen_ns
-    return msg
+        out["lastSeen"] = last_seen_ns
+    return out
 
 
 def build_ep_stat_complete(op_id: int) -> dict[str, Any]:
@@ -207,21 +234,31 @@ def build_tx_data_res(
     ep_eui: int,
     rc: int = 0,
     tx_time: int | None = None,
+    bs_eui: int = 0,
+    packet_cnt: int = 0,
 ) -> dict[str, Any]:
     """dlDataRes (wire: txDataRes) — SC reports DL TX result to AC.
 
     Note: spec has a typo; the Rsp/Cmp commands are named txDataResRsp/txDataResCmp
     but the initiating command is dlDataRes.
+
+    Fields:
+    - rc: result code (0=success, non-zero=error).
+    - txTime: transmission time as nanoseconds UTC (omitted if unknown).
+    - bsEui: EUI of the BS that performed the transmission (0 if unknown).
+    - packetCnt: downlink packet counter context.
     """
-    msg: dict[str, Any] = {
+    out: dict[str, Any] = {
         "command": "dlDataRes",
         "opId": op_id,
         "epEui": ep_eui,
         "rc": rc,
+        "bsEui": bs_eui,
+        "packetCnt": packet_cnt,
     }
     if tx_time is not None:
-        msg["txTime"] = tx_time
-    return msg
+        out["txTime"] = tx_time
+    return out
 
 
 def build_tx_data_res_complete(op_id: int) -> dict[str, Any]:

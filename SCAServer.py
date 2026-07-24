@@ -78,9 +78,11 @@ class SCAServer:
         # Pending SC-initiated operations: opId → {ac_writer, command, sent_at}
         self._pending_ops: dict[int, dict[str, Any]] = {}
 
-        # Pending downlink queue requests from ACs: ep_eui → {payload, queued_at}
-        # Used as fallback when the sensor has no active VM sub-channel.
-        self.pending_dl: dict[str, dict[str, Any]] = {}
+        # Pending downlink queue requests from ACs:
+        #   ep_eui → list of {data, port, op_id, queued_at, queued_at_mono}
+        # A list is used so multiple simultaneous dlDataQue requests for the same
+        # endpoint are tracked independently (no overwrite by subsequent requests).
+        self.pending_dl: dict[str, list[dict[str, Any]]] = {}
 
         self._state_lock = threading.RLock()
         self._background_tasks: set[asyncio.Task[Any]] = set()
@@ -368,7 +370,9 @@ class SCAServer:
             # AC acknowledges an error response we sent — no further action needed
             logger.debug("SCACI errorAck from %s opId=%s", ac_label, op_id)
         elif command == "txDataResRsp":
-            # AC acknowledges our dlDataRes notification
+            # AC acknowledges our dlDataRes notification — clear pending op and send Cmp
+            with self._state_lock:
+                self._pending_ops.pop(op_id, None)
             await self._send(writer, msg.build_tx_data_res_complete(op_id))
         elif command == "txDataResCmp":
             logger.debug("SCACI txDataResCmp from %s opId=%s", ac_label, op_id)
@@ -592,17 +596,21 @@ class SCAServer:
                 )
 
         if not dl_sent:
-            # No VM active or tls_server unavailable — queue for later delivery.
-            # queued_at_mono is used by sweep loop for TTL/retry; op_id for dlDataRes.
+            # No VM active or tls_server unavailable — append to per-endpoint queue.
+            # Each entry is tracked independently to avoid overwrite by later requests.
+            entry: dict[str, Any] = {
+                "data": user_data,
+                "port": port,
+                "op_id": op_id,
+                "queued_at": ns_now(),
+                "queued_at_mono": time.monotonic(),
+            }
             with self._state_lock:
-                self.pending_dl[ep_eui] = {
-                    "data": user_data,
-                    "port": port,
-                    "op_id": op_id,
-                    "queued_at": ns_now(),
-                    "queued_at_mono": time.monotonic(),
-                }
-            logger.debug("SCACI dlDataQue: downlink queued for %s (VM not active)", ep_eui)
+                self.pending_dl.setdefault(ep_eui, []).append(entry)
+            logger.debug(
+                "SCACI dlDataQue: downlink queued for %s (op_id=%s, VM not active)",
+                ep_eui, op_id,
+            )
 
         await self._send(writer, msg.build_dl_data_que_response(op_id, rc=0))
         await self._send(writer, msg.build_dl_data_que_complete(op_id))
@@ -614,10 +622,10 @@ class SCAServer:
         ep_eui_int = frame.get("epEui", 0)
         ep_eui = int_to_eui(ep_eui_int) if ep_eui_int else "UNKNOWN"
 
-        logger.info("SCACI dlDataRev: revoke downlink for endpoint %s", ep_eui)
+        logger.info("SCACI dlDataRev: revoke all queued downlinks for endpoint %s", ep_eui)
 
         with self._state_lock:
-            self.pending_dl.pop(ep_eui, None)
+            self.pending_dl.pop(ep_eui, None)  # drop entire per-endpoint queue
 
         await self._send(writer, msg.build_dl_data_rev_response(op_id, rc=0))
         await self._send(writer, msg.build_dl_data_rev_complete(op_id))
@@ -708,67 +716,87 @@ class SCAServer:
             await self._send(writer, ul_msg)
 
     async def _pending_dl_sweep_loop(self) -> None:
-        """Background loop: retry queued downlinks and expire stale entries."""
+        """Background loop: retry queued downlinks and expire stale entries.
+
+        pending_dl is ep_eui → list[entry]; each entry is processed independently.
+        Delivered or expired entries are removed from the list; the key is removed
+        once the list becomes empty.
+        """
         while True:
             await asyncio.sleep(self._PENDING_DL_RETRY_S)
             with self._state_lock:
-                entries = list(self.pending_dl.items())
-            for ep_eui, entry in entries:
-                age_s = (time.monotonic() - entry.get("queued_at_mono", 0))
-                tls = self.tls_server
-                delivered = False
-                if tls is not None and age_s < self._MAX_DL_TTL_S:
-                    try:
-                        delivered = await tls.vm_send_data(
-                            ep_eui, bytes(entry["data"]), port=entry.get("port", 1)
+                snapshot = {k: list(v) for k, v in self.pending_dl.items()}
+            for ep_eui, entry_list in snapshot.items():
+                remaining: list[dict[str, Any]] = []
+                for entry in entry_list:
+                    age_s = time.monotonic() - entry.get("queued_at_mono", 0)
+                    tls = self.tls_server
+                    delivered = False
+                    if tls is not None and age_s < self._MAX_DL_TTL_S:
+                        try:
+                            delivered = await tls.vm_send_data(
+                                ep_eui, bytes(entry["data"]), port=entry.get("port", 1)
+                            )
+                        except Exception as exc:
+                            logger.debug("pending_dl retry failed for %s: %s", ep_eui, exc)
+                    if delivered:
+                        logger.info(
+                            "pending_dl: delivered queued downlink for %s (op_id=%s) on retry",
+                            ep_eui, entry.get("op_id", 0),
                         )
-                    except Exception as exc:
-                        logger.debug("pending_dl retry failed for %s: %s", ep_eui, exc)
-                if delivered:
-                    with self._state_lock:
+                        await self.send_dl_data_res(ep_eui, entry.get("op_id", 0), rc=0)
+                    elif age_s >= self._MAX_DL_TTL_S:
+                        logger.warning(
+                            "pending_dl: expired queued downlink for %s (op_id=%s) after %ds",
+                            ep_eui, entry.get("op_id", 0), int(age_s),
+                        )
+                        await self.send_dl_data_res(ep_eui, entry.get("op_id", 0), rc=110)
+                    else:
+                        remaining.append(entry)
+                with self._state_lock:
+                    if remaining:
+                        self.pending_dl[ep_eui] = remaining
+                    else:
                         self.pending_dl.pop(ep_eui, None)
-                    logger.info("pending_dl: delivered queued downlink for %s on retry", ep_eui)
-                    await self.send_dl_data_res(
-                        ep_eui, entry.get("op_id", 0), rc=0
-                    )
-                elif age_s >= self._MAX_DL_TTL_S:
-                    with self._state_lock:
-                        self.pending_dl.pop(ep_eui, None)
-                    logger.warning(
-                        "pending_dl: expired queued downlink for %s after %ds (ETIMEDOUT)",
-                        ep_eui,
-                        int(age_s),
-                    )
-                    await self.send_dl_data_res(
-                        ep_eui, entry.get("op_id", 0), rc=110
-                    )
 
     async def flush_pending_dl(self, ep_eui: str) -> None:
-        """Attempt immediate delivery of any queued downlink for *ep_eui*.
+        """Attempt immediate delivery of all queued downlinks for *ep_eui*.
 
         Called by TLSServer when a VM sub-channel becomes newly active for
         this endpoint, giving pending downlinks a chance to deliver before
-        their TTL expires.
+        their TTL expires.  All entries in the per-endpoint list are tried
+        in FIFO order; undeliverable entries remain in the queue.
         """
         with self._state_lock:
-            entry = self.pending_dl.get(ep_eui)
-        if entry is None:
+            entry_list = list(self.pending_dl.get(ep_eui, []))
+        if not entry_list:
             return
         tls = self.tls_server
         if tls is None:
             return
-        try:
-            delivered = await tls.vm_send_data(
-                ep_eui, bytes(entry["data"]), port=entry.get("port", 1)
-            )
-        except Exception as exc:
-            logger.debug("flush_pending_dl: vm_send_data failed for %s: %s", ep_eui, exc)
-            return
-        if delivered:
-            with self._state_lock:
+        remaining: list[dict[str, Any]] = []
+        for entry in entry_list:
+            try:
+                delivered = await tls.vm_send_data(
+                    ep_eui, bytes(entry["data"]), port=entry.get("port", 1)
+                )
+            except Exception as exc:
+                logger.debug("flush_pending_dl: vm_send_data failed for %s: %s", ep_eui, exc)
+                remaining.append(entry)
+                continue
+            if delivered:
+                logger.info(
+                    "flush_pending_dl: delivered queued downlink for %s (op_id=%s)",
+                    ep_eui, entry.get("op_id", 0),
+                )
+                await self.send_dl_data_res(ep_eui, entry.get("op_id", 0), rc=0)
+            else:
+                remaining.append(entry)
+        with self._state_lock:
+            if remaining:
+                self.pending_dl[ep_eui] = remaining
+            else:
                 self.pending_dl.pop(ep_eui, None)
-            logger.info("flush_pending_dl: delivered queued downlink for %s", ep_eui)
-            await self.send_dl_data_res(ep_eui, entry.get("op_id", 0), rc=0)
 
     async def send_dl_data_res(
         self,

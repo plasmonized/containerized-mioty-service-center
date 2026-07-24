@@ -584,11 +584,15 @@ class SCAServer:
         )
 
         # Attempt immediate delivery via VM sub-channel if tls_server is wired up.
+        # Pass the AC's original dlDataQue opId (op_id) so TLSServer can echo it
+        # back via send_dl_data_res when the BS confirms TX (vm.dlDataRsp).
         tls = self.tls_server
         dl_sent = False
         if tls is not None:
             try:
-                dl_sent = await tls.vm_send_data(ep_eui, bytes(user_data), port=port)
+                dl_sent = await tls.vm_send_data(
+                    ep_eui, bytes(user_data), port=port, ac_op_id=op_id
+                )
                 if dl_sent:
                     logger.info(
                         "SCACI dlDataQue: downlink dispatched via VM sub-channel for %s", ep_eui
@@ -738,16 +742,24 @@ class SCAServer:
                     if tls is not None and age_s < self._MAX_DL_TTL_S:
                         try:
                             delivered = await tls.vm_send_data(
-                                ep_eui, bytes(entry["data"]), port=entry.get("port", 1)
+                                ep_eui,
+                                bytes(entry["data"]),
+                                port=entry.get("port", 1),
+                                ac_op_id=entry.get("op_id", 0),
                             )
                         except Exception as exc:
                             logger.debug("pending_dl retry failed for %s: %s", ep_eui, exc)
                     if delivered:
+                        # vm_send_data returned True: the vm.dlData command was
+                        # dispatched to the base station.  The actual TX confirmation
+                        # (and therefore the dlDataRes to the AC) will be emitted by
+                        # TLSServer when it receives vm.dlDataRsp — do NOT call
+                        # send_dl_data_res here to avoid duplicate notifications.
                         logger.info(
-                            "pending_dl: delivered queued downlink for %s (op_id=%s) on retry",
+                            "pending_dl: dispatched queued downlink for %s (op_id=%s) via VM "
+                            "on retry; awaiting BS vm.dlDataRsp for final dlDataRes",
                             ep_eui, entry.get("op_id", 0),
                         )
-                        await self.send_dl_data_res(ep_eui, entry.get("op_id", 0), rc=0)
                     elif age_s >= self._MAX_DL_TTL_S:
                         logger.warning(
                             "pending_dl: expired queued downlink for %s (op_id=%s) after %ds",
@@ -781,18 +793,24 @@ class SCAServer:
         for entry in entry_list:
             try:
                 delivered = await tls.vm_send_data(
-                    ep_eui, bytes(entry["data"]), port=entry.get("port", 1)
+                    ep_eui,
+                    bytes(entry["data"]),
+                    port=entry.get("port", 1),
+                    ac_op_id=entry.get("op_id", 0),
                 )
             except Exception as exc:
                 logger.debug("flush_pending_dl: vm_send_data failed for %s: %s", ep_eui, exc)
                 remaining.append(entry)
                 continue
             if delivered:
+                # vm_send_data returned True: vm.dlData dispatched to BS.
+                # TLSServer will call send_dl_data_res when vm.dlDataRsp arrives.
+                # Do NOT send dlDataRes here — that would duplicate the notification.
                 logger.info(
-                    "flush_pending_dl: delivered queued downlink for %s (op_id=%s)",
+                    "flush_pending_dl: dispatched queued downlink for %s (op_id=%s) via VM; "
+                    "awaiting BS vm.dlDataRsp for final dlDataRes",
                     ep_eui, entry.get("op_id", 0),
                 )
-                await self.send_dl_data_res(ep_eui, entry.get("op_id", 0), rc=0)
             else:
                 remaining.append(entry)
         with self._state_lock:

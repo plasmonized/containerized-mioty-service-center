@@ -305,7 +305,9 @@ async def test_flush_pending_dl_delivers_and_clears(server: Any) -> None:
     class _FakeTLS:
         """Minimal TLSServer stub that always reports vm_send_data as successful."""
 
-        async def vm_send_data(self, ep_eui: str, data: bytes, port: int = 1) -> bool:
+        async def vm_send_data(
+            self, ep_eui: str, data: bytes, port: int = 1, ac_op_id: int = 0
+        ) -> bool:
             return True
 
     # Manually inject a queued downlink
@@ -336,7 +338,9 @@ async def test_pending_dl_sweep_expires_stale_entry(server: Any) -> None:
     dl_res_calls: list[tuple[str, int, int]] = []
 
     class _FakeTLS:
-        async def vm_send_data(self, ep_eui: str, data: bytes, port: int = 1) -> bool:
+        async def vm_send_data(
+            self, ep_eui: str, data: bytes, port: int = 1, ac_op_id: int = 0
+        ) -> bool:
             return False  # VM always unavailable
 
     original_send = server.send_dl_data_res
@@ -956,3 +960,305 @@ async def test_heartbeat_online_transition_calls_send_ep_stat() -> None:
     assert ep_stat_calls, "send_ep_stat must be called on online (back) transition"
     assert ep_stat_calls[0]["eui"] == ep_eui
     assert ep_stat_calls[0]["online"] is True
+
+
+# ---------------------------------------------------------------------------
+# Tests: end-to-end downlink path (AC → SC → BS → AC dlDataRes)
+# ---------------------------------------------------------------------------
+
+
+class _FakeTLSWithVM:
+    """TLSServer stub: vm_send_data returns True (VM sub-channel active)."""
+
+    async def vm_send_data(
+        self, ep_eui: str, data: bytes, port: int = 1, ac_op_id: int = 0
+    ) -> bool:
+        return True
+
+
+class _FakeTLSNoVM:
+    """TLSServer stub: vm_send_data returns False (VM sub-channel not active)."""
+
+    async def vm_send_data(
+        self, ep_eui: str, data: bytes, port: int = 1, ac_op_id: int = 0
+    ) -> bool:
+        return False
+
+
+class _FakeTLSVMError:
+    """TLSServer stub: vm_send_data always raises an exception."""
+
+    async def vm_send_data(
+        self, ep_eui: str, data: bytes, port: int = 1, ac_op_id: int = 0
+    ) -> bool:
+        raise RuntimeError("simulated VM send error")
+
+
+@pytest.mark.asyncio
+async def test_dl_data_res_emitted_exactly_once_only_after_bs_confirmation(server: Any) -> None:
+    """Exactly one dlDataRes must be sent to the AC and ONLY after the BS confirms TX.
+
+    Scenario:
+    1. AC registers and sends dlDataQue — VM not active, payload queued in pending_dl.
+    2. flush_pending_dl succeeds (vm_send_data True) — entry leaves pending_dl.
+       No dlDataRes must be sent here (would be premature).
+    3. TLSServer later calls send_dl_data_res (simulating vm.dlDataRsp callback)
+       with the actual BS result code.
+    4. Exactly one dlDataRes reaches the AC with the BS-reported rc.
+    """
+    writer = FakeWriter()
+    task = asyncio.create_task(
+        server.handle_ac(
+            LiveReader([
+                {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
+                {"command": "reg", "opId": 1, "epEui": EP_EUI_INT},
+            ]),
+            writer,
+        )
+    )
+    await asyncio.sleep(0.05)
+
+    ep_str = int_to_eui(EP_EUI_INT).upper()
+
+    # Step 1: inject a queued downlink (simulating dlDataQue that could not use VM yet)
+    import time
+
+    server.pending_dl[ep_str] = [
+        {
+            "data": [0x11, 0x22],
+            "port": 1,
+            "op_id": 77,
+            "queued_at_mono": time.monotonic(),
+            "queued_at": 0,
+        }
+    ]
+
+    # Step 2: flush with VM now active — entry must leave pending_dl, NO dlDataRes yet.
+    # Wire a TLS stub so flush_pending_dl does not short-circuit on tls_server is None.
+    server.tls_server = _FakeTLSWithVM()
+    frames_before_flush = writer.received_frames()
+    dl_res_before = [f for f in frames_before_flush if f["command"] == "dlDataRes"]
+
+    await server.flush_pending_dl(ep_str)
+    server.tls_server = None  # disconnect stub; dlDataRes comes via the callback below
+
+    frames_after_flush = writer.received_frames()
+    dl_res_after_flush = [f for f in frames_after_flush if f["command"] == "dlDataRes"]
+    assert server.pending_dl.get(ep_str) is None, "pending_dl must be cleared after flush"
+    assert len(dl_res_after_flush) == len(dl_res_before), (
+        "flush must NOT emit dlDataRes — only TLSServer vm.dlDataRsp callback may do so"
+    )
+
+    # Step 3: TLSServer fires the confirmation callback (simulates vm.dlDataRsp)
+    await server.send_dl_data_res(ep_str, dl_op_id=77, rc=0)
+
+    frames_final = writer.received_frames()
+    dl_res_final = [f for f in frames_final if f["command"] == "dlDataRes"]
+    assert len(dl_res_final) == 1, (
+        f"exactly one dlDataRes must be delivered to AC; got {len(dl_res_final)}"
+    )
+    assert dl_res_final[0]["epEui"] == EP_EUI_INT
+    assert dl_res_final[0]["rc"] == 0
+
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_dl_data_que_dispatches_immediately_via_vm_when_active(server: Any) -> None:
+    """dlDataQue: when TLS is wired and vm_send_data returns True the entry must NOT be queued."""
+    server.tls_server = _FakeTLSWithVM()
+
+    frames_in = [
+        {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
+        {
+            "command": "dlDataQue",
+            "opId": 1,
+            "epEui": EP_EUI_INT,
+            "data": [0xCA, 0xFE],
+            "port": 2,
+        },
+    ]
+    responses = await run_exchange(server, frames_in)
+
+    commands = [f["command"] for f in responses]
+    assert "dlDataQueRsp" in commands
+    assert "dlDataQueCmp" in commands
+
+    ep_str = int_to_eui(EP_EUI_INT).upper()
+    assert server.pending_dl.get(ep_str) is None, (
+        "Entry must NOT land in pending_dl when vm_send_data succeeds immediately"
+    )
+
+    server.tls_server = None
+
+
+@pytest.mark.asyncio
+async def test_dl_data_que_falls_back_to_pending_dl_when_vm_unavailable(server: Any) -> None:
+    """dlDataQue: when vm_send_data returns False the entry must be placed in pending_dl."""
+    server.tls_server = _FakeTLSNoVM()
+
+    frames_in = [
+        {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
+        {
+            "command": "dlDataQue",
+            "opId": 3,
+            "epEui": EP_EUI_INT,
+            "data": [0x01, 0x02, 0x03],
+            "port": 1,
+        },
+    ]
+    await run_exchange(server, frames_in)
+
+    ep_str = int_to_eui(EP_EUI_INT).upper()
+    entry_list = server.pending_dl.get(ep_str) or server.pending_dl.get(EP_EUI.upper())
+    assert entry_list is not None and len(entry_list) == 1, (
+        "Entry must be queued in pending_dl when vm_send_data reports VM not active"
+    )
+    assert entry_list[0]["data"] == [0x01, 0x02, 0x03]
+    assert entry_list[0]["op_id"] == 3
+
+    server.tls_server = None
+
+
+@pytest.mark.asyncio
+async def test_dl_data_que_falls_back_to_pending_dl_on_vm_exception(server: Any) -> None:
+    """dlDataQue: if vm_send_data raises an exception the entry must be placed in pending_dl."""
+    server.tls_server = _FakeTLSVMError()
+
+    frames_in = [
+        {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
+        {
+            "command": "dlDataQue",
+            "opId": 5,
+            "epEui": EP_EUI_INT,
+            "data": [0xFF],
+            "port": 1,
+        },
+    ]
+    await run_exchange(server, frames_in)
+
+    ep_str = int_to_eui(EP_EUI_INT).upper()
+    entry_list = server.pending_dl.get(ep_str) or server.pending_dl.get(EP_EUI.upper())
+    assert entry_list is not None and len(entry_list) == 1, (
+        "Entry must be queued when vm_send_data raises"
+    )
+
+    server.tls_server = None
+
+
+@pytest.mark.asyncio
+async def test_send_dl_data_res_delivers_dl_data_res_to_registered_ac(server: Any) -> None:
+    """send_dl_data_res must send dlDataRes to an AC that has registered the endpoint."""
+    writer = FakeWriter()
+    task = asyncio.create_task(
+        server.handle_ac(
+            LiveReader([
+                {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
+                {"command": "reg", "opId": 1, "epEui": EP_EUI_INT},
+            ]),
+            writer,
+        )
+    )
+    await asyncio.sleep(0.05)
+
+    await server.send_dl_data_res(EP_EUI, dl_op_id=1, rc=0)
+
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+    frames = writer.received_frames()
+    dl_res_frames = [f for f in frames if f["command"] == "dlDataRes"]
+    assert dl_res_frames, "AC must receive a dlDataRes frame after send_dl_data_res"
+    assert dl_res_frames[0]["epEui"] == EP_EUI_INT
+    assert dl_res_frames[0]["rc"] == 0
+    assert dl_res_frames[0]["opId"] < 0, "SC-initiated dlDataRes must carry a negative opId"
+
+
+@pytest.mark.asyncio
+async def test_send_dl_data_res_does_not_deliver_to_unregistered_ac(server: Any) -> None:
+    """send_dl_data_res must NOT deliver dlDataRes to an AC that has NOT registered the endpoint."""
+    other_eui = "FFFFFFFFFFFFFFFF"
+    other_eui_int = eui_to_int(other_eui)
+    ac_eui_b = "0807060504030201"
+    ac_eui_b_int = eui_to_int(ac_eui_b)
+
+    writer_a = FakeWriter()
+    writer_b = FakeWriter()
+
+    task_a = asyncio.create_task(
+        server.handle_ac(
+            LiveReader([
+                {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
+                {"command": "reg", "opId": 1, "epEui": EP_EUI_INT},
+            ]),
+            writer_a,
+        )
+    )
+    task_b = asyncio.create_task(
+        server.handle_ac(
+            LiveReader([
+                {"command": "con", "opId": 0, "acEui": ac_eui_b_int},
+                {"command": "reg", "opId": 1, "epEui": other_eui_int},
+            ]),
+            writer_b,
+        )
+    )
+    await asyncio.sleep(0.05)
+
+    await server.send_dl_data_res(EP_EUI, dl_op_id=1, rc=0)
+
+    task_a.cancel()
+    task_b.cancel()
+    await asyncio.gather(task_a, task_b, return_exceptions=True)
+
+    frames_a = writer_a.received_frames()
+    frames_b = writer_b.received_frames()
+
+    assert any(f["command"] == "dlDataRes" for f in frames_a), (
+        "AC A (registered EP_EUI) must receive dlDataRes"
+    )
+    assert not any(f["command"] == "dlDataRes" for f in frames_b), (
+        "AC B (registered a different endpoint) must NOT receive dlDataRes for EP_EUI"
+    )
+
+
+@pytest.mark.asyncio
+async def test_tx_data_res_rsp_triggers_tx_data_res_cmp(server: Any) -> None:
+    """txDataResRsp from AC must cause SC to reply with txDataResCmp and clear the pending op."""
+    writer = FakeWriter()
+    task = asyncio.create_task(
+        server.handle_ac(
+            LiveReader([
+                {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
+                {"command": "reg", "opId": 1, "epEui": EP_EUI_INT},
+            ]),
+            writer,
+        )
+    )
+    await asyncio.sleep(0.05)
+
+    await server.send_dl_data_res(EP_EUI, dl_op_id=1, rc=0)
+
+    frames_after_res = writer.received_frames()
+    dl_res = next((f for f in frames_after_res if f["command"] == "dlDataRes"), None)
+    assert dl_res is not None, "dlDataRes must have been sent before txDataResRsp"
+    dl_res_op_id = dl_res["opId"]
+
+    assert dl_res_op_id in server._pending_ops, (
+        "dlDataRes op must be tracked in _pending_ops while waiting for txDataResRsp"
+    )
+
+    await server._dispatch(writer, {"command": "txDataResRsp", "opId": dl_res_op_id})
+
+    assert dl_res_op_id not in server._pending_ops, (
+        "_pending_ops must be cleared after txDataResRsp"
+    )
+
+    all_frames = writer.received_frames()
+    cmp_frames = [f for f in all_frames if f["command"] == "txDataResCmp"]
+    assert cmp_frames, "SC must send txDataResCmp in response to txDataResRsp"
+    assert cmp_frames[0]["opId"] == dl_res_op_id
+
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)

@@ -2153,12 +2153,15 @@ class TLSServer:
                                     }
                                 )
 
-                            # Notify SCACI Application Centers about DL TX result
+                            # Notify SCACI Application Centers about DL TX result.
+                            # Use the AC's original dlDataQue opId stored in pending so
+                            # the AC can correlate the dlDataRes to its request.
                             _sca = getattr(self, "sca_server", None)
                             if _sca is not None:
                                 try:
+                                    ac_dl_op_id = pending.get("ac_op_id", 0)
                                     await _sca.send_dl_data_res(
-                                        eui.upper(), int(op_id) if str(op_id).lstrip("-").isdigit() else 0, code
+                                        eui.upper(), ac_dl_op_id, code
                                     )
                                 except Exception as _sca_err:
                                     logger.debug("SCACI dlDataRes notify failed: %s", _sca_err)
@@ -2897,8 +2900,21 @@ class TLSServer:
                 logger.error(f"❌ Error in periodic VM status query: {e}")
                 await asyncio.sleep(60)
 
-    async def vm_send_data(self, sensor_eui: str, data: bytes, port: int = 1) -> bool:
-        """Send data to sensor via VM sub-channel (downlink)"""
+    async def vm_send_data(
+        self, sensor_eui: str, data: bytes, port: int = 1, ac_op_id: int = 0
+    ) -> bool:
+        """Send data to sensor via VM sub-channel (downlink).
+
+        Args:
+            sensor_eui: Sensor EUI (hex string).
+            data: Raw payload bytes.
+            port: Application port number (default 1).
+            ac_op_id: Original SCACI dlDataQue opId from the Application Center.
+                Stored in pending_vm_operations so that the TX-confirmation callback
+                (vm.dlDataRsp) can forward the correct correlation ID to
+                sca_server.send_dl_data_res, enabling the AC to match the dlDataRes
+                to its original dlDataQue request.
+        """
         sensor_eui = sensor_eui.upper()
         logger.info(f"📤 VM DOWNLINK DATA for sensor {sensor_eui}")
         logger.info(f"   Port: {port}, Data length: {len(data)} bytes")
@@ -2935,6 +2951,9 @@ class TLSServer:
                 "eui": sensor_eui,
                 "operation": "dl_data",
                 "timestamp": asyncio.get_event_loop().time(),
+                # Preserve the originating AC dlDataQue opId so the TX-confirmation
+                # callback can pass it back to send_dl_data_res for AC correlation.
+                "ac_op_id": ac_op_id,
             }
 
             msg_pack = encode_message(messages.build_vm_dl_data(op_id, mac_type, user_data, port))

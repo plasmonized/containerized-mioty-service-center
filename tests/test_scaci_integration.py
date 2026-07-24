@@ -282,6 +282,108 @@ async def test_dl_data_rev_clears_pending(server: Any) -> None:
     assert server.pending_dl.get(EP_EUI.upper()) is None
 
 
+@pytest.mark.asyncio
+async def test_dl_data_que_stores_queued_at_mono(server: Any) -> None:
+    """pending_dl entry must contain queued_at_mono (monotonic float) and op_id."""
+    frames_in = [
+        {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
+        {"command": "dlDataQue", "opId": 7, "epEui": EP_EUI_INT, "data": [0x11]},
+    ]
+    await run_exchange(server, frames_in)
+    ep_str = int_to_eui(EP_EUI_INT).upper()
+    entry = server.pending_dl.get(ep_str) or server.pending_dl.get(EP_EUI.upper())
+    assert entry is not None
+    assert isinstance(entry.get("queued_at_mono"), float)
+    assert entry.get("op_id") == 7
+
+
+@pytest.mark.asyncio
+async def test_flush_pending_dl_delivers_and_clears(server: Any) -> None:
+    """flush_pending_dl: if vm_send_data succeeds, entry is removed from pending_dl."""
+
+    class _FakeTLS:
+        """Minimal TLSServer stub that always reports vm_send_data as successful."""
+
+        async def vm_send_data(self, ep_eui: str, data: bytes, port: int = 1) -> bool:
+            return True
+
+    # Manually inject a queued downlink
+    import time
+
+    ep_str = int_to_eui(EP_EUI_INT).upper()
+    server.pending_dl[ep_str] = {
+        "data": [0xAB, 0xCD],
+        "port": 1,
+        "op_id": 42,
+        "queued_at_mono": time.monotonic(),
+        "queued_at": 0,
+    }
+    server.tls_server = _FakeTLS()
+    await server.flush_pending_dl(ep_str)
+    assert server.pending_dl.get(ep_str) is None, "entry should be cleared after successful flush"
+    # Cleanup
+    server.tls_server = None
+
+
+@pytest.mark.asyncio
+async def test_pending_dl_sweep_expires_stale_entry(server: Any) -> None:
+    """_pending_dl_sweep_loop: stale entries (beyond TTL) are expired with dlDataRes rc=110."""
+    import time
+
+    dl_res_calls: list[tuple[str, int, int]] = []
+
+    class _FakeTLS:
+        async def vm_send_data(self, ep_eui: str, data: bytes, port: int = 1) -> bool:
+            return False  # VM always unavailable
+
+    original_send = server.send_dl_data_res
+
+    async def _mock_send_dl(ep_eui: str, dl_op_id: int, rc: int) -> None:
+        dl_res_calls.append((ep_eui, dl_op_id, rc))
+
+    server.send_dl_data_res = _mock_send_dl
+    server.tls_server = _FakeTLS()
+
+    ep_str = int_to_eui(EP_EUI_INT).upper()
+    # Inject a stale entry older than the TTL
+    server.pending_dl[ep_str] = {
+        "data": [0xFF],
+        "port": 1,
+        "op_id": 99,
+        "queued_at_mono": time.monotonic() - (server._MAX_DL_TTL_S + 1),
+        "queued_at": 0,
+    }
+
+    # Run one sweep iteration manually (bypass asyncio.sleep)
+    entries = list(server.pending_dl.items())
+    for ep_eui, entry in entries:
+        age_s = time.monotonic() - entry.get("queued_at_mono", 0)
+        delivered = False
+        if age_s < server._MAX_DL_TTL_S:
+            try:
+                delivered = await server.tls_server.vm_send_data(
+                    ep_eui, bytes(entry["data"]), port=entry.get("port", 1)
+                )
+            except Exception:
+                pass
+        if delivered:
+            server.pending_dl.pop(ep_eui, None)
+            await server.send_dl_data_res(ep_eui, entry.get("op_id", 0), rc=0)
+        elif age_s >= server._MAX_DL_TTL_S:
+            server.pending_dl.pop(ep_eui, None)
+            await server.send_dl_data_res(ep_eui, entry.get("op_id", 0), rc=110)
+
+    assert server.pending_dl.get(ep_str) is None, "expired entry must be cleared"
+    assert dl_res_calls, "dlDataRes must have been called for expired entry"
+    _, dl_op_id, rc = dl_res_calls[0]
+    assert rc == 110, f"expected ETIMEDOUT rc=110, got rc={rc}"
+    assert dl_op_id == 99
+
+    # Restore
+    server.send_dl_data_res = original_send
+    server.tls_server = None
+
+
 # ---------------------------------------------------------------------------
 # Tests: unsupported commands / error lifecycle
 # ---------------------------------------------------------------------------

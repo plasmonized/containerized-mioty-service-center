@@ -2267,13 +2267,17 @@ class TLSServer:
                 logger.info(
                     f"   Data Preview: SNR={data_dict['snr']:.1f}dB, RSSI={data_dict['rssi']:.1f}dBm, Count={data_dict['cnt']}"
                 )
-                logger.info(f"   Queue size before add: {self.mqtt_out_queue.qsize()}")
+                if self.mqtt_out_queue:
+                    logger.info(f"   Queue size before add: {self.mqtt_out_queue.qsize()}")
                 logger.debug(f"   Full Payload: {payload_json}")
 
                 try:
-                    await self.mqtt_out_queue.put({"topic": mqtt_topic, "payload": payload_json})
-                    logger.info("✅ DEDUPLICATED MQTT message queued successfully")
-                    logger.info(f"   Queue size after add: {self.mqtt_out_queue.qsize()}")
+                    if self.mqtt_out_queue:
+                        await self.mqtt_out_queue.put({"topic": mqtt_topic, "payload": payload_json})
+                        logger.info("✅ DEDUPLICATED MQTT message queued successfully")
+                        logger.info(f"   Queue size after add: {self.mqtt_out_queue.qsize()}")
+                    else:
+                        logger.debug("MQTT disabled — skipping dedup queue put for %s", eui)
 
                     # Fan-out to SCACI Application Centers if enabled
                     _sca = getattr(self, "sca_server", None)

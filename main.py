@@ -20,18 +20,27 @@ _background_tasks: set[asyncio.Task] = set()
 
 async def main() -> None:
     global tls_server_instance, sca_server_instance
-    mqtt_out_queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
-    mqtt_in_queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+
+    mqtt_enabled = getattr(bssci_config, "MQTT_ENABLED", True)
+    scaci_enabled = getattr(bssci_config, "SCACI_ENABLED", False)
+
+    # Only create live queues when MQTT is enabled.  When MQTT is disabled we pass
+    # None so that TLSServer's guarded puts are no-ops and no dead queue grows.
+    mqtt_out_queue: asyncio.Queue[dict[str, str]] | None = asyncio.Queue() if mqtt_enabled else None
+    mqtt_in_queue: asyncio.Queue[dict[str, str]] | None = asyncio.Queue() if mqtt_enabled else None
 
     logger.info("Initializing BSSCI Service Center...")
     logger.info(f"Config: TLS Port {LISTEN_PORT}, MQTT Broker {MQTT_BROKER}:{MQTT_PORT}")
 
-    # Setup queue logging to monitor queue usage
+    # Setup queue logging to monitor queue usage (only when queues exist)
     from queue_logger import log_all_queue_stats, setup_queue_logging
 
-    queue_loggers = setup_queue_logging(
-        {"mqtt_out_queue": mqtt_out_queue, "mqtt_in_queue": mqtt_in_queue}
-    )
+    if mqtt_out_queue is not None and mqtt_in_queue is not None:
+        queue_loggers = setup_queue_logging(
+            {"mqtt_out_queue": mqtt_out_queue, "mqtt_in_queue": mqtt_in_queue}
+        )
+    else:
+        queue_loggers = {}
 
     logger.info("🔍 Queue Instance Analysis:")
     logger.info("   mqtt_out_queue Daily Counter: Starting fresh")
@@ -41,13 +50,14 @@ async def main() -> None:
     tls_server_instance = TLSServer(SENSOR_CONFIG_FILE, mqtt_out_queue, mqtt_in_queue)
 
     # Create SCACI server instance if enabled
-    scaci_enabled = getattr(bssci_config, "SCACI_ENABLED", False)
     if scaci_enabled:
         from SCAServer import SCAServer
 
         sca_server_instance = SCAServer(mqtt_out_queue)
-        # Wire up fan-out: TLSServer calls sca_server_instance.broadcast_ul_data after dedup
+        # Wire fan-out: TLSServer → sca_server.broadcast_ul_data after dedup
         tls_server_instance.sca_server = sca_server_instance  # type: ignore[attr-defined]
+        # Wire back: sca_server → tls_server for reg validation and downlink delivery
+        sca_server_instance.tls_server = tls_server_instance
         logger.info("SCACI interface ENABLED — listening on port %s", bssci_config.SCACI_PORT)
     else:
         logger.info("SCACI interface disabled (set SCACI_ENABLED=true to enable)")

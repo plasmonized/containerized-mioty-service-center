@@ -96,13 +96,20 @@ def build_error_response(op_id: int, rc: int = 95) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def build_status_request(op_id: int) -> dict[str, Any]:
-    """status — SC queries AC for status information."""
-    return {"command": "status", "opId": op_id}
+def build_status_response(op_id: int, sc_info: dict[str, Any]) -> dict[str, Any]:
+    """statusRsp — SC replies to AC-initiated status query with SC health data."""
+    return {
+        "command": "statusRsp",
+        "opId": op_id,
+        "bsConnected": sc_info.get("bs_connected", 0),
+        "epRegistered": sc_info.get("ep_registered", 0),
+        "epOnline": sc_info.get("ep_online", 0),
+        "uptimeS": sc_info.get("uptime_s", 0),
+    }
 
 
 def build_status_complete(op_id: int) -> dict[str, Any]:
-    """statusCmp — SC completes the status exchange after receiving statusRsp."""
+    """statusCmp — SC completes the status exchange after sending statusRsp."""
     return {"command": "statusCmp", "opId": op_id}
 
 

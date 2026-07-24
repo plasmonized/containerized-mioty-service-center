@@ -9,6 +9,9 @@ SC-initiated opIds: negative (decrementing from -1).
 AC-initiated opIds: positive (incrementing from 0).
 Timestamps: 64-bit nanoseconds UTC.
 EUIs: integers at wire boundary.
+
+Status direction: AC-initiated — AC sends 'status', SC replies with 'statusRsp'
+containing SC health data (connected BSes, sensor counts, uptime).
 """
 
 from __future__ import annotations
@@ -29,7 +32,9 @@ from scaci_protocol import decode_frames, encode_frame, eui_to_int, int_to_eui, 
 configure_logging(__name__)
 logger = logging.getLogger(__name__)
 
-_ENOTSUP = 95  # POSIX ENOTSUP — operation not supported
+_ENOTSUP = 95   # POSIX ENOTSUP — operation not supported
+_ESRCH = 3      # POSIX ESRCH — endpoint not found in SC sensor config
+_STARTED_AT = time.monotonic()
 
 
 class SCAServer:
@@ -37,13 +42,20 @@ class SCAServer:
 
     One instance is shared across all connections.  Per-AC state is tracked in
     dicts keyed by ``asyncio.StreamWriter``.
+
+    Set ``sca_server.tls_server`` to the running TLSServer instance so that
+    reg/dlDataQue can access live sensor state and send actual downlinks.
     """
 
     def __init__(
         self,
-        mqtt_out_queue: asyncio.Queue[dict[str, Any]],
+        mqtt_out_queue: asyncio.Queue[dict[str, Any]] | None,
     ) -> None:
         self.mqtt_out_queue = mqtt_out_queue
+
+        # Optional reference to TLSServer — set by main.py after both are created.
+        # Used to validate sensor registrations and to trigger actual downlinks.
+        self.tls_server: Any = None
 
         # Per-connection op-id counters (SC uses negative ids, decrementing)
         self._ac_op_ids: dict[asyncio.streams.StreamWriter, int] = {}
@@ -61,6 +73,7 @@ class SCAServer:
         self._pending_ops: dict[int, dict[str, Any]] = {}
 
         # Pending downlink queue requests from ACs: ep_eui → {payload, queued_at}
+        # Used as fallback when the sensor has no active VM sub-channel.
         self.pending_dl: dict[str, dict[str, Any]] = {}
 
         self._state_lock = threading.RLock()
@@ -111,12 +124,48 @@ class SCAServer:
             ac_eui = self.connected_acs.pop(writer, None)
             self.ac_info.pop(writer, None)
             self._ac_op_ids.pop(writer, None)
-            # Clean up pending ops for this writer
             stale = [k for k, v in self._pending_ops.items() if v.get("writer") is writer]
             for k in stale:
                 self._pending_ops.pop(k, None)
         if ac_eui:
             logger.info("SCACI AC disconnected: %s", ac_eui)
+
+    def _sc_health(self) -> dict[str, Any]:
+        """Gather SC health info for statusRsp (best-effort, never raises)."""
+        tls = self.tls_server
+        try:
+            bs_connected = len(tls.connected_base_stations) if tls else 0
+        except Exception:
+            bs_connected = 0
+        try:
+            ep_registered = len([
+                v for v in tls.registered_sensors.values()
+                if v.get("registered") and not str(v).endswith("_failure")
+            ]) if tls else 0
+        except Exception:
+            ep_registered = 0
+        try:
+            ep_online = tls.get_sensor_online_count() if tls else 0
+        except Exception:
+            ep_online = 0
+        uptime_s = int(time.monotonic() - _STARTED_AT)
+        return {
+            "bs_connected": bs_connected,
+            "ep_registered": ep_registered,
+            "ep_online": ep_online,
+            "uptime_s": uptime_s,
+        }
+
+    def _is_known_endpoint(self, ep_eui: str) -> bool:
+        """Return True if *ep_eui* is present in TLSServer's sensor_config."""
+        tls = self.tls_server
+        if tls is None:
+            return True  # no validation possible — accept optimistically
+        try:
+            cfg: list[dict[str, Any]] = getattr(tls, "sensor_config", [])
+            return any(s.get("eui", "").upper() == ep_eui.upper() for s in cfg)
+        except Exception:
+            return True
 
     # ------------------------------------------------------------------
     # Server startup
@@ -154,7 +203,13 @@ class SCAServer:
             logger.info("SCACI incoming TCP from %s — starting TLS handshake", peer)
             try:
                 await writer.start_tls(ssl_ctx, ssl_handshake_timeout=15.0)
-            except (TimeoutError, ssl.SSLError, ConnectionResetError, BrokenPipeError, EOFError) as exc:
+            except (
+                TimeoutError,
+                ssl.SSLError,
+                ConnectionResetError,
+                BrokenPipeError,
+                EOFError,
+            ) as exc:
                 logger.error("SCACI TLS handshake failed from %s: %s", peer, exc)
                 await self._close(writer)
                 return
@@ -167,8 +222,6 @@ class SCAServer:
 
         server = await asyncio.start_server(_handler, host, port)
         logger.info("SCACI server listening on %s:%s", host, port)
-
-        self._spawn(self._periodic_status_loop())
 
         async with server:
             await server.serve_forever()
@@ -211,7 +264,7 @@ class SCAServer:
             if len(remaining) < 12:
                 break
             length = int.from_bytes(remaining[8:12], byteorder="little")
-            remaining = remaining[12 + length:]
+            remaining = remaining[12 + length :]
         return remaining
 
     # ------------------------------------------------------------------
@@ -234,8 +287,11 @@ class SCAServer:
             await self._handle_ping(writer, frame)
         elif command == "pingCmp":
             logger.debug("SCACI pingCmp from %s", ac_label)
-        elif command == "statusRsp":
-            await self._handle_status_rsp(writer, frame)
+        elif command == "status":
+            # AC-initiated: AC queries SC for health information
+            await self._handle_status(writer, frame)
+        elif command == "statusCmp":
+            logger.debug("SCACI statusCmp from %s opId=%s", ac_label, op_id)
         elif command == "reg":
             await self._handle_reg(writer, frame)
         elif command == "regCmp":
@@ -265,7 +321,6 @@ class SCAServer:
         elif command == "txDataResCmp":
             logger.debug("SCACI txDataResCmp from %s opId=%s", ac_label, op_id)
         elif command in ("ulDataTx",) or command.startswith("rc."):
-            # Not supported — answer with error
             logger.warning("SCACI unsupported command %s from %s", command, ac_label)
             await self._send(writer, msg.build_error_response(op_id, _ENOTSUP))
         else:
@@ -281,7 +336,9 @@ class SCAServer:
         op_id = frame.get("opId", 0)
         if op_id != 0:
             logger.warning(
-                "SCACI con from %s has opId=%s (expected 0 per spec)", self._ac_label(writer), op_id
+                "SCACI con from %s has opId=%s (expected 0 per spec)",
+                self._ac_label(writer),
+                op_id,
             )
         ac_eui_int = frame.get("acEui", frame.get("bsEui", 0))
         ac_eui = int_to_eui(ac_eui_int) if ac_eui_int else "UNKNOWN"
@@ -308,6 +365,18 @@ class SCAServer:
         await self._send(writer, msg.build_ping_response(op_id))
         await self._send(writer, msg.build_ping_complete(op_id))
 
+    async def _handle_status(
+        self, writer: asyncio.streams.StreamWriter, frame: dict[str, Any]
+    ) -> None:
+        """Handle AC-initiated status query — reply with SC health data."""
+        op_id = frame.get("opId", 0)
+        health = self._sc_health()
+        logger.debug(
+            "SCACI status from %s → SC health: %s", self._ac_label(writer), health
+        )
+        await self._send(writer, msg.build_status_response(op_id, health))
+        await self._send(writer, msg.build_status_complete(op_id))
+
     async def _handle_reg(
         self, writer: asyncio.streams.StreamWriter, frame: dict[str, Any]
     ) -> None:
@@ -317,6 +386,16 @@ class SCAServer:
         ac_eui = self.connected_acs.get(writer, "UNKNOWN")
 
         logger.info("SCACI reg: AC %s registers endpoint %s", ac_eui, ep_eui)
+
+        if not self._is_known_endpoint(ep_eui):
+            logger.warning(
+                "SCACI reg: endpoint %s not found in sensor config — rejecting (rc=%d)",
+                ep_eui,
+                _ESRCH,
+            )
+            await self._send(writer, msg.build_reg_response(op_id, rc=_ESRCH))
+            await self._send(writer, msg.build_reg_complete(op_id))
+            return
 
         with self._state_lock:
             eps = self.ac_registered_eps.setdefault(ac_eui, [])
@@ -350,18 +429,42 @@ class SCAServer:
         op_id = frame.get("opId", 0)
         ep_eui_int = frame.get("epEui", 0)
         ep_eui = int_to_eui(ep_eui_int) if ep_eui_int else "UNKNOWN"
-        user_data = frame.get("data", frame.get("userData", []))
+        user_data: list[int] = frame.get("data", frame.get("userData", []))
+        port: int = frame.get("port", 1)
 
-        logger.info("SCACI dlDataQue: downlink for endpoint %s (%d bytes)", ep_eui, len(user_data))
+        logger.info(
+            "SCACI dlDataQue: downlink for endpoint %s (%d bytes, port=%d)",
+            ep_eui,
+            len(user_data),
+            port,
+        )
 
-        with self._state_lock:
-            self.pending_dl[ep_eui] = {
-                "data": user_data,
-                "queued_at": ns_now(),
-                "frame": frame,
-            }
+        # Attempt immediate delivery via VM sub-channel if tls_server is wired up.
+        tls = self.tls_server
+        dl_sent = False
+        if tls is not None:
+            try:
+                dl_sent = await tls.vm_send_data(ep_eui, bytes(user_data), port=port)
+                if dl_sent:
+                    logger.info(
+                        "SCACI dlDataQue: downlink dispatched via VM sub-channel for %s", ep_eui
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "SCACI dlDataQue: vm_send_data failed for %s: %s — queuing instead", ep_eui, exc
+                )
 
-        # Acknowledge immediately — actual TX happens when BS sends ulData
+        if not dl_sent:
+            # No VM active or tls_server unavailable — queue for later delivery
+            with self._state_lock:
+                self.pending_dl[ep_eui] = {
+                    "data": user_data,
+                    "port": port,
+                    "queued_at": ns_now(),
+                    "frame": frame,
+                }
+            logger.debug("SCACI dlDataQue: downlink queued for %s (VM not active)", ep_eui)
+
         await self._send(writer, msg.build_dl_data_que_response(op_id, rc=0))
         await self._send(writer, msg.build_dl_data_que_complete(op_id))
 
@@ -383,24 +486,6 @@ class SCAServer:
     # ------------------------------------------------------------------
     # Handlers for responses to SC-initiated operations
     # ------------------------------------------------------------------
-
-    async def _handle_status_rsp(
-        self, writer: asyncio.streams.StreamWriter, frame: dict[str, Any]
-    ) -> None:
-        op_id = frame.get("opId", 0)
-        ac_label = self._ac_label(writer)
-        logger.debug("SCACI statusRsp from %s: %s", ac_label, frame)
-
-        with self._state_lock:
-            info = self.ac_info.get(writer, {})
-            info["last_status"] = {
-                "cpu": frame.get("cpuLoad"),
-                "memory": frame.get("memLoad"),
-                "uptime": frame.get("uptime"),
-                "reported_at": datetime.now(UTC).isoformat(),
-            }
-
-        await self._send(writer, msg.build_status_complete(op_id))
 
     async def _handle_ul_data_rsp(
         self, writer: asyncio.streams.StreamWriter, frame: dict[str, Any]
@@ -435,7 +520,9 @@ class SCAServer:
     ) -> None:
         """Fan-out an uplink sensor packet to all connected Application Centers.
 
-        Called by TLSServer (or its integration glue in main.py) after deduplication.
+        Called by TLSServer after deduplication.
+        Only ACs that have registered this endpoint receive the data.
+        If no AC has registered anything, the packet is broadcast to all (open mode).
         """
         ep_eui_int = eui_to_int(ep_eui_hex) if len(ep_eui_hex) == 16 else 0
         bs_eui_int = eui_to_int(bs_eui_hex) if len(bs_eui_hex) == 16 else 0
@@ -446,8 +533,7 @@ class SCAServer:
         if not writers:
             return
 
-        # Only send to ACs that have registered this endpoint.
-        # If no AC has registered anything yet, broadcast to all (legacy / open mode).
+        # Filter to ACs that registered this endpoint; open-broadcast if no registrations exist.
         with self._state_lock:
             any_registrations = any(self.ac_registered_eps.values())
             if any_registrations:
@@ -455,7 +541,10 @@ class SCAServer:
                     w
                     for w in writers
                     if ep_eui_hex.upper()
-                    in [e.upper() for e in self.ac_registered_eps.get(self.connected_acs.get(w, ""), [])]
+                    in [
+                        e.upper()
+                        for e in self.ac_registered_eps.get(self.connected_acs.get(w, ""), [])
+                    ]
                 ]
 
         for writer in writers:
@@ -508,27 +597,6 @@ class SCAServer:
             await self._send(writer, ep_msg)
 
     # ------------------------------------------------------------------
-    # Periodic tasks
-    # ------------------------------------------------------------------
-
-    async def _periodic_status_loop(self) -> None:
-        """Query each connected AC for status every STATUS_INTERVAL seconds."""
-        interval = getattr(bssci_config, "STATUS_INTERVAL", 60)
-        while True:
-            await asyncio.sleep(interval)
-            with self._state_lock:
-                writers = list(self.connected_acs.keys())
-            for writer in writers:
-                op_id = self._next_op_id(writer)
-                with self._state_lock:
-                    self._pending_ops[op_id] = {
-                        "writer": writer,
-                        "command": "status",
-                        "sent_at": time.monotonic(),
-                    }
-                await self._send(writer, msg.build_status_request(op_id))
-
-    # ------------------------------------------------------------------
     # Status introspection (for web UI)
     # ------------------------------------------------------------------
 
@@ -544,7 +612,6 @@ class SCAServer:
                         "version": info.get("version", "?"),
                         "connected_at": info.get("connected_at", ""),
                         "peer": info.get("peer", ""),
-                        "last_status": info.get("last_status"),
                         "registered_eps": self.ac_registered_eps.get(eui, []),
                     }
                 )

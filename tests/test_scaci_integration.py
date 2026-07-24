@@ -7,7 +7,7 @@ pair, verifying end-to-end message exchanges without a real TLS connection.
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -401,3 +401,91 @@ def test_get_status_empty(server: Any) -> None:
     assert status["enabled"] is True
     assert status["connected"] == 0
     assert status["acs"] == []
+
+
+# ---------------------------------------------------------------------------
+# Tests: AC-initiated status query
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_status_from_ac_returns_status_rsp(server: Any) -> None:
+    """AC-initiated status → SC must reply with statusRsp (SC health data) + statusCmp."""
+    frames_in = [
+        {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
+        {"command": "status", "opId": 1},
+    ]
+    responses = await run_exchange(server, frames_in)
+    commands = [f["command"] for f in responses]
+    assert "statusRsp" in commands
+    assert "statusCmp" in commands
+
+
+@pytest.mark.asyncio
+async def test_status_rsp_contains_sc_health_fields(server: Any) -> None:
+    """statusRsp must include SC health fields: bsConnected, epRegistered, epOnline, uptimeS."""
+    frames_in = [
+        {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
+        {"command": "status", "opId": 1},
+    ]
+    responses = await run_exchange(server, frames_in)
+    rsp = next(f for f in responses if f["command"] == "statusRsp")
+    assert "bsConnected" in rsp
+    assert "epRegistered" in rsp
+    assert "epOnline" in rsp
+    assert "uptimeS" in rsp
+    assert rsp["opId"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Tests: reg validated against sensor config
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reg_accepted_when_no_tls_server(server: Any) -> None:
+    """When tls_server is not set, reg accepts any endpoint optimistically."""
+    frames_in = [
+        {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
+        {"command": "reg", "opId": 1, "epEui": EP_EUI_INT},
+    ]
+    responses = await run_exchange(server, frames_in)
+    rsp = next(f for f in responses if f["command"] == "regRsp")
+    assert rsp["rc"] == 0
+
+
+@pytest.mark.asyncio
+async def test_reg_rejected_when_endpoint_unknown_in_sensor_config(server: Any) -> None:
+    """When tls_server is wired, reg for an unknown endpoint returns rc=ESRCH (3)."""
+
+    class FakeTLSServer:
+        sensor_config: ClassVar[list[dict[str, Any]]] = [{"eui": "AABBCCDD11223344"}]
+
+    server.tls_server = FakeTLSServer()
+
+    unknown_eui_int = eui_to_int("FFFFFFFFFFFFFFFF")
+    frames_in = [
+        {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
+        {"command": "reg", "opId": 1, "epEui": unknown_eui_int},
+    ]
+    responses = await run_exchange(server, frames_in)
+    rsp = next(f for f in responses if f["command"] == "regRsp")
+    assert rsp["rc"] == 3  # ESRCH
+
+
+@pytest.mark.asyncio
+async def test_reg_accepted_when_endpoint_known_in_sensor_config(server: Any) -> None:
+    """When tls_server is wired, reg for a known endpoint returns rc=0."""
+
+    class FakeTLSServer:
+        sensor_config: ClassVar[list[dict[str, Any]]] = [{"eui": EP_EUI}]
+
+    server.tls_server = FakeTLSServer()
+
+    frames_in = [
+        {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
+        {"command": "reg", "opId": 1, "epEui": EP_EUI_INT},
+    ]
+    responses = await run_exchange(server, frames_in)
+    rsp = next(f for f in responses if f["command"] == "regRsp")
+    assert rsp["rc"] == 0

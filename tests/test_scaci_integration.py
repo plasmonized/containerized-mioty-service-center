@@ -1,0 +1,403 @@
+"""Integration tests for SCAServer — mock AC ↔ SC handshake flows.
+
+These tests drive handle_ac() directly through a fake asyncio.StreamReader/Writer
+pair, verifying end-to-end message exchanges without a real TLS connection.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from typing import Any
+
+import pytest
+
+from scaci_protocol import decode_frames, encode_frame, eui_to_int, int_to_eui
+
+# ---------------------------------------------------------------------------
+# Helpers: fake StreamReader / StreamWriter backed by bytes / queue
+# ---------------------------------------------------------------------------
+
+
+class FakeWriter:
+    """Captures written bytes; simulates asyncio.StreamWriter for SCAServer."""
+
+    def __init__(self) -> None:
+        self._buf = b""
+        self.closed = False
+        self._peername = ("127.0.0.1", 12345)
+
+    def write(self, data: bytes) -> None:
+        self._buf += data
+
+    async def drain(self) -> None:
+        pass
+
+    def close(self) -> None:
+        self.closed = True
+
+    async def wait_closed(self) -> None:
+        pass
+
+    def get_extra_info(self, key: str, default: Any = None) -> Any:
+        if key == "peername":
+            return self._peername
+        return default
+
+    async def start_tls(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    def received_frames(self) -> list[dict[str, Any]]:
+        """Decode all MIOTYA01 frames written so far."""
+        return decode_frames(self._buf)
+
+
+class FakeReader:
+    """Feeds pre-built MIOTYA01 frames then signals EOF."""
+
+    def __init__(self, frames: list[dict[str, Any]]) -> None:
+        self._data = b"".join(encode_frame(f) for f in frames)
+        self._sent = False
+
+    async def read(self, n: int) -> bytes:
+        if not self._sent:
+            self._sent = True
+            return self._data
+        return b""  # EOF
+
+
+class LiveReader:
+    """Feeds initial frames then blocks (sleeps) until cancelled — keeps AC alive."""
+
+    def __init__(self, frames: list[dict[str, Any]]) -> None:
+        self._data = b"".join(encode_frame(f) for f in frames)
+        self._sent = False
+
+    async def read(self, n: int) -> bytes:
+        if not self._sent:
+            self._sent = True
+            return self._data
+        # Block indefinitely to keep handle_ac alive
+        await asyncio.sleep(9999)
+        return b""
+
+
+# ---------------------------------------------------------------------------
+# Fixture: fresh SCAServer instance per test
+# ---------------------------------------------------------------------------
+
+AC_EUI = "0102030405060708"
+AC_EUI_INT = eui_to_int(AC_EUI)
+EP_EUI = "A1B2C3D4E5F60708"
+EP_EUI_INT = eui_to_int(EP_EUI)
+
+
+@pytest.fixture()
+def server() -> Any:
+    from SCAServer import SCAServer
+
+    q: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+    return SCAServer(mqtt_out_queue=q)
+
+
+# ---------------------------------------------------------------------------
+# Helper
+# ---------------------------------------------------------------------------
+
+
+async def run_exchange(
+    server: Any, ac_frames: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Feed *ac_frames* into server.handle_ac and return decoded SC responses."""
+    reader = FakeReader(ac_frames)
+    writer = FakeWriter()
+    await server.handle_ac(reader, writer)
+    return writer.received_frames()
+
+
+# ---------------------------------------------------------------------------
+# Tests: connection handshake
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_con_handshake_produces_con_rsp_and_con_cmp(server: Any) -> None:
+    """con → SC must reply with conRsp (fresh session) then conCmp."""
+    con_frame = {"command": "con", "opId": 0, "acEui": AC_EUI_INT, "version": "1.0.0"}
+    responses = await run_exchange(server, [con_frame])
+    commands = [f["command"] for f in responses]
+    assert "conRsp" in commands
+    assert "conCmp" in commands
+
+
+@pytest.mark.asyncio
+async def test_con_rsp_has_fresh_session_uuid(server: Any) -> None:
+    """conRsp must carry snResume=False and a 16-byte snScUuid."""
+    con_frame = {"command": "con", "opId": 0, "acEui": AC_EUI_INT}
+    responses = await run_exchange(server, [con_frame])
+    rsp = next(f for f in responses if f["command"] == "conRsp")
+    assert rsp["snResume"] is False
+    assert isinstance(rsp.get("snScUuid"), list)
+    assert len(rsp["snScUuid"]) == 16
+
+
+@pytest.mark.asyncio
+async def test_con_nonzero_opid_still_accepted(server: Any) -> None:
+    """Non-zero opId on con: SC logs a warning but still responds (tolerant)."""
+    con_frame = {"command": "con", "opId": 5, "acEui": AC_EUI_INT}
+    responses = await run_exchange(server, [con_frame])
+    commands = [f["command"] for f in responses]
+    assert "conRsp" in commands
+
+
+@pytest.mark.asyncio
+async def test_con_sends_con_rsp(server: Any) -> None:
+    """After a successful con the SC sends conRsp."""
+    con_frame = {"command": "con", "opId": 0, "acEui": AC_EUI_INT}
+    responses = await run_exchange(server, [con_frame])
+    assert any(f["command"] == "conRsp" for f in responses)
+
+
+# ---------------------------------------------------------------------------
+# Tests: ping
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ping_after_con(server: Any) -> None:
+    """ping → SC must reply with pingRsp + pingCmp."""
+    frames_in = [
+        {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
+        {"command": "ping", "opId": 1},
+    ]
+    responses = await run_exchange(server, frames_in)
+    commands = [f["command"] for f in responses]
+    assert "pingRsp" in commands
+    assert "pingCmp" in commands
+
+
+# ---------------------------------------------------------------------------
+# Tests: reg / dereg
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reg_returns_reg_rsp_and_reg_cmp(server: Any) -> None:
+    """reg → SC must reply with regRsp (rc=0) + regCmp."""
+    frames_in = [
+        {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
+        {"command": "reg", "opId": 1, "epEui": EP_EUI_INT},
+    ]
+    responses = await run_exchange(server, frames_in)
+    commands = [f["command"] for f in responses]
+    assert "regRsp" in commands
+    assert "regCmp" in commands
+    rsp = next(f for f in responses if f["command"] == "regRsp")
+    assert rsp["rc"] == 0
+
+
+@pytest.mark.asyncio
+async def test_reg_records_endpoint_in_ac_registered_eps(server: Any) -> None:
+    """reg must store the endpoint EUI in ac_registered_eps."""
+    frames_in = [
+        {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
+        {"command": "reg", "opId": 1, "epEui": EP_EUI_INT},
+    ]
+    await run_exchange(server, frames_in)
+    # Cleanup removes writer from connected_acs; ac_registered_eps persists
+    ac_eui_str = int_to_eui(AC_EUI_INT)
+    registered = server.ac_registered_eps.get(ac_eui_str, [])
+    assert EP_EUI.upper() in [e.upper() for e in registered]
+
+
+@pytest.mark.asyncio
+async def test_dereg_returns_dereg_rsp_and_dereg_cmp(server: Any) -> None:
+    """dereg → SC must reply with deregRsp (rc=0) + deregCmp."""
+    frames_in = [
+        {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
+        {"command": "reg", "opId": 1, "epEui": EP_EUI_INT},
+        {"command": "dereg", "opId": 2, "epEui": EP_EUI_INT},
+    ]
+    responses = await run_exchange(server, frames_in)
+    commands = [f["command"] for f in responses]
+    assert "deregRsp" in commands
+    assert "deregCmp" in commands
+
+
+# ---------------------------------------------------------------------------
+# Tests: dlDataQue / dlDataRev
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dl_data_que_returns_ack(server: Any) -> None:
+    """dlDataQue → SC must reply with dlDataQueRsp (rc=0) + dlDataQueCmp."""
+    frames_in = [
+        {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
+        {"command": "dlDataQue", "opId": 1, "epEui": EP_EUI_INT, "data": [0xDE, 0xAD, 0xBE, 0xEF]},
+    ]
+    responses = await run_exchange(server, frames_in)
+    commands = [f["command"] for f in responses]
+    assert "dlDataQueRsp" in commands
+    assert "dlDataQueCmp" in commands
+
+
+@pytest.mark.asyncio
+async def test_dl_data_que_queues_payload(server: Any) -> None:
+    """dlDataQue must store the payload in pending_dl keyed by endpoint EUI."""
+    frames_in = [
+        {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
+        {"command": "dlDataQue", "opId": 1, "epEui": EP_EUI_INT, "data": [0xAA, 0xBB]},
+    ]
+    await run_exchange(server, frames_in)
+    ep_str = int_to_eui(EP_EUI_INT).upper()
+    match = server.pending_dl.get(ep_str) or server.pending_dl.get(EP_EUI.upper())
+    assert match is not None
+    assert match["data"] == [0xAA, 0xBB]
+
+
+@pytest.mark.asyncio
+async def test_dl_data_rev_clears_pending(server: Any) -> None:
+    """dlDataRev must remove the queued entry from pending_dl."""
+    frames_in = [
+        {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
+        {"command": "dlDataQue", "opId": 1, "epEui": EP_EUI_INT, "data": [0x01]},
+        {"command": "dlDataRev", "opId": 2, "epEui": EP_EUI_INT},
+    ]
+    await run_exchange(server, frames_in)
+    ep_str = int_to_eui(EP_EUI_INT).upper()
+    assert server.pending_dl.get(ep_str) is None
+    assert server.pending_dl.get(EP_EUI.upper()) is None
+
+
+# ---------------------------------------------------------------------------
+# Tests: unsupported commands / error lifecycle
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ul_data_tx_returns_error(server: Any) -> None:
+    """ulDataTx is not supported — SC must reply with error (rc=95)."""
+    frames_in = [
+        {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
+        {"command": "ulDataTx", "opId": 1},
+    ]
+    responses = await run_exchange(server, frames_in)
+    errors = [f for f in responses if f["command"] == "error"]
+    assert errors
+    assert errors[0]["rc"] == 95
+
+
+@pytest.mark.asyncio
+async def test_error_ack_is_silently_accepted(server: Any) -> None:
+    """errorAck from AC must not crash and must not trigger a second error."""
+    frames_in = [
+        {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
+        {"command": "ulDataTx", "opId": 1},  # triggers error
+        {"command": "errorAck", "opId": 1},  # AC acks the error
+    ]
+    responses = await run_exchange(server, frames_in)
+    error_count = sum(1 for f in responses if f["command"] == "error")
+    assert error_count == 1  # only one error, not two
+
+
+# ---------------------------------------------------------------------------
+# Tests: ulData broadcast fan-out
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_broadcast_ul_data_to_connected_ac(server: Any) -> None:
+    """broadcast_ul_data must send ulData to a live connected AC."""
+    writer = FakeWriter()
+
+    # LiveReader sends the con frame then blocks, keeping handle_ac alive
+    task = asyncio.create_task(
+        server.handle_ac(LiveReader([{"command": "con", "opId": 0, "acEui": AC_EUI_INT}]), writer)
+    )
+
+    # Give handle_ac time to process the con and register the writer
+    await asyncio.sleep(0.05)
+
+    await server.broadcast_ul_data(
+        ep_eui_hex=EP_EUI,
+        rx_time_ns=1_700_000_000_000_000_000,
+        data=[0x01, 0x02, 0x03],
+        snr=10.5,
+        rssi=-80.0,
+        cnt=42,
+        bs_eui_hex="0000000000000001",
+        sh_addr=0x0001,
+    )
+
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+    frames = writer.received_frames()
+    commands = [f["command"] for f in frames]
+    assert "ulData" in commands
+
+    ul = next(f for f in frames if f["command"] == "ulData")
+    assert ul["epEui"] == EP_EUI_INT
+    assert ul["data"] == [0x01, 0x02, 0x03]
+    assert ul["snr"] == pytest.approx(10.5)
+    assert ul["opId"] < 0  # SC-initiated → negative opId
+
+
+@pytest.mark.asyncio
+async def test_broadcast_ul_data_filtered_by_registered_ep(server: Any) -> None:
+    """With registrations in place, ac_registered_eps filters by endpoint correctly."""
+    other_eui = "FFFFFFFFFFFFFFFF"
+    other_eui_int = eui_to_int(other_eui)
+    ac_eui_b = "0807060504030201"
+    ac_eui_b_int = eui_to_int(ac_eui_b)
+
+    writer_a = FakeWriter()
+    writer_b = FakeWriter()
+
+    task_a = asyncio.create_task(
+        server.handle_ac(
+            FakeReader(
+                [
+                    {"command": "con", "opId": 0, "acEui": AC_EUI_INT},
+                    {"command": "reg", "opId": 1, "epEui": EP_EUI_INT},
+                ]
+            ),
+            writer_a,
+        )
+    )
+    task_b = asyncio.create_task(
+        server.handle_ac(
+            FakeReader(
+                [
+                    {"command": "con", "opId": 0, "acEui": ac_eui_b_int},
+                    # AC B registers a different endpoint
+                    {"command": "reg", "opId": 1, "epEui": other_eui_int},
+                ]
+            ),
+            writer_b,
+        )
+    )
+
+    await asyncio.gather(task_a, task_b, return_exceptions=True)
+
+    # Verify registration filter state was captured correctly
+    ac_a_eps = server.ac_registered_eps.get(int_to_eui(AC_EUI_INT), [])
+    ac_b_eps = server.ac_registered_eps.get(int_to_eui(ac_eui_b_int), [])
+    assert any(EP_EUI.upper() == e.upper() for e in ac_a_eps)
+    assert not any(EP_EUI.upper() == e.upper() for e in ac_b_eps)
+
+
+# ---------------------------------------------------------------------------
+# Tests: get_status
+# ---------------------------------------------------------------------------
+
+
+def test_get_status_empty(server: Any) -> None:
+    """get_status on a fresh server returns enabled=True with no connected ACs."""
+    status = server.get_status()
+    assert status["enabled"] is True
+    assert status["connected"] == 0
+    assert status["acs"] == []

@@ -256,6 +256,14 @@ class SCAServer:
             await self._handle_ul_data_rsp(writer, frame)
         elif command == "epStatRsp":
             await self._handle_ep_stat_rsp(writer, frame)
+        elif command == "errorAck":
+            # AC acknowledges an error response we sent — no further action needed
+            logger.debug("SCACI errorAck from %s opId=%s", ac_label, op_id)
+        elif command == "txDataResRsp":
+            # AC acknowledges our dlDataRes notification
+            await self._send(writer, msg.build_tx_data_res_complete(op_id))
+        elif command == "txDataResCmp":
+            logger.debug("SCACI txDataResCmp from %s opId=%s", ac_label, op_id)
         elif command in ("ulDataTx",) or command.startswith("rc."):
             # Not supported — answer with error
             logger.warning("SCACI unsupported command %s from %s", command, ac_label)
@@ -271,6 +279,10 @@ class SCAServer:
         self, writer: asyncio.streams.StreamWriter, frame: dict[str, Any]
     ) -> None:
         op_id = frame.get("opId", 0)
+        if op_id != 0:
+            logger.warning(
+                "SCACI con from %s has opId=%s (expected 0 per spec)", self._ac_label(writer), op_id
+            )
         ac_eui_int = frame.get("acEui", frame.get("bsEui", 0))
         ac_eui = int_to_eui(ac_eui_int) if ac_eui_int else "UNKNOWN"
         version = frame.get("version", frame.get("protVer", "1.0.0"))
@@ -433,6 +445,18 @@ class SCAServer:
 
         if not writers:
             return
+
+        # Only send to ACs that have registered this endpoint.
+        # If no AC has registered anything yet, broadcast to all (legacy / open mode).
+        with self._state_lock:
+            any_registrations = any(self.ac_registered_eps.values())
+            if any_registrations:
+                writers = [
+                    w
+                    for w in writers
+                    if ep_eui_hex.upper()
+                    in [e.upper() for e in self.ac_registered_eps.get(self.connected_acs.get(w, ""), [])]
+                ]
 
         for writer in writers:
             op_id = self._next_op_id(writer)

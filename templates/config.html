@@ -185,6 +185,10 @@
                 </div>
             </div>
 
+            <div id="both-connectors-disabled-warn" class="alert alert-danger mt-3" style="display: {% if config.MQTT_ENABLED == False and not config.SCACI_ENABLED %}block{% else %}none{% endif %}">
+                <strong>⚠ Kein Connector aktiv!</strong> Weder MQTT noch SCACI sind aktiviert — Sensordaten werden nicht weitergeleitet.
+            </div>
+
             <div class="mt-3">
                 <button type="button" class="btn btn-primary" onclick="saveConfig()">Save Configuration</button>
                 <button type="button" class="btn btn-warning ms-2" onclick="restartService()">Restart Service</button>
@@ -201,6 +205,17 @@
 {% block scripts %}
 <script>
 function saveConfig() {
+    const mqttEnabled = document.getElementById('MQTT_ENABLED').checked;
+    const scaciEnabled = document.getElementById('SCACI_ENABLED').checked;
+    const bothDisabledWarn = document.getElementById('both-connectors-disabled-warn');
+    if (bothDisabledWarn) {
+        bothDisabledWarn.style.display = (!mqttEnabled && !scaciEnabled) ? 'block' : 'none';
+    }
+    if (!mqttEnabled && !scaciEnabled) {
+        const confirmed = confirm('Warnung: Beide Connectors (MQTT und SCACI) sind deaktiviert. Sensordaten werden nicht weitergeleitet. Trotzdem speichern?');
+        if (!confirmed) return;
+    }
+
     const configData = {
         LISTEN_HOST: document.getElementById('LISTEN_HOST').value,
         LISTEN_PORT: parseInt(document.getElementById('LISTEN_PORT').value),

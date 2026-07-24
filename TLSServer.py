@@ -2360,6 +2360,15 @@ class TLSServer:
             logger.info(
                 f"💚 SENSOR ONLINE: {eui_upper} is back online (avg interval: {hb['avg_interval']:.0f}s)"
             )
+            _sca = getattr(self, "sca_server", None)
+            if _sca is not None:
+                self._spawn_background_task(
+                    _sca.send_ep_stat(
+                        eui_upper,
+                        online=True,
+                        last_seen_ns=int(current_time * 1_000_000_000),
+                    )
+                )
 
     def get_sensor_online_count(self) -> int:
         return sum(1 for s in self.sensor_heartbeat.values() if s.get("state") == "online")
@@ -2397,6 +2406,16 @@ class TLSServer:
                         logger.warning(
                             f"🔴 SENSOR OFFLINE: {eui} (no data for {time_since_last:.0f}s, threshold {timeout:.0f}s, avg interval {avg_interval:.0f}s)"
                         )
+
+                        _sca = getattr(self, "sca_server", None)
+                        if _sca is not None:
+                            self._spawn_background_task(
+                                _sca.send_ep_stat(
+                                    eui,
+                                    online=False,
+                                    last_seen_ns=int(hb.get("last_seen", 0) * 1_000_000_000),
+                                )
+                            )
 
                         if self.mqtt_out_queue:
                             warning_payload = {

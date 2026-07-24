@@ -2275,6 +2275,24 @@ class TLSServer:
                     logger.info("✅ DEDUPLICATED MQTT message queued successfully")
                     logger.info(f"   Queue size after add: {self.mqtt_out_queue.qsize()}")
 
+                    # Fan-out to SCACI Application Centers if enabled
+                    _sca = getattr(self, "sca_server", None)
+                    if _sca is not None:
+                        import time as _time
+
+                        rx_ns = int(message.get("rxTime", _time.time_ns()))
+                        self._spawn_background_task(
+                            _sca.broadcast_ul_data(
+                                ep_eui_hex=eui.upper(),
+                                rx_time_ns=rx_ns,
+                                data=list(message.get("userData", [])),
+                                snr=float(snr),
+                                rssi=float(message.get("rssi", 0.0)),
+                                cnt=int(packet_cnt),
+                                bs_eui_hex=bs_eui if bs_eui and len(bs_eui) == 16 else "0000000000000000",
+                            )
+                        )
+
                     # Update statistics
                     self.deduplication_stats["published_messages"] += 1
                     self.traffic_metrics["messages_out"] += 1

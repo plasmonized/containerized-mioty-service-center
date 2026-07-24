@@ -147,6 +147,44 @@
                 </div>
             </div>
 
+            <div class="row mt-4">
+                <div class="col-12">
+                    <h5>Connector-Einstellungen</h5>
+                    <p class="text-muted small">MQTT und SCACI sind unabhängig voneinander aktivierbar. Änderungen erfordern einen Neustart.</p>
+                </div>
+                <div class="col-md-6">
+                    <div class="card">
+                        <div class="card-header"><strong>MQTT-Connector</strong></div>
+                        <div class="card-body">
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="checkbox" id="MQTT_ENABLED" {% if config.MQTT_ENABLED != False %}checked{% endif %}>
+                                <label class="form-check-label" for="MQTT_ENABLED">MQTT-Interface aktivieren</label>
+                                <div class="form-text">Sensordaten an MQTT-Broker weiterleiten (Standard: aktiv)</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="card">
+                        <div class="card-header"><strong>SCACI-Connector</strong> <span class="badge bg-secondary ms-1">SC↔AC</span></div>
+                        <div class="card-body">
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="checkbox" id="SCACI_ENABLED" {% if config.SCACI_ENABLED %}checked{% endif %}>
+                                <label class="form-check-label" for="SCACI_ENABLED">SCACI-Interface aktivieren</label>
+                                <div class="form-text">MIOTYA01-Protokoll für Application Centers (Standard: deaktiviert)</div>
+                            </div>
+                            <div class="mb-2">
+                                <label for="SCACI_PORT" class="form-label form-label-sm">SCACI-Port</label>
+                                <input type="number" class="form-control form-control-sm" id="SCACI_PORT" value="{{ config.SCACI_PORT or 16019 }}">
+                            </div>
+                            <div class="form-text">
+                                <a href="/app-centers">→ Application Centers Status</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <div class="mt-3">
                 <button type="button" class="btn btn-primary" onclick="saveConfig()">Save Configuration</button>
                 <button type="button" class="btn btn-warning ms-2" onclick="restartService()">Restart Service</button>
@@ -178,7 +216,10 @@ function saveConfig() {
         AUTO_DETACH_WARNING_TIMEOUT: parseInt(document.getElementById('AUTO_DETACH_WARNING_TIMEOUT').value) * 3600,
         AUTO_DETACH_CHECK_INTERVAL: parseInt(document.getElementById('AUTO_DETACH_CHECK_INTERVAL').value) * 3600,
         TIMEZONE: document.getElementById('TIMEZONE').value,
-        UPDATE_CHANNEL: document.getElementById('UPDATE_CHANNEL').checked ? 'beta' : 'stable'
+        UPDATE_CHANNEL: document.getElementById('UPDATE_CHANNEL').checked ? 'beta' : 'stable',
+        MQTT_ENABLED: document.getElementById('MQTT_ENABLED').checked,
+        SCACI_ENABLED: document.getElementById('SCACI_ENABLED').checked,
+        SCACI_PORT: parseInt(document.getElementById('SCACI_PORT').value) || 16019
     };
 
     fetch('/api/config', {

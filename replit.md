@@ -95,6 +95,8 @@ Three user roles - Admin (full access), User (sensor/BS management), Viewer (rea
 
 ## Recent Changes
 
+- **v1.690 - SCACI Interface (SC ↔ Application Center)**: Neues MIOTYA01-Protokollmodul (`scaci_protocol.py`, `scaci_messages.py`) und TLS-Server `SCAServer.py` für die Anbindung von Application Centers. MQTT und SCACI sind unabhängig per `MQTT_ENABLED`/`SCACI_ENABLED` in der `.env` aktivierbar. ulData-Fan-out nach Deduplizierung an alle verbundenen ACs. Neue Web-UI-Seite `/app-centers` mit Echtzeit-Status. Konfigurationsseite mit Connector-Abschnitt (MQTT/SCACI-Toggles, SCACI-Port). 29 neue Tests für Codec, EUI-Konvertierung und Message-Builder. Vollständige Operationen: con/ping/reg/dereg/dlDataQue/dlDataRev (AC→SC) und status/ulData/epStat/dlDataRes (SC→AC); ulDataTx und rc.* antworten mit ENOTSUP (rc=95).
+
 - **v1.689 - CI & Ruff: `release`-Referenzen entfernt, Markdown aus Ruff-Scope ausgeschlossen**: GitHub Actions Workflow (main.yml) referenzierte noch `release` in Branch-Filtern und docker-pr-Bedingung — auf `main` bereinigt. Ruff hat Python-Code-Blöcke in Markdown-Dateien (CONTRIBUTING.md, README.md, docs/, .agents/) geprüft und CI zum Scheitern gebracht; `.agents`, `docs`, `CONTRIBUTING.md`, `README.md` zu `extend-exclude` in pyproject.toml hinzugefügt.
 - **v1.688 - Updater-Fallback branch `release` → `main`**: `get_default_branch()` in web_ui.py hat als letzten Fallback (wenn GitHub-API und git ls-remote nicht erreichbar) weiterhin `"release"` verwendet. Fallback und Docstring auf `"main"` aktualisiert.
 - **v1.687 - Branch umbenannt: release → main**: Der GitHub-Hauptbranch wurde von `release` in `main` umbenannt. CONTRIBUTING.md und docs aktualisiert; Updater erkennt den Default-Branch automatisch per GitHub-API.

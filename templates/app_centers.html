@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% block title %}Application Centers{% endblock %}
+
+{% block content %}
+<h1>Application Centers <small class="text-muted fs-6">(SCACI Interface)</small></h1>
+
+<div id="scaciDisabled" class="alert alert-info d-none">
+    <i class="fas fa-info-circle"></i>
+    <strong>SCACI Interface deaktiviert.</strong>
+    Setze <code>SCACI_ENABLED=true</code> in der <code>.env</code>-Datei und starte den Service neu,
+    um die SC↔AC-Schnittstelle zu aktivieren.
+    <a href="/config" class="alert-link">Zur Konfiguration</a>
+</div>
+
+<div id="scaciContent">
+    <div class="row mb-3">
+        <div class="col-md-3">
+            <div class="card text-white bg-primary">
+                <div class="card-body text-center">
+                    <h2 id="acCount" class="display-4">—</h2>
+                    <p class="mb-0">Verbundene ACs</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-white bg-success">
+                <div class="card-body text-center">
+                    <h2 id="epCount" class="display-4">—</h2>
+                    <p class="mb-0">Registrierte Endpunkte</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-white bg-info">
+                <div class="card-body text-center">
+                    <h2 id="scaciPort" class="display-4 fs-3">—</h2>
+                    <p class="mb-0">SCACI-Port</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-white bg-secondary">
+                <div class="card-body text-center">
+                    <h2 class="display-4"><i class="fas fa-check-circle"></i></h2>
+                    <p class="mb-0">MIOTYA01</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">Verbundene Application Centers</h5>
+            <button class="btn btn-sm btn-outline-secondary" onclick="refreshStatus()">
+                <i class="fas fa-sync-alt"></i> Aktualisieren
+            </button>
+        </div>
+        <div class="card-body p-0">
+            <table class="table table-hover mb-0" id="acTable">
+                <thead>
+                    <tr>
+                        <th>AC EUI</th>
+                        <th>Version</th>
+                        <th>Peer</th>
+                        <th>Verbunden seit</th>
+                        <th>Endpunkte</th>
+                        <th>CPU</th>
+                        <th>RAM</th>
+                    </tr>
+                </thead>
+                <tbody id="acTableBody">
+                    <tr><td colspan="7" class="text-center text-muted py-4">Lade Daten…</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="card mt-4">
+        <div class="card-header"><h5 class="mb-0">Protokoll-Details</h5></div>
+        <div class="card-body">
+            <dl class="row mb-0">
+                <dt class="col-sm-3">Protokoll-Kennung</dt>
+                <dd class="col-sm-9"><code>MIOTYA01</code></dd>
+                <dt class="col-sm-3">Framing</dt>
+                <dd class="col-sm-9">8 Byte Kennung + 4 Byte LE Länge + MessagePack Payload</dd>
+                <dt class="col-sm-3">SC OpIds</dt>
+                <dd class="col-sm-9">Negativ, dekrementierend (−1, −2, −3 …)</dd>
+                <dt class="col-sm-3">AC OpIds</dt>
+                <dd class="col-sm-9">Positiv, inkrementierend (0, 1, 2 …)</dd>
+                <dt class="col-sm-3">Timestamps</dt>
+                <dd class="col-sm-9">64-Bit Nanosekunden UTC</dd>
+                <dt class="col-sm-3">EUIs</dt>
+                <dd class="col-sm-9">Integer am Wire (big-endian)</dd>
+                <dt class="col-sm-3">TLS</dt>
+                <dd class="col-sm-9">Mutual TLS, CA-signierte Client-Zertifikate erforderlich</dd>
+            </dl>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let scaciEnabled = false;
+
+function refreshStatus() {
+    fetch('/api/scaci/status')
+        .then(r => r.json())
+        .then(data => {
+            scaciEnabled = data.enabled;
+            if (!data.enabled) {
+                document.getElementById('scaciDisabled').classList.remove('d-none');
+                document.getElementById('scaciContent').classList.add('d-none');
+                return;
+            }
+            document.getElementById('scaciDisabled').classList.add('d-none');
+            document.getElementById('scaciContent').classList.remove('d-none');
+
+            document.getElementById('acCount').textContent = data.connected ?? 0;
+
+            const acs = data.acs || [];
+            const totalEps = acs.reduce((s, ac) => s + (ac.registered_eps?.length ?? 0), 0);
+            document.getElementById('epCount').textContent = totalEps;
+
+            const tbody = document.getElementById('acTableBody');
+            if (acs.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">Keine Application Centers verbunden</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = acs.map(ac => {
+                const connAt = ac.connected_at ? new Date(ac.connected_at).toLocaleString('de-DE') : '—';
+                const eps = (ac.registered_eps || []).length;
+                const cpu = ac.last_status?.cpu != null ? ac.last_status.cpu.toFixed(1) + '%' : '—';
+                const mem = ac.last_status?.memory != null ? ac.last_status.memory.toFixed(1) + '%' : '—';
+                return `<tr>
+                    <td><code>${ac.eui || '—'}</code></td>
+                    <td>${ac.version || '—'}</td>
+                    <td><small class="text-muted">${ac.peer || '—'}</small></td>
+                    <td>${connAt}</td>
+                    <td><span class="badge bg-success">${eps}</span></td>
+                    <td>${cpu}</td>
+                    <td>${mem}</td>
+                </tr>`;
+            }).join('');
+        })
+        .catch(err => {
+            console.error('SCACI status error:', err);
+        });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    refreshStatus();
+    setInterval(refreshStatus, 10000);
+});
+</script>
+{% endblock %}

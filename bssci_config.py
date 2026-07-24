@@ -45,3 +45,18 @@ UPDATE_CHANNEL = os.getenv("UPDATE_CHANNEL", "stable")
 # TLS_COMPAT_MODE: lower OpenSSL security level for embedded TLS stacks (older ciphers/smaller keys)
 TLS_REQUIRE_CLIENT_CERT = os.getenv("TLS_REQUIRE_CLIENT_CERT", "true").lower() == "true"
 TLS_COMPAT_MODE = os.getenv("TLS_COMPAT_MODE", "false").lower() == "true"
+
+# Connector toggles
+# MQTT_ENABLED: set false to disable MQTT publishing (web UI still works)
+MQTT_ENABLED = os.getenv("MQTT_ENABLED", "true").lower() == "true"
+# SCACI_ENABLED: set true to start the SC↔AC SCACI interface listener
+SCACI_ENABLED = os.getenv("SCACI_ENABLED", "false").lower() == "true"
+
+# SCACI (SC ↔ Application Center Interface) Configuration
+SCACI_HOST = os.getenv("SCACI_HOST", "0.0.0.0")
+SCACI_PORT = int(os.getenv("SCACI_PORT", "16019"))
+# By default reuse the same TLS certs as BSSCI; override with SCACI_CERT_FILE etc.
+SCACI_CERT_FILE = os.getenv("SCACI_CERT_FILE", CERT_FILE)
+SCACI_KEY_FILE = os.getenv("SCACI_KEY_FILE", KEY_FILE)
+SCACI_CA_FILE = os.getenv("SCACI_CA_FILE", CA_FILE)
+SCACI_REQUIRE_CLIENT_CERT = os.getenv("SCACI_REQUIRE_CLIENT_CERT", "true").lower() == "true"

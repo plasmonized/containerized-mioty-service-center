@@ -32,8 +32,9 @@ if not any(isinstance(h, WebUILogHandler) for h in _root_logger.handlers):
 
 logger = logging.getLogger(__name__)
 
-# Global reference for TLS server instance
+# Global reference for server instances
 tls_server_instance = None
+sca_server_instance = None
 
 
 def fix_env_file_permissions():
@@ -101,6 +102,19 @@ def set_tls_server(server):
         logger.error(f"❌ Failed to import web_ui: {e}")
     except Exception as e:
         logger.error(f"❌ Failed to set TLS server in web_ui: {e}")
+
+
+def set_sca_server(server):
+    """Set the SCACI Application Center server instance"""
+    global sca_server_instance
+    sca_server_instance = server
+    try:
+        import web_ui
+
+        web_ui.set_sca_server(server)
+        logger.info("✅ SCA server instance passed to web UI successfully")
+    except Exception as e:
+        logger.error(f"❌ Failed to set SCA server in web_ui: {e}")
 
 
 if __name__ == "__main__":

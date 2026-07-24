@@ -1428,6 +1428,9 @@ def config():
             "AUTO_DETACH_CHECK_INTERVAL": getattr(bssci_config, "AUTO_DETACH_CHECK_INTERVAL", 3600),
             "TIMEZONE": getattr(bssci_config, "TIMEZONE", "Europe/Berlin"),
             "UPDATE_CHANNEL": getattr(bssci_config, "UPDATE_CHANNEL", "stable"),
+            "MQTT_ENABLED": getattr(bssci_config, "MQTT_ENABLED", True),
+            "SCACI_ENABLED": getattr(bssci_config, "SCACI_ENABLED", False),
+            "SCACI_PORT": getattr(bssci_config, "SCACI_PORT", 16019),
         }
         return render_template("config.html", config=config_data)
     except Exception as e:
@@ -1449,6 +1452,9 @@ def config():
             "AUTO_DETACH_CHECK_INTERVAL": 3600,
             "TIMEZONE": "Europe/Berlin",
             "UPDATE_CHANNEL": "stable",
+            "MQTT_ENABLED": True,
+            "SCACI_ENABLED": False,
+            "SCACI_PORT": 16019,
         }
         return render_template("config.html", config=default_config)
 
@@ -1479,12 +1485,19 @@ CERT_FILE=certs/service_center_cert.pem
 KEY_FILE=certs/service_center_key.pem
 CA_FILE=certs/ca_cert.pem
 
+# Connector Toggles
+MQTT_ENABLED={str(data.get("MQTT_ENABLED", True)).lower()}
+SCACI_ENABLED={str(data.get("SCACI_ENABLED", False)).lower()}
+
 # MQTT Configuration
 MQTT_BROKER={data.get("MQTT_BROKER", "localhost")}
 MQTT_PORT={data.get("MQTT_PORT", 1883)}
 MQTT_USERNAME={data.get("MQTT_USERNAME", "")}
 MQTT_PASSWORD={data.get("MQTT_PASSWORD", "")}
 BASE_TOPIC={data.get("BASE_TOPIC", "bssci/")}
+
+# SCACI Configuration
+SCACI_PORT={data.get("SCACI_PORT", 16019)}
 
 # Application Configuration
 SENSOR_CONFIG_FILE=endpoints.json
@@ -3088,11 +3101,20 @@ def api_restart_system():
 # Global variable to store TLS server instance
 # tls_server_instance = None # Already defined at the top
 
+# Global SCACI server instance reference
+sca_server_instance = None
+
 
 def set_tls_server(server):
     """Set the TLS server instance"""
     global tls_server_instance
     tls_server_instance = server
+
+
+def set_sca_server(server):
+    """Set the SCACI Application Center server instance"""
+    global sca_server_instance
+    sca_server_instance = server
 
 
 def get_bssci_service_status():
@@ -4184,6 +4206,29 @@ def restart_service():
         )
     except Exception as e:
         return jsonify({"success": False, "message": str(e)})
+
+
+@app.route("/app-centers")
+@login_required
+def app_centers():
+    return render_template("app_centers.html")
+
+
+@app.route("/api/scaci/status")
+@login_required
+def api_scaci_status():
+    """Return current SCACI / Application Center status."""
+    global sca_server_instance
+    enabled = getattr(bssci_config, "SCACI_ENABLED", False)
+    if not enabled:
+        return jsonify({"enabled": False, "connected": 0, "acs": []})
+    if sca_server_instance is None:
+        return jsonify({"enabled": True, "connected": 0, "acs": [], "error": "server not ready"})
+    try:
+        return jsonify(sca_server_instance.get_status())
+    except Exception as exc:
+        logger.error("Error fetching SCACI status: %s", exc)
+        return jsonify({"enabled": True, "connected": 0, "acs": [], "error": str(exc)}), 500
 
 
 if __name__ == "__main__":

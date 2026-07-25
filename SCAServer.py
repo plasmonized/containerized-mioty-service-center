@@ -87,6 +87,10 @@ class SCAServer:
         self._state_lock = threading.RLock()
         self._background_tasks: set[asyncio.Task[Any]] = set()
 
+        # Set by start_server(); used by disconnect_ac_by_name() to schedule
+        # async closes from the Flask (non-async) request thread.
+        self._loop: asyncio.AbstractEventLoop | None = None
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -221,6 +225,8 @@ class SCAServer:
 
     async def start_server(self) -> None:
         from config_compat import get_config
+
+        self._loop = asyncio.get_running_loop()
 
         host = get_config("SCACI_HOST", "0.0.0.0")
         port = get_config("SCACI_PORT", 16019)
@@ -977,3 +983,38 @@ class SCAServer:
                 "connected": len(acs),
                 "acs": acs,
             }
+
+    def disconnect_ac_by_name(self, name: str) -> int:
+        """Disconnect any AC whose EUI matches *name* (case-insensitive, ignores separators).
+
+        Intended to be called from a non-async context (e.g. a Flask request handler)
+        when an AC certificate is deleted or regenerated so that the now-stale TLS
+        session is terminated immediately and the AC must reconnect with its new
+        credential.
+
+        Returns the number of connections scheduled for closure.
+        """
+        name_normalized = name.lower().replace(":", "").replace("-", "")
+        with self._state_lock:
+            targets = [
+                w
+                for w, eui in self.connected_acs.items()
+                if eui.lower().replace(":", "").replace("-", "") == name_normalized
+            ]
+        if not targets:
+            return 0
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            logger.warning(
+                "disconnect_ac_by_name(%s): event loop not available — cannot disconnect",
+                name,
+            )
+            return 0
+        count = 0
+        for writer in targets:
+            logger.info(
+                "SCACI: forcibly disconnecting AC %s (certificate deleted/renewed)", name
+            )
+            asyncio.run_coroutine_threadsafe(self._close(writer), loop)
+            count += 1
+        return count

@@ -1279,3 +1279,106 @@ async def test_tx_data_res_rsp_triggers_tx_data_res_cmp(server: Any) -> None:
 
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
+
+
+# ---------------------------------------------------------------------------
+# Tests: disconnect_ac_by_name — certificate revocation / renewal
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_disconnect_ac_by_name_no_loop_returns_zero(server: Any) -> None:
+    """disconnect_ac_by_name returns 0 when the event loop is not set."""
+    writer = FakeWriter()
+    server.connected_acs[writer] = AC_EUI
+    # _loop intentionally left as None (no start_server called)
+    assert server._loop is None
+    result = server.disconnect_ac_by_name(AC_EUI)
+    assert result == 0
+
+
+@pytest.mark.asyncio
+async def test_disconnect_ac_by_name_no_matching_ac_returns_zero(server: Any) -> None:
+    """disconnect_ac_by_name returns 0 when no connected AC matches."""
+    server._loop = asyncio.get_running_loop()
+    result = server.disconnect_ac_by_name("0000000000000000")
+    assert result == 0
+
+
+@pytest.mark.asyncio
+async def test_disconnect_ac_by_name_closes_writer(server: Any) -> None:
+    """disconnect_ac_by_name schedules close() for matching AC writer."""
+    loop = asyncio.get_running_loop()
+    server._loop = loop
+
+    writer = FakeWriter()
+    server.connected_acs[writer] = AC_EUI
+
+    count = server.disconnect_ac_by_name(AC_EUI)
+    assert count == 1
+
+    # Allow the scheduled coroutine to execute
+    await asyncio.sleep(0.05)
+    assert writer.closed
+
+
+@pytest.mark.asyncio
+async def test_disconnect_ac_by_name_case_insensitive(server: Any) -> None:
+    """disconnect_ac_by_name matches EUI regardless of case."""
+    loop = asyncio.get_running_loop()
+    server._loop = loop
+
+    writer = FakeWriter()
+    server.connected_acs[writer] = AC_EUI.upper()
+
+    count = server.disconnect_ac_by_name(AC_EUI.lower())
+    assert count == 1
+    await asyncio.sleep(0.05)
+    assert writer.closed
+
+
+@pytest.mark.asyncio
+async def test_disconnect_ac_by_name_terminates_handle_ac_loop(server: Any) -> None:
+    """Closing the writer via disconnect_ac_by_name terminates handle_ac naturally."""
+    loop = asyncio.get_running_loop()
+    server._loop = loop
+
+    writer = FakeWriter()
+    task = asyncio.create_task(
+        server.handle_ac(
+            LiveReader([{"command": "con", "opId": 0, "acEui": AC_EUI_INT}]),
+            writer,
+        )
+    )
+    await asyncio.sleep(0.05)
+    # AC is now connected
+    assert writer in server.connected_acs
+
+    count = server.disconnect_ac_by_name(AC_EUI)
+    assert count == 1
+
+    # handle_ac should exit on its own once the writer/transport is closed
+    try:
+        await asyncio.wait_for(task, timeout=1.0)
+    except asyncio.TimeoutError:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        pytest.fail("handle_ac did not terminate after disconnect_ac_by_name")
+
+    # Cleanup must have removed the writer from connected_acs
+    assert writer not in server.connected_acs
+
+
+@pytest.mark.asyncio
+async def test_disconnect_ac_by_name_ignores_separators(server: Any) -> None:
+    """disconnect_ac_by_name strips colons/dashes before comparing EUIs."""
+    loop = asyncio.get_running_loop()
+    server._loop = loop
+
+    writer = FakeWriter()
+    server.connected_acs[writer] = "01:02:03:04:05:06:07:08"
+
+    count = server.disconnect_ac_by_name("0102030405060708")
+    assert count == 1
+    await asyncio.sleep(0.05)
+    assert writer.closed

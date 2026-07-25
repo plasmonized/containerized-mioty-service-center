@@ -4246,6 +4246,29 @@ def api_scaci_status():
         return jsonify({"enabled": True, "connected": 0, "acs": [], "error": str(exc)}), 500
 
 
+def _disconnect_ac_if_connected(name: str, reason: str) -> None:
+    """Disconnect any live SCACI session whose EUI matches *name*.
+
+    Called after a certificate is deleted or regenerated so the stale TLS session
+    is terminated immediately and the AC must reconnect with its new credential.
+    No-op when SCACI is disabled or no matching session is active.
+    """
+    server = sca_server_instance
+    if server is None:
+        return
+    try:
+        count = server.disconnect_ac_by_name(name)
+        if count:
+            logger.info(
+                "SCACI: %d session(s) disconnected for AC '%s' (certificate %s)",
+                count,
+                name,
+                reason,
+            )
+    except Exception as exc:
+        logger.warning("SCACI: disconnect_ac_by_name failed for '%s': %s", name, exc)
+
+
 def _generate_ac_certificate(name: str) -> tuple[bool, str]:
     """Generate a CA-signed TLS client certificate for an Application Center.
 
@@ -4347,6 +4370,7 @@ def generate_ac_certificate():
         import re as _re
 
         name_clean = _re.sub(r"[^a-zA-Z0-9_\-]", "_", name).lower()
+        _disconnect_ac_if_connected(name_clean, "renewed")
         return jsonify(
             {
                 "success": True,
@@ -4396,6 +4420,7 @@ def generate_ac_certificate_v2():
         ), 400
     success, result = _generate_ac_certificate(eui)
     if success:
+        _disconnect_ac_if_connected(eui, "renewed")
         return jsonify(
             {
                 "success": True,
@@ -4446,6 +4471,7 @@ def delete_ac_certificate(name: str):
     except OSError as e:
         return jsonify({"success": False, "message": f"Deletion failed: {e}"}), 500
     logger.info(f"AC certificate deleted: {name_clean}")
+    _disconnect_ac_if_connected(name_clean, "deleted")
     return jsonify({"success": True, "message": f"Certificate {name_clean} deleted"})
 
 

@@ -46,6 +46,12 @@ export default withMermaid(defineConfig({
             { text: 'Advanced Features', link: '/guide/advanced-features' },
             { text: 'Troubleshooting', link: '/guide/troubleshooting' }
           ]
+        },
+        {
+          text: 'mioty Ecosystem',
+          items: [
+            { text: 'Vergleichbare Projekte', link: '/guide/mioty-ecosystem' }
+          ]
         }
       ],
       '/api/': [
@@ -61,7 +67,8 @@ export default withMermaid(defineConfig({
           text: 'Deployment',
           items: [
             { text: 'Docker Deployment', link: '/deployment/docker' },
-            { text: 'Updating', link: '/deployment/updating' }
+            { text: 'Updating', link: '/deployment/updating' },
+            { text: 'Release Please', link: '/deployment/release-please' }
           ]
         }
       ]

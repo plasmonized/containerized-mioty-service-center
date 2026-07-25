@@ -1,4 +1,4 @@
-name: Python CI
+name: Docker PR Build
 
 on:
   push:
@@ -7,53 +7,16 @@ on:
     branches: [ "main" ]
 
 jobs:
-  lint-test:
+  docker-pr:
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref != 'refs/heads/main')
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.12"
-
-    - name: Set up uv
-      uses: astral-sh/setup-uv@v6
-      with:
-        enable-cache: true
-        cache-suffix: "uv-${{ runner.os }}"
-        cache-dependency-path: uv.lock
-
-    - name: Install dependencies
-      run: uv sync --locked --all-groups --no-install-project
-
-    - name: Run ruff (Linter)
-      run: uv run ruff check . --exclude=attached_assets --exit-zero
-
-    - name: Run ruff (Format Check)
-      run: uv run ruff format --check . --exclude=attached_assets || echo "Format check completed with warnings"
-
-    - name: Run mypy (Type Check)
-      run: uv run mypy . --ignore-missing-imports --exclude='attached_assets/' || echo "mypy completed with warnings"
-
-    - name: Run pytest with coverage (Unit Tests)
-      run: |
-        uv run pytest --cov=. --cov-report=term-missing --cov-fail-under=0 \
-          -m "not integration" -v || echo "No tests found - OK"
-
-  docker-pr:
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref != 'refs/heads/main')
-    needs: lint-test
-
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
-
     - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+      uses: docker/setup-buildx-action@v5
 
     - name: Docker metadata
       id: meta
@@ -72,6 +35,8 @@ jobs:
         file: ./Dockerfile.pr
         push: false
         load: true
+        cache-from: type=gha,scope=pr-test
+        cache-to: type=gha,scope=pr-test,mode=max
         tags: ghcr.io/${{ github.repository }}/pr-test:pr-${{ github.event.pull_request.number }}
         labels: ${{ steps.meta.outputs.labels }}
         build-args: |

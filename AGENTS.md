@@ -60,6 +60,29 @@ Dev dependencies in requirements.txt: flake8, black, isort
 - Sensor config: `endpoints.json`
 - Web auth: `users.json`
 
+## Release Please
+
+Automatische Versionierung und Docker-Image-Veröffentlichung via [Release Please](https://github.com/googleapis/release-please-action).
+
+### Workflow
+
+1. **Release PR**: Bei `feat:`/`fix:`-Commits auf `main` erstellt/aktualisiert Release Please einen Release PR
+2. **Veröffentlichung**: Nach Merge des Release PRs → GitHub Release + Docker Build & Push auf `ghcr.io`
+3. **Image-Tags**: `vX.Y.Z`, `latest`, `stable`, `X.Y.Z`
+
+### Konfiguration
+
+- `release-please-config.json` — `release-type: simple`, managed `VERSION`-Datei
+- `.release-please-manifest.json` — Aktuelle Version (immer `X.Y.Z`-Format, **nicht** `X.Y`)
+- `.github/workflows/release-please.yml` — Workflow-Definition
+
+### Wichtig
+
+- **VERSION-Format muss `X.Y.Z` (Semver) sein** — Release Please scheitert an `X.Y`
+- Commits ohne `feat:`/`fix:`-Präfix lösen keinen Release aus
+- Legacy-Workflow `Docker Release (Legacy Fallback)` per `workflow_dispatch` für manuelle Notfälle
+- Release Please verwendet `googleapis/release-please-action@v4` (nicht das deprecated `google-github-actions`)
+
 ## Documentation
 
 ```bash

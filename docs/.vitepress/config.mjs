@@ -61,7 +61,8 @@ export default withMermaid(defineConfig({
           text: 'Deployment',
           items: [
             { text: 'Docker Deployment', link: '/deployment/docker' },
-            { text: 'Updating', link: '/deployment/updating' }
+            { text: 'Updating', link: '/deployment/updating' },
+            { text: 'Release Please', link: '/deployment/release-please' }
           ]
         }
       ]

@@ -1,3 +1,4 @@
+- [Conventional Commits / Release Please](conventional-commits.md) — Commit-Präfixe `feat:`/`fix:` zwingend für automatischen Docker-Release über Release Please.
 - [TLS handshake debugging](tls-handshake-logging.md) — asyncio start_server(ssl=...) silently drops handshake failures; accept plain TCP + explicit start_tls to log them.
 - [Logging basicConfig no-op](logging-basicconfig-noop.md) — importing web_ui adds a root handler first, making later basicConfig a silent no-op (no console/Docker logs).
 - [Replit shell git merges](replit-shell-git-merges.md) — merges must run as one compound shell line or the checkpoint system wipes the merge state between commands.

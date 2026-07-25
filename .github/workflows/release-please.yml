@@ -8,6 +8,7 @@ permissions:
   contents: write
   pull-requests: write
   packages: write
+  id-token: write
 
 env:
   REGISTRY: ghcr.io
@@ -71,10 +72,33 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=release
+          cache-to: type=gha,scope=release,mode=max
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ steps.meta.outputs.tags }}
+          format: spdx-json
+          output-file: sbom-${{ needs.release-please.outputs.tag_name }}.json
+
+      - name: Scan for vulnerabilities
+        uses: aquasecurity/trivy-action@0.29.0
+        with:
+          image-ref: ${{ steps.meta.outputs.tags }}
+          severity: CRITICAL,HIGH
+          format: sarif
+          output: trivy-results.sarif
+
+      - name: Upload Trivy results to GitHub
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
 
       - name: Summary
         run: |
           echo "### Released: ${{ needs.release-please.outputs.tag_name }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Docker image:** \`ghcr.io/${{ github.repository }}:${{ needs.release-please.outputs.tag_name }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Tags:** \`${{ needs.release-please.outputs.tag_name }}\`, \`latest\`, \`stable\`, \`${{ needs.release-please.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Docker image:** `ghcr.io/${{ github.repository }}:${{ needs.release-please.outputs.tag_name }}`" >> $GITHUB_STEP_SUMMARY
+          echo "**Tags:** `${{ needs.release-please.outputs.tag_name }}`, `latest`, `stable`, `${{ needs.release-please.outputs.version }}`" >> $GITHUB_STEP_SUMMARY

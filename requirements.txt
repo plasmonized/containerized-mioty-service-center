@@ -12,5 +12,5 @@ isort
 pytest
 pytest-mock
 pytest-asyncio
-mypy==1.18.2
+mypy==2.3.0
 ruff

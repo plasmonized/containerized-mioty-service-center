@@ -3896,7 +3896,58 @@ def generate_certificates():
                 }
             )
 
-        # Sign service certificate with CA
+        # Collect all local IPs for Subject Alternative Names.
+        # Modern TLS clients (including BS firmware) ignore the CN field and only
+        # check SANs for hostname verification — without SANs the BS rejects the cert.
+        import socket as _socket
+
+        san_ips: set[str] = {"127.0.0.1"}
+
+        # 1. User-configured host IP (set SC_HOST_IP in .env for Docker deployments)
+        sc_host_ip = os.environ.get("SC_HOST_IP", "").strip()
+        if sc_host_ip:
+            san_ips.add(sc_host_ip)
+
+        # 2. Local hostname resolution
+        try:
+            hostname = _socket.gethostname()
+            for info in _socket.getaddrinfo(hostname, None):
+                addr = info[4][0]
+                if ":" not in addr:  # skip IPv6
+                    san_ips.add(addr)
+        except Exception:
+            pass
+
+        # 3. Outbound IP (the IP the container uses to reach the outside world)
+        try:
+            with _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM) as _s:
+                _s.settimeout(1)
+                _s.connect(("8.8.8.8", 80))
+                san_ips.add(_s.getsockname()[0])
+        except Exception:
+            pass
+
+        # 4. Docker host IP — read default gateway from /proc/net/route
+        try:
+            with open("/proc/net/route") as _f:
+                for _line in _f.readlines()[1:]:
+                    _parts = _line.strip().split()
+                    if _parts[1] == "00000000":  # default route
+                        _gw_hex = _parts[2]
+                        _gw_ip = ".".join(
+                            str(int(_gw_hex[i : i + 2], 16))
+                            for i in (6, 4, 2, 0)
+                        )
+                        if _gw_ip != "0.0.0.0":
+                            san_ips.add(_gw_ip)
+                        break
+        except Exception:
+            pass
+
+        san_string = ",".join(f"IP:{ip}" for ip in sorted(san_ips))
+        san_string += ",DNS:bssci-service,DNS:localhost"
+
+        # Sign service certificate with CA (SANs required for modern TLS clients)
         result = subprocess.run(
             [
                 "openssl",
@@ -3912,7 +3963,11 @@ def generate_certificates():
                 "-out",
                 "certs/service_center_cert.pem",
                 "-days",
-                "365",
+                "3650",
+                "-addext",
+                f"subjectAltName={san_string}",
+                "-addext",
+                "extendedKeyUsage=serverAuth",
             ],
             capture_output=True,
             text=True,
@@ -3932,7 +3987,12 @@ def generate_certificates():
             if os.path.exists(temp_file):
                 os.remove(temp_file)
 
-        return jsonify({"success": True, "message": "New certificates generated successfully"})
+        return jsonify(
+            {
+                "success": True,
+                "message": f"New certificates generated successfully (SANs: {san_string})",
+            }
+        )
     except Exception as e:
         return jsonify({"success": False, "message": str(e)})
 

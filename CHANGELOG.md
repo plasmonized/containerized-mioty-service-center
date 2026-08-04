@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.697.1](https://github.com/plasmonized/containerized-mioty-service-center/compare/v1.697.0...v1.697.1) (2026-08-04)
+
+
+### Bug Fixes
+
+* align docs artifact path with custom outDir in vitepress config ([b2b2b21](https://github.com/plasmonized/containerized-mioty-service-center/commit/b2b2b21ae868873c9745466ea1dbb137b2bd8b04))
+* correct action versions and remove pip cache for uv-based jobs ([233af28](https://github.com/plasmonized/containerized-mioty-service-center/commit/233af28e5498ab3300186f4dc25a3eb5ca3252bb))
+
 ## [1.697.0](https://github.com/plasmonized/containerized-mioty-service-center/compare/v1.696.0...v1.697.0) (2026-07-25)
 
 
